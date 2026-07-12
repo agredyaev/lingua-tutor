@@ -1,0 +1,13 @@
+{
+  "id": "es-ES",
+  "package": "language-pack-es-es",
+  "version": "0.1.0",
+  "contract_version": "1",
+  "target_language": "es",
+  "target_locale": "es-ES",
+  "display_name": "Spanish (Spain)",
+  "supported_source_languages": ["ru", "en"],
+  "default_source_language": "ru",
+  "level_framework": "CEFR",
+  "capabilities": ["answer_matching"]
+}

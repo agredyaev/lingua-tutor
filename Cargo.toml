@@ -6,6 +6,7 @@ members = [
     "crates/language-pack-api",
     "crates/language-pack-registry",
     "crates/shared-schema",
+    "language-packs/es-es",
     "language-packs/synthetic-test-pack",
     "tests",
 ]
@@ -20,6 +21,8 @@ publish = false
 shared-schema = { path = "crates/shared-schema" }
 language-pack-api = { path = "crates/language-pack-api" }
 language-pack-registry = { path = "crates/language-pack-registry" }
+language-pack-es-es = { path = "language-packs/es-es" }
+synthetic-test-pack = { path = "language-packs/synthetic-test-pack" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

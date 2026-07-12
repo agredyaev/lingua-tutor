@@ -13,6 +13,9 @@ crate-type = ["cdylib"]
 [dependencies]
 worker = { workspace = true }
 shared-schema = { workspace = true }
+language-pack-api = { workspace = true }
+language-pack-registry = { workspace = true }
+language-pack-es-es = { workspace = true }
 
 [lints]
 workspace = true
