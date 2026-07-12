@@ -1,7 +1,8 @@
 //! Migration suite: applies `migrations/*.sql` to scratch SQLite and asserts
 //! the schema matches 04-database.md §2 (12-testing.md migration tests).
 
-#![allow(clippy::unwrap_used)] // tests exempt (16-rust-guidelines.md §2)
+// tests exempt from panic-family lints (16-rust-guidelines.md §2)
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use rusqlite::Connection;
 use std::fs;
@@ -97,7 +98,7 @@ fn all_named_indexes_exist() {
 fn card_status_check_constraint_rejects_invalid_value() {
     let conn = migrated_connection();
     seed_profile_and_pack(&conn);
-    let err = insert_card(&conn, "card-1", "op-1", "bogus_status");
+    let err = insert_card(&conn, "card-1", "bogus_status");
     assert!(err.is_err(), "invalid card status must be rejected");
 }
 
@@ -105,7 +106,7 @@ fn card_status_check_constraint_rejects_invalid_value() {
 fn review_event_client_operation_id_is_unique() {
     let conn = migrated_connection();
     seed_profile_and_pack(&conn);
-    insert_card(&conn, "card-1", "op-1", "new").unwrap();
+    insert_card(&conn, "card-1", "new").unwrap();
     conn.execute_batch(
         "INSERT INTO review_sessions (id, learner_language_profile_id, started_at, source, created_at)
          VALUES ('rs-1', 'llp-1', '2026-07-12T00:00:00Z', 'online', '2026-07-12T00:00:00Z');",
@@ -125,7 +126,10 @@ fn review_event_client_operation_id_is_unique() {
         )
     };
     insert_event("ev-1").unwrap();
-    assert!(insert_event("ev-2").is_err(), "duplicate client_operation_id must be rejected");
+    assert!(
+        insert_event("ev-2").is_err(),
+        "duplicate client_operation_id must be rejected"
+    );
 }
 
 #[test]
@@ -157,13 +161,7 @@ fn seed_profile_and_pack(conn: &Connection) {
     .unwrap();
 }
 
-fn insert_card(
-    conn: &Connection,
-    id: &str,
-    op: &str,
-    status: &str,
-) -> rusqlite::Result<usize> {
-    let _ = op;
+fn insert_card(conn: &Connection, id: &str, status: &str) -> rusqlite::Result<usize> {
     conn.execute(
         "INSERT INTO cards (id, learner_language_profile_id, language_pack_id,
              language_pack_version, intent, status, prompt, prompt_language, answer,
