@@ -82,3 +82,34 @@ Scope creep: none.
 Fuzz status: property suites now cover normalization (conformance) + scheduler intervals (128-case fixed-seed sequences). cargo-fuzz next at WBS 4.6.
 
 Next: iteration 4 = WBS 4 core records (M1) — learning-core domain types, D1 repositories, application services, HTTP endpoints, tutor-contract crate.
+
+## Iteration 4 — WBS 4 Core records (M1) — 2026-07-12
+
+| Task | Status | Note |
+|---|---|---|
+| 4.1 learning-core | done | domain types + ID newtypes (local macro; 17 §3 rule 9 amended), mastery rules (review-success-never-masters, 3-context full), error 3/5 thresholds; 8 tests |
+| 4.2 repositories (profiles/packs) | done | SQL consts + column rows + domain mapping; RFC 3339 at boundary; scratch-SQLite tests |
+| 4.3 repositories (records) | done | lessons, metrics, items, evidence, error_*, listening; due-recheck partial-index query proven; 7 repo tests |
+| 4.4 application | done | pure lesson-completion planner: duplicate no-op, normalized dedup, atomic-reject on unknown refs, escalation, server-side mastery re-check; 9 tests |
+| 4.5 HTTP endpoints | done | packs, profiles, learning-state, next-lesson, lessons, error targets + recheck complete, listening; error shape per 08 §1 |
+| 4.6 tutor-contract + fuzz | done | schemas w/ deny_unknown_fields, bounds, per-op validation; 8 fixture tests; **cargo-fuzz: 7.4M execs/45s clean**; weekly fuzz CI |
+| 4.7 import flow | done | tutor-context export; validate → stateless token → apply; shared completion path; one D1 batch per apply |
+| 4.8 README | done | full command set |
+
+Drift found:
+
+1. **Application = pure planner**, repositories+IO stay in worker; no repository traits/ports (would be 1-impl abstractions). Services take pre-fetched context, return plan; worker persists plan as one batch. Satisfies 02 §2 split without mock scaffolding.
+2. **Row IDs assigned at persist time** (worker, `uuid` v4 w/ prefix), not by planner — keeps planner deterministic for tests. Spec asks UUIDv7/ULID; v4 chosen (v7 adds time-source coupling in WASM); IDs remain opaque per 03 §1. Revisit only if sortable IDs ever needed.
+3. **Spec §2 example `core_category: "verb_form"`** treated as illustrative; core closed set governs, specificity in `pack_error_code`.
+4. **Validation token is stateless** (FNV over body + expiry, no secret): binds apply to exact validated payload; forgery irrelevant pre-Access (single user), revisit at WBS 10.2.
+5. **`worker` dep needs `d1` feature** — pin table unchanged, feature added.
+6. **`lessons/{id}/correct` deferred to WBS 5** (compensating corrections interact with card mutations); not in WBS 4.5 task text.
+7. **evidence/mastery/listening may only reference existing item IDs** (tutor gets IDs from tutor-context export); same-payload new items are not addressable — contract limitation recorded, revisit if real lessons hit it.
+
+Scope creep: none.
+
+Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓, **69 tests 0 failed** ✓, worker+web wasm32 ✓, cargo-deny ✓, grep gates ✓, **e2e smoke: 8-step M1 loop green via wrangler dev --local** (health → packs → profile → tutor-context → validate → apply → learning-state → idempotent re-apply).
+
+Fuzz status: proptest (normalization, scheduler) + cargo-fuzz (lesson-result parse) all active.
+
+**M1 essentially complete.** Next: iteration 5 = WBS 5 cards + review MVP (M2).

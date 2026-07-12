@@ -30,10 +30,25 @@ FSRS GO/NO-GO decided by spike ([15-wbs.md](docs/spec/15-wbs.md) 3.2); fallback 
 
 ## Commands
 
-Filled as WBS progresses (full set lands WBS 4.8).
-
 ```sh
+# Build + test (all crates, incl. migration/repository suites vs scratch SQLite)
 cargo build --workspace
 cargo test --workspace
-PATH="/opt/homebrew/bin:$PATH" npx wrangler --version
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo fmt --check
+cargo deny check
+
+# Worker (wasm32) + local API with D1
+cargo build -p worker-api --target wasm32-unknown-unknown
+cd apps/worker && PATH="/opt/homebrew/bin:$PATH" npx wrangler d1 migrations apply DB --local
+cd apps/worker && PATH="/opt/homebrew/bin:$PATH" npx wrangler dev --local   # http://localhost:8787
+
+# Full local smoke (8-step M1 loop: profile → tutor-context → import → state)
+bash scripts/smoke-local.sh
+
+# Frontend release build + 3 MB budget check
+bash scripts/wasm-size-report.sh
+
+# Fuzz the untrusted lesson-result boundary (nightly)
+cargo +nightly fuzz run lesson_result_parse -- -max_total_time=60
 ```
