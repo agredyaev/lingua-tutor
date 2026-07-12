@@ -81,7 +81,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             handlers::records::next_lesson(&req, &ctx.env).await
         })
         .post_async("/api/v1/lessons/start", |req, ctx| async move {
-            handlers::lessons::start_lesson(req, &ctx.env).await
+            handlers::lessons::start_lesson(&ctx.data, req, &ctx.env).await
         })
         .post_async(
             "/api/v1/lessons/:lesson_id/complete",

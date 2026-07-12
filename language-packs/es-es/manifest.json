@@ -1,7 +1,7 @@
 {
   "id": "es-ES",
   "package": "language-pack-es-es",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "contract_version": "1",
   "target_language": "es",
   "target_locale": "es-ES",
@@ -9,5 +9,12 @@
   "supported_source_languages": ["ru", "en"],
   "default_source_language": "ru",
   "level_framework": "CEFR",
-  "capabilities": ["answer_matching"]
+  "capabilities": [
+    "production_cards",
+    "listening_cards",
+    "contrast_cards",
+    "transfer_cards",
+    "error_classification",
+    "answer_matching"
+  ]
 }

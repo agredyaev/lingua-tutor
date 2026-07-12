@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "codes": [
+    { "code": "es.orthography.accent", "core_category": "orthography",
+      "title_ru": "Пропущенное или лишнее ударение (tilde)",
+      "guidance": "Повторите правила ударения; различайте tú/tu, sí/si, qué/que." },
+    { "code": "es.orthography.general", "core_category": "orthography",
+      "title_ru": "Орфография и пунктуация",
+      "guidance": "Проверьте написание, регистр и знаки ¿¡." },
+    { "code": "es.verb.ser_estar", "core_category": "grammar",
+      "title_ru": "Путаница ser/estar",
+      "guidance": "ser — постоянные свойства и профессия; estar — состояние и место." },
+    { "code": "es.prep.por_para", "core_category": "grammar",
+      "title_ru": "Путаница por/para",
+      "guidance": "para — цель и адресат; por — причина, обмен, движение сквозь." },
+    { "code": "es.agreement.gender", "core_category": "grammar",
+      "title_ru": "Согласование рода/артикля",
+      "guidance": "Согласуйте артикль и прилагательное с родом существительного." },
+    { "code": "es.word_order", "core_category": "word_order",
+      "title_ru": "Порядок слов",
+      "guidance": "Проверьте позицию местоимений и прилагательных." },
+    { "code": "es.vocab.choice", "core_category": "vocabulary",
+      "title_ru": "Неудачный выбор слова",
+      "guidance": "Слово понятно, но носитель сказал бы иначе; выучите фразу целиком." },
+    { "code": "es.grammar.general", "core_category": "grammar",
+      "title_ru": "Грамматическая структура",
+      "guidance": "Сравните свою фразу с исправленной; проговорите правильный вариант трижды." }
+  ]
+}

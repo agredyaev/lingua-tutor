@@ -14,7 +14,11 @@ use tutor_contract::{LessonResult, parse_lesson_result, validate};
 use worker::{D1Database, Env, Request, Response, Result};
 
 /// `POST /api/v1/lessons/start` — body `{ language_profile_id, scenario, planned_goal }`.
-pub async fn start_lesson(mut req: Request, env: &Env) -> Result<Response> {
+pub async fn start_lesson(
+    registry: &language_pack_registry::LanguagePackRegistry,
+    mut req: Request,
+    env: &Env,
+) -> Result<Response> {
     #[derive(serde::Deserialize)]
     struct Body {
         language_profile_id: String,
@@ -36,6 +40,10 @@ pub async fn start_lesson(mut req: Request, env: &Env) -> Result<Response> {
     let Ok(profile) = profile_row.into_domain() else {
         return error_response(500, "corrupt_row", "stored profile is invalid");
     };
+    let pack_version = registry
+        .get(&profile.language_pack_id.0)
+        .map(|p| p.manifest().version.clone())
+        .unwrap_or_else(|| "0.0.0".to_owned());
     let lesson_id = new_id("les");
     let at = to_rfc3339(now());
     database
@@ -44,7 +52,7 @@ pub async fn start_lesson(mut req: Request, env: &Env) -> Result<Response> {
             lesson_id.clone().into(),
             profile.id.0.clone().into(),
             profile.language_pack_id.0.clone().into(),
-            "0.1.0".into(),
+            pack_version.into(),
             (profile.current_lesson_number + 1).into(),
             "active".into(),
             body.scenario.into(),

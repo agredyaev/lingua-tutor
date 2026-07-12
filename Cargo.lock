@@ -946,6 +946,7 @@ name = "language-pack-es-es"
 version = "0.1.0"
 dependencies = [
  "language-pack-api",
+ "serde",
  "serde_json",
  "test-support",
 ]

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "seeds": [
+    { "target_text": "¿Me pone un café con leche, por favor?", "prompt_ru": "Закажите кофе с молоком", "scenario": "es-cafe" },
+    { "target_text": "La cuenta, por favor.", "prompt_ru": "Попросите счёт", "scenario": "es-cafe" },
+    { "target_text": "¿Cuánto cuesta esto?", "prompt_ru": "Спросите, сколько это стоит", "scenario": "es-supermercado" },
+    { "target_text": "¿Dónde está la leche?", "prompt_ru": "Спросите, где молоко", "scenario": "es-supermercado" },
+    { "target_text": "¿Tiene una bolsa, por favor?", "prompt_ru": "Попросите пакет", "scenario": "es-supermercado" },
+    { "target_text": "Me llamo Alexéi y soy de Rusia.", "prompt_ru": "Представьтесь и скажите, откуда вы", "scenario": "es-presentarse" },
+    { "target_text": "Llevo poco tiempo en España.", "prompt_ru": "Скажите, что вы недавно в Испании", "scenario": "es-presentarse" },
+    { "target_text": "Estoy aprendiendo español.", "prompt_ru": "Скажите, что учите испанский", "scenario": "es-presentarse" },
+    { "target_text": "¿Puede hablar más despacio, por favor?", "prompt_ru": "Попросите говорить медленнее", "scenario": "es-presentarse" },
+    { "target_text": "¿Cómo se dice esto en español?", "prompt_ru": "Спросите, как это сказать по-испански", "scenario": "es-presentarse" },
+    { "target_text": "Un billete de ida y vuelta, por favor.", "prompt_ru": "Купите билет туда-обратно", "scenario": "es-transporte" },
+    { "target_text": "¿Este autobús va al centro?", "prompt_ru": "Спросите, идёт ли автобус в центр", "scenario": "es-transporte" },
+    { "target_text": "¿En qué parada tengo que bajarme?", "prompt_ru": "Спросите, на какой остановке выходить", "scenario": "es-transporte" },
+    { "target_text": "¿Tiene algo para la tos?", "prompt_ru": "Спросите что-нибудь от кашля", "scenario": "es-farmacia" },
+    { "target_text": "Me duele la cabeza desde ayer.", "prompt_ru": "Скажите, что со вчера болит голова", "scenario": "es-farmacia" },
+    { "target_text": "¿Necesito receta para esto?", "prompt_ru": "Спросите, нужен ли рецепт", "scenario": "es-farmacia" },
+    { "target_text": "Quería pedir cita con el médico.", "prompt_ru": "Запишитесь к врачу", "scenario": "es-medico" },
+    { "target_text": "¿Hay alguna cita disponible para esta semana?", "prompt_ru": "Спросите про запись на этой неделе", "scenario": "es-medico" },
+    { "target_text": "Vengo a ver el piso.", "prompt_ru": "Скажите, что пришли смотреть квартиру", "scenario": "es-alquiler" },
+    { "target_text": "¿Están incluidos los gastos?", "prompt_ru": "Спросите, включены ли коммунальные", "scenario": "es-alquiler" }
+  ]
+}

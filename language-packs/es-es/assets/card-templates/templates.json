@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "templates": [
+    { "template_id": "es-production-situation", "intent": "production",
+      "prompt_template": "Ситуация: {situation}. Скажите это по-испански.",
+      "answer_evaluation_mode": "exact" },
+    { "template_id": "es-listening-transcribe", "intent": "listening",
+      "prompt_template": "Прослушайте у преподавателя: {source_reference}. Что было сказано и что вы ответите?",
+      "answer_evaluation_mode": "exact" },
+    { "template_id": "es-contrast-fix", "intent": "contrast",
+      "prompt_template": "Ситуация: {situation}. Вы обычно говорите «{typical_error}». Скажите правильно.",
+      "answer_evaluation_mode": "exact" },
+    { "template_id": "es-transfer-new-scenario", "intent": "transfer",
+      "prompt_template": "Вы знаете «{known_phrase}». Примените её: {new_scenario}.",
+      "answer_evaluation_mode": "exact" }
+  ]
+}

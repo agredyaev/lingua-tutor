@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "scenarios": [
+    { "id": "es-cafe", "title": "В кафе: заказать и попросить счёт", "level": "A1" },
+    { "id": "es-supermercado", "title": "Супермаркет: найти товар, спросить цену", "level": "A1" },
+    { "id": "es-presentarse", "title": "Познакомиться и рассказать о себе", "level": "A1" },
+    { "id": "es-transporte", "title": "Транспорт: билеты, направления, пересадки", "level": "A1" },
+    { "id": "es-farmacia", "title": "Аптека: симптомы и лекарства", "level": "A2" },
+    { "id": "es-medico", "title": "Запись к врачу и приём", "level": "A2" },
+    { "id": "es-alquiler", "title": "Аренда квартиры: осмотр и вопросы", "level": "A2" },
+    { "id": "es-banco", "title": "Банк: открыть счёт, объяснить проблему", "level": "A2" },
+    { "id": "es-telefonia", "title": "Мобильный тариф и интернет", "level": "A2" },
+    { "id": "es-small-talk", "title": "Небольшой разговор с соседями", "level": "A2" },
+    { "id": "es-ayuntamiento", "title": "Мэрия: empadronamiento и документы", "level": "B1" },
+    { "id": "es-averia", "title": "Поломка дома: объяснить мастеру", "level": "B1" }
+  ]
+}
