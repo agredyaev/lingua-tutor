@@ -4,6 +4,7 @@ members = [
     "apps/web",
     "apps/worker",
     "crates/language-pack-api",
+    "crates/language-pack-registry",
     "crates/shared-schema",
     "tests",
 ]
@@ -16,6 +17,8 @@ publish = false
 
 [workspace.dependencies]
 shared-schema = { path = "crates/shared-schema" }
+language-pack-api = { path = "crates/language-pack-api" }
+language-pack-registry = { path = "crates/language-pack-registry" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

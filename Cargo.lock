@@ -814,6 +814,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "language-pack-registry"
+version = "0.1.0"
+dependencies = [
+ "language-pack-api",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "leptos"
 version = "0.8.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"

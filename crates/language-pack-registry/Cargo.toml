@@ -1,0 +1,18 @@
+[package]
+name = "language-pack-registry"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Pack registration, ID lookup, contract-version check (06-language-packs.md §4)"
+
+[dependencies]
+language-pack-api = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true
