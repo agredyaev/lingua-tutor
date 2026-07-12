@@ -113,3 +113,34 @@ Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓, **69 tests 0 failed** �
 Fuzz status: proptest (normalization, scheduler) + cargo-fuzz (lesson-result parse) all active.
 
 **M1 essentially complete.** Next: iteration 5 = WBS 5 cards + review MVP (M2).
+
+## Iteration 5 — WBS 5 Cards + review MVP — 2026-07-12
+
+| Task | Status | Note |
+|---|---|---|
+| 5.1 Card model + repo | done | Card + content_hash (case/space/order-insensitive), card_tags, CardRow mapping; hash tests |
+| 5.2 Mutation workflow | done | plan_card_mutations: duplicates (existing + in-batch) rejected never-silent, activation budget → candidate overflow (warned), semantic-edit block, status validation, audit row per attempt; 7 tests |
+| 5.3 Atomic apply | done | lesson completion extends the same D1 batch: cards + tags + audit + **initial schedule state on activation** |
+| 5.4 Sessions + events | done | grade submit: idempotent, stale-hash 409, scheduler apply + event + state + card-status in one batch; **undo via compensating event + deterministic replay** of effective history |
+| 5.5 Backlog protection | done | adaptation::new_card_budget: pause >50 overdue, halve on 2 heavy/weak days, +1/day gradual restore; wired into queue budget |
+| 5.6 Endpoints | done | cards list/get/patch(edit_class)/suspend/restore/retire; review-sessions create/queue/events/undo-last/complete |
+| 5.7 Pack evaluation | done | POST /review/evaluate → active pack evaluate_answer |
+| 5.8 Stats | done | review/summary (today counts, grade distribution, time), review/forecast (due per day ≤30d) |
+
+Drift found:
+
+1. **POST /api/v1/review/evaluate added** — not in 08-http-api endpoint list; needed to satisfy WBS 5.7 (packs are server-side; client cannot evaluate). Reveal/compare UI consumes it at WBS 6.4.
+2. **Activation persists initial schedule state** — initial-state hash otherwise depends on fetch time; queue and grade must share one stable `prior_state_hash`. Cards without state are not reviewable (409).
+3. **Split/merge/link/add_listening_variant audited as rejected in M2** — implemented with the redesign loop (WBS 8), matching 15-wbs 5.2 scope note; never silently dropped.
+4. **`next` field in grade response is null** — client refetches queue; spec's "next queue item" shape kept, populated when WBS 6 UI defines the contract.
+5. **D1 rejects i64 binds** (BigInt) — intervals bound as exact f64 (< 2^53). Applies to all future numeric binds.
+6. **Card status transition table defined** (new→learning; learning pass→review; review Again→relearning; relearning pass→review) — spec §3 gives the diagram, table is the concrete v1 reading; unit-tested.
+7. **Grade transaction card-status update** added to the same batch (05 §7 lists event+state; card status is part of the same invariant).
+
+Scope creep: none.
+
+Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓ (one masked failure caught and fixed — pipe exit code hid clippy error; gate commands now checked individually), **87 tests 0 failed** ✓, wasm32 builds ✓, **e2e smoke: 14-step M1+M2 loop green** (…→ tutor card created + duplicate rejected → queue → pack evaluation → grade (status new→learning) → stale-hash 409 → event idempotency → undo → summary → forecast).
+
+**M2 exit gate: partial.** Tutor creates cards via lesson completion ✓; duplicates rejected ✓; restart loses nothing ✓ (D1). "Daily review end-to-end **in UI**" pending → gate closes after WBS 6 frontend.
+
+Next: iteration 6 = WBS 6 frontend core (routes, dashboard, import/export pages, review screen, card management).
