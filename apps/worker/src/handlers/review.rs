@@ -7,7 +7,7 @@ use application::{QueueCandidate, build_queue, next_card_status};
 use learning_core::{CardId, CardStatus, Timestamp};
 use review_engine::{
     FallbackScheduler, FsrsScheduler, Grade, InitialReviewInput, ReviewEventInput, ReviewScheduler,
-    ScheduledState, SchedulerSettings,
+    SchedulerSettings,
 };
 use worker::{D1Database, Env, Request, Response, Result};
 
