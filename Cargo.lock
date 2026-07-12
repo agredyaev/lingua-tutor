@@ -1629,6 +1629,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "synthetic-test-pack"
+version = "0.1.0"
+dependencies = [
+ "language-pack-api",
+]
+
+[[package]]
 name = "tachys"
 version = "0.2.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"

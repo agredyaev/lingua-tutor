@@ -6,6 +6,7 @@ members = [
     "crates/language-pack-api",
     "crates/language-pack-registry",
     "crates/shared-schema",
+    "language-packs/synthetic-test-pack",
     "tests",
 ]
 
