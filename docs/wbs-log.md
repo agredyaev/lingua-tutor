@@ -178,3 +178,35 @@ Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓, **89 tests 0 failed** �
 **M2 EXIT GATE — PASSED:** tutor creates cards via lesson completion ✓; daily review end-to-end in UI ✓ (review screen wired to live queue/grade/undo; automated browser e2e lands with Playwright at WBS 10.6); restart loses nothing (D1 + idempotency) ✓; duplicates rejected ✓.
 
 Next: iteration 7 = WBS 7 Spanish pack (7.1–7.7) — real normalization, error taxonomy, templates, tutor instructions, curriculum; parallel-safe, zero core changes expected (dependency gate enforces).
+
+## Iteration 7 — WBS 7 Spanish pack (M3) — 2026-07-12
+
+| Task | Status | Note |
+|---|---|---|
+| 7.1 Normalization + matching | done | canonical keeps case/diacritics/¿¡; comparison drops case + prosody punctuation, contracts `de el`→`del`/`a el`→`al`, **keeps diacritics** (tú≠tu); accent-only miss → Incorrect + "revisa las tildes" feedback; comma bug caught by regional-variant test |
+| 7.2 Error taxonomy | done | `error-taxonomy/taxonomy.json`: 8 stable `es.*` codes → core categories, Russian guidance; classifier = 8 bounded first-match rules (ser/estar, por/para, gender, order, accent, vocab) |
+| 7.3 Card templates | done | 4 intents, Russian prompt templates, `card-templates/templates.json` |
+| 7.4 Tutor instructions | done | `tutor-instructions/*-ru.md`: Spain-Spanish conventions (vosotros/coger/vale), level-aware, correction protocol referencing error_target_id + es.* codes |
+| 7.5 Curriculum | done | 12 CEFR scenarios A1–B1, life-in-Spain (empadronamiento, farmacia, alquiler…) |
+| 7.6 Phrase seeds | done | 20 A1 seeds with Russian prompts, every seed cross-referenced to a scenario |
+| 7.7 Conformance + asset validation | done | shared suite green; strict asset schemas (`deny_unknown_fields`), code uniqueness, seed→scenario referential checks |
+
+**Anti-pattern / performance review (explicit pass):**
+
+- No regex/ICU deps — plain char ops, single-pass canonicalization with `String::with_capacity` (09 §9 size rule; 16 §5). Pack adds ~0 measurable WASM weight.
+- Fixed word sets = const arrays + linear scan, not HashMap (16 §5 small-set rule). All classifier rules bounded linear in input length; conformance re-proves determinism/idempotence via 256-case proptest.
+- Taxonomy lookup = linear over 8 entries at classify time — measured set, no premature indexing.
+- `expect` only on embedded-asset parse with invariant comment (tests + conformance make failure a build defect). Dead-code allows are annotated with the consuming milestone (seeds → WBS 8.4).
+
+Drift found:
+
+1. **Caught: `lessons/start` hardcoded pack version "0.1.0"** — invisible until the manifest bumped to 0.2.0. Now reads the registry manifest. Historical rows keep the version that created them (06 §5) — bug class to watch at every pack bump.
+2. **Comparison drops internal commas** — policy addition (prosody, not meaning); without it accepted-variant matching failed on natural tutor punctuation.
+3. Seeds asset validated but not yet surfaced (enters tutor context at WBS 8.4) — `cfg_attr` dead-code allows document that.
+4. Core grep hits = test fixtures quoting spec §2 example + manifest fixture — allowed per iteration-3 refinement; zero identifiers.
+
+Scope creep: none. Zero core-crate changes (dependency gate held; the one worker change was the version bug fix).
+
+Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓, **98 tests 0 failed** ✓, conformance both packs ✓, 14-step smoke green ✓, wasm32 builds ✓.
+
+**M3 complete.** Next: iteration 8 = WBS 8 adaptive loop (M4) — table-driven rules in `adaptation`, recommendations persistence + endpoints + dashboard, redesign candidates, richer tutor context, recheck escalation wiring.
