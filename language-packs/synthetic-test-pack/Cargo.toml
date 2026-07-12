@@ -10,5 +10,8 @@ description = "Artificial-language pack for core CI (06-language-packs.md §6)"
 [dependencies]
 language-pack-api = { workspace = true }
 
+[dev-dependencies]
+test-support = { workspace = true }
+
 [lints]
 workspace = true

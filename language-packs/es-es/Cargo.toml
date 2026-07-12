@@ -11,5 +11,8 @@ description = "Spanish (Spain) language pack (06-language-packs.md §7)"
 language-pack-api = { workspace = true }
 serde_json = { workspace = true }
 
+[dev-dependencies]
+test-support = { workspace = true }
+
 [lints]
 workspace = true
