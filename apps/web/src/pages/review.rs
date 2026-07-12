@@ -23,19 +23,43 @@ const GRADE_LABELS: [(u8, &str); 4] = [
 pub fn ReviewPage() -> impl IntoView {
     let active = use_active_profile();
 
-    // One session per page visit: create it, then fetch the queue.
+    // One session per page visit: replay any offline backlog first, then
+    // create the session and fetch the queue; when the network is gone,
+    // fall back to the prefetched batch (09 §7).
+    let offline_mode = RwSignal::new(false);
     let session = LocalResource::new(move || {
         let id = active.id();
         async move {
             let Some(id) = id else { return Ok(None) };
-            let created: serde_json::Value = api_client::post(
+            let report = crate::offline::replay().await;
+            if report.interrupted
+                && let Some(cached) = crate::offline::cached_queue()
+            {
+                offline_mode.set(true);
+                return Ok(Some(cached));
+            }
+            let created: serde_json::Value = match api_client::post(
                 "/review-sessions",
                 &serde_json::json!({ "language_profile_id": id }),
             )
-            .await?;
+            .await
+            {
+                Ok(created) => created,
+                Err(ApiError::Network(_)) => {
+                    return crate::offline::cached_queue().map_or_else(
+                        || Err(ApiError::Network("offline, no prefetched batch".to_owned())),
+                        |cached| {
+                            offline_mode.set(true);
+                            Ok(Some(cached))
+                        },
+                    );
+                }
+                Err(e) => return Err(e),
+            };
             let session_id = created["id"].as_str().unwrap_or_default().to_owned();
             let queue: QueueDto =
                 api_client::get(&format!("/review-sessions/{session_id}/queue")).await?;
+            crate::offline::cache_queue(&queue);
             Ok::<Option<QueueDto>, ApiError>(Some(queue))
         }
     });
@@ -50,28 +74,68 @@ pub fn ReviewPage() -> impl IntoView {
     let position = RwSignal::new(0_usize);
     let revealed = RwSignal::new(false);
 
+    // Reveal instant, for measured response latency (non-reactive handle).
+    let revealed_at_ms = StoredValue::new(0_u64);
+
     let submit: SubmitAction = Action::new_local(move |input: &(String, u8, Option<String>)| {
         let (card_id, grade, prior_hash) = input.clone();
         let session_id = session_id.get_untracked();
         async move {
             let op = format!("op-{card_id}-{grade}-{}", now_ms());
-            let result: EventResultDto = api_client::post(
+            let response_millis =
+                u32::try_from(now_ms().saturating_sub(revealed_at_ms.get_value()))
+                    .unwrap_or(0)
+                    .min(600_000);
+            let body = serde_json::json!({
+                "client_operation_id": op,
+                "card_id": card_id,
+                "grade": grade,
+                "presented_at": now_rfc3339(),
+                "answered_at": now_rfc3339(),
+                "response_millis": response_millis,
+                "answer_revealed": true,
+                "prior_state_hash": prior_hash.clone().unwrap_or_default(),
+            });
+            match api_client::post::<_, EventResultDto>(
                 &format!("/review-sessions/{session_id}/events"),
-                &serde_json::json!({
-                    "client_operation_id": op,
-                    "card_id": card_id,
-                    "grade": grade,
-                    "presented_at": now_rfc3339(),
-                    "answered_at": now_rfc3339(),
-                    "response_millis": 0,
-                    "answer_revealed": true,
-                    "prior_state_hash": prior_hash.unwrap_or_default(),
-                }),
+                &body,
             )
-            .await?;
-            position.update(|p| *p += 1);
-            revealed.set(false);
-            Ok(result)
+            .await
+            {
+                Ok(result) => {
+                    position.update(|p| *p += 1);
+                    revealed.set(false);
+                    Ok(result)
+                }
+                Err(ApiError::Network(_)) => {
+                    // Offline: queue and continue locally (09 §7).
+                    let queued = crate::offline::queue_event(crate::offline::PendingEvent {
+                        session_id,
+                        client_operation_id: op,
+                        card_id: card_id.clone(),
+                        grade,
+                        presented_at: now_rfc3339(),
+                        answered_at: now_rfc3339(),
+                        response_millis,
+                        prior_state_hash: prior_hash.unwrap_or_default(),
+                    });
+                    if !queued {
+                        return Err(ApiError::Network(
+                            "offline queue full — reconnect to sync".to_owned(),
+                        ));
+                    }
+                    offline_mode.set(true);
+                    position.update(|p| *p += 1);
+                    revealed.set(false);
+                    Ok(EventResultDto {
+                        event_id: String::new(),
+                        card_id,
+                        card_status: None,
+                        duplicate: false,
+                    })
+                }
+                Err(e) => Err(e),
+            }
         }
     });
 
@@ -101,6 +165,7 @@ pub fn ReviewPage() -> impl IntoView {
         match event.key().as_str() {
             " " => {
                 event.prevent_default();
+                revealed_at_ms.set_value(now_ms());
                 revealed.set(true);
             }
             g @ ("1" | "2" | "3" | "4") if revealed.get_untracked() => {
@@ -132,6 +197,7 @@ pub fn ReviewPage() -> impl IntoView {
                                                 index=index
                                                 total=total
                                                 revealed=revealed
+                                                revealed_at_ms=revealed_at_ms
                                                 submit=submit
                                                 undo=undo
                                             />
@@ -152,6 +218,11 @@ pub fn ReviewPage() -> impl IntoView {
                         })
                 }}
             </Transition>
+            {move || {
+                offline_mode
+                    .get()
+                    .then(|| view! { <p class="offline">"Offline — grades sync on reconnect."</p> })
+            }}
         </Page>
     }
 }
@@ -162,6 +233,7 @@ fn CardView(
     index: usize,
     total: usize,
     revealed: RwSignal<bool>,
+    revealed_at_ms: StoredValue<u64>,
     submit: SubmitAction,
     undo: UndoAction,
 ) -> impl IntoView {
@@ -176,7 +248,10 @@ fn CardView(
                 when=move || revealed.get()
                 fallback=move || {
                     view! {
-                        <button on:click=move |_| revealed.set(true)>
+                        <button on:click=move |_| {
+                            revealed_at_ms.set_value(now_ms());
+                            revealed.set(true);
+                        }>
                             "Reveal (space) — say it out loud first"
                         </button>
                     }

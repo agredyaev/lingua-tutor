@@ -1,0 +1,9 @@
+{
+  "name": "Lingua Tutor",
+  "short_name": "Lingua",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#1f3a5f",
+  "icons": []
+}

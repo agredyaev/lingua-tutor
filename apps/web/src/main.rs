@@ -4,6 +4,7 @@
 
 mod api_client;
 mod app;
+mod offline;
 mod pages;
 
 fn main() {

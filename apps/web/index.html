@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Lingua Tutor</title>
     <link data-trunk rel="rust" />
+    <link data-trunk rel="copy-file" href="sw.js" />
+    <link data-trunk rel="copy-file" href="manifest.webmanifest" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js"));
+      }
+    </script>
     <style>
       /* Mobile-first, no framework (09-frontend.md §1). */
       :root { font-family: -apple-system, system-ui, sans-serif; line-height: 1.45; }
