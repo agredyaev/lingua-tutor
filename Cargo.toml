@@ -4,6 +4,7 @@ members = [
     "apps/web",
     "apps/worker",
     "crates/shared-schema",
+    "tests",
 ]
 
 [workspace.package]

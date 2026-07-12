@@ -5,5 +5,14 @@
   "compatibility_date": "2026-07-12",
   "build": {
     "command": "cargo install -q worker-build && worker-build --release"
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lingua-tutor-dev",
+      // Placeholder until WBS 10.1 (Terraform creates real dev/prod DBs, ADR-0003).
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../../migrations"
+    }
+  ]
 }

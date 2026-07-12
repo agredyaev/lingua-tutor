@@ -1,0 +1,17 @@
+[package]
+name = "integration-tests"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Cross-crate integration tests (02-workspace.md §1)"
+
+[lib]
+path = "lib.rs"
+
+[dev-dependencies]
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+[lints]
+workspace = true
