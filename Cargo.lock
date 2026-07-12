@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "adaptation"
+version = "0.1.0"
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -34,6 +38,7 @@ version = "0.1.0"
 dependencies = [
  "language-pack-api",
  "learning-core",
+ "review-engine",
  "semver",
  "serde",
  "serde_json",

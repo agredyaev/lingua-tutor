@@ -11,6 +11,7 @@ description = "Use-case services: pure planning logic, no IO (02-workspace.md §
 learning-core = { workspace = true }
 language-pack-api = { workspace = true }
 tutor-contract = { workspace = true }
+review-engine = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

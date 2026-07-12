@@ -2,9 +2,11 @@
 //! language-specific logic, no dependency on any concrete pack. Persistence
 //! column mapping lives in `apps/worker` repositories.
 
+mod card;
 mod ids;
 mod mastery;
 
+pub use card::{Card, CardActor, CardIntent, CardStatus};
 pub use ids::{
     CardId, ErrorTargetId, EvidenceId, LanguagePackId, LanguageProfileId, LanguageTag, LearnerId,
     LearningItemId, LessonId, RecommendationId,

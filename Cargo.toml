@@ -5,6 +5,7 @@ exclude = ["fuzz"]
 members = [
     "apps/web",
     "apps/worker",
+    "crates/adaptation",
     "crates/application",
     "crates/language-pack-api",
     "crates/language-pack-registry",
@@ -35,6 +36,7 @@ review-engine = { path = "crates/review-engine" }
 learning-core = { path = "crates/learning-core" }
 tutor-contract = { path = "crates/tutor-contract" }
 application = { path = "crates/application" }
+adaptation = { path = "crates/adaptation" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"

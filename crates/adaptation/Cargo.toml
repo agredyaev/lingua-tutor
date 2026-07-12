@@ -1,0 +1,11 @@
+[package]
+name = "adaptation"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Deterministic adaptive rules (07-tutor-contract.md §7, 05 §9)"
+
+[lints]
+workspace = true
