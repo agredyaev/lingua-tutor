@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "apps/web",
     "apps/worker",
+    "crates/language-pack-api",
     "crates/shared-schema",
     "tests",
 ]
