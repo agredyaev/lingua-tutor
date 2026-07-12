@@ -2,10 +2,11 @@
 //! `learning_item_evidence`, `error_targets`, `error_occurrences`,
 //! `error_rechecks`, `listening_attempts`.
 
-use super::{RepoError, enum_str, parse_enum};
+use super::{RepoError, enum_str, from_rfc3339, parse_enum};
 use learning_core::{
-    ErrorTarget, ErrorTargetId, ErrorTargetStatus, LanguagePackId, LanguageProfileId, LanguageTag,
-    LearningItem, LearningItemId, LearningItemStatus, LearningItemType, LessonId,
+    ErrorTarget, ErrorTargetId, ErrorTargetStatus, EvidenceId, EvidenceKind, LanguagePackId,
+    LanguageProfileId, LanguageTag, LearningItem, LearningItemEvidence, LearningItemId,
+    LearningItemStatus, LearningItemType, LessonId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -183,6 +184,54 @@ impl ItemRow {
             language_metadata_json: item.language_metadata.to_string(),
             introduced_lesson_id: item.introduced_lesson_id.as_ref().map(|l| l.0.clone()),
         }
+    }
+}
+
+/// `learning_item_evidence` row, column-shaped.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvidenceRow {
+    /// `id`.
+    pub id: String,
+    /// `learning_item_id`.
+    pub learning_item_id: String,
+    /// `lesson_id`.
+    pub lesson_id: Option<String>,
+    /// `kind` TEXT.
+    pub kind: String,
+    /// `success` 0/1.
+    pub success: u8,
+    /// `detail`.
+    pub detail: Option<String>,
+    /// `pack_metadata_json`.
+    pub pack_metadata_json: Option<String>,
+    /// `recorded_at` RFC 3339.
+    pub recorded_at: String,
+}
+
+impl EvidenceRow {
+    /// Column row → domain type.
+    ///
+    /// # Errors
+    ///
+    /// [`RepoError::CorruptRow`] on invalid kind, metadata JSON, or timestamp.
+    pub fn into_domain(self) -> Result<LearningItemEvidence, RepoError> {
+        let kind: EvidenceKind = parse_enum("kind", &self.kind)?;
+        let pack_metadata = self
+            .pack_metadata_json
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(|e| RepoError::CorruptRow(format!("pack_metadata_json: {e}")))?;
+        Ok(LearningItemEvidence {
+            id: EvidenceId(self.id),
+            learning_item_id: LearningItemId(self.learning_item_id),
+            lesson_id: self.lesson_id.map(LessonId),
+            kind,
+            success: self.success != 0,
+            detail: self.detail,
+            pack_metadata,
+            recorded_at: from_rfc3339(&self.recorded_at)?,
+        })
     }
 }
 

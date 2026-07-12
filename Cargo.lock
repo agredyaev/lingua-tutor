@@ -2537,6 +2537,7 @@ dependencies = [
 name = "worker-api"
 version = "0.1.0"
 dependencies = [
+ "application",
  "chrono",
  "language-pack-api",
  "language-pack-es-es",
@@ -2547,6 +2548,8 @@ dependencies = [
  "serde_json",
  "shared-schema",
  "thiserror 2.0.18",
+ "tutor-contract",
+ "uuid",
  "worker",
 ]
 

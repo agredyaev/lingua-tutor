@@ -1,0 +1,285 @@
+//! Learning state, next lesson, errors, listening, tutor-context export
+//! (08-http-api.md §3, §7, §8).
+
+use crate::api::{db, error_response, new_id, now, query_param};
+use crate::handlers::profiles::fetch_profile;
+use crate::repositories::{records, to_rfc3339};
+use worker::{Env, Request, Response, Result};
+
+/// `GET /api/v1/learning-state?language_profile_id={id}` — item counts by
+/// status + active error targets + due rechecks.
+pub async fn learning_state(req: &Request, env: &Env) -> Result<Response> {
+    let url = req.url()?;
+    let Some(profile_id) = query_param(&url, "language_profile_id") else {
+        return error_response(400, "missing_param", "language_profile_id required");
+    };
+    let database = db(env)?;
+    #[derive(serde::Deserialize)]
+    struct CountRow {
+        status: String,
+        n: u32,
+    }
+    let counts: Vec<CountRow> = database
+        .prepare(
+            "SELECT status, COUNT(*) AS n FROM learning_items
+             WHERE learner_language_profile_id = ?1 GROUP BY status",
+        )
+        .bind(&[profile_id.clone().into()])?
+        .all()
+        .await?
+        .results()?;
+    let items: serde_json::Map<String, serde_json::Value> = counts
+        .into_iter()
+        .map(|c| (c.status, serde_json::json!(c.n)))
+        .collect();
+
+    #[derive(serde::Deserialize)]
+    struct OneCount {
+        n: u32,
+    }
+    let active_errors = database
+        .prepare(
+            "SELECT COUNT(*) AS n FROM error_targets
+             WHERE learner_language_profile_id = ?1 AND status IN ('active','recheck')",
+        )
+        .bind(&[profile_id.clone().into()])?
+        .first::<OneCount>(None)
+        .await?
+        .map_or(0, |c| c.n);
+    let due_rechecks = database
+        .prepare(
+            "SELECT COUNT(*) AS n FROM error_rechecks r
+             JOIN error_targets t ON t.id = r.error_target_id
+             WHERE t.learner_language_profile_id = ?1
+               AND r.completed_at IS NULL AND r.due_at <= ?2",
+        )
+        .bind(&[profile_id.into(), to_rfc3339(now()).into()])?
+        .first::<OneCount>(None)
+        .await?
+        .map_or(0, |c| c.n);
+
+    Response::from_json(&serde_json::json!({
+        "items_by_status": items,
+        "active_error_targets": active_errors,
+        "due_error_rechecks": due_rechecks,
+    }))
+}
+
+/// `GET /api/v1/next-lesson?language_profile_id={id}`.
+pub async fn next_lesson(req: &Request, env: &Env) -> Result<Response> {
+    let url = req.url()?;
+    let Some(profile_id) = query_param(&url, "language_profile_id") else {
+        return error_response(400, "missing_param", "language_profile_id required");
+    };
+    let database = db(env)?;
+    let Some(profile_row) = fetch_profile(&database, &profile_id).await? else {
+        return error_response(404, "not_found", "unknown profile");
+    };
+    let Ok(profile) = profile_row.into_domain() else {
+        return error_response(500, "corrupt_row", "stored profile is invalid");
+    };
+    #[derive(serde::Deserialize)]
+    struct GoalRow {
+        next_goal: Option<String>,
+        scenario: String,
+    }
+    let last = database
+        .prepare(
+            "SELECT next_goal, scenario FROM lessons
+             WHERE learner_language_profile_id = ?1 AND status = 'completed'
+             ORDER BY lesson_number DESC LIMIT 1",
+        )
+        .bind(&[profile.id.0.clone().into()])?
+        .first::<GoalRow>(None)
+        .await?;
+    Response::from_json(&serde_json::json!({
+        "lesson_number": profile.current_lesson_number + 1,
+        "goal": last.as_ref().and_then(|l| l.next_goal.clone()),
+        "previous_scenario": last.map(|l| l.scenario),
+        "estimated_level": profile.estimated_level,
+    }))
+}
+
+/// `GET /api/v1/error-targets?language_profile_id={id}&status=…`.
+pub async fn list_error_targets(req: &Request, env: &Env) -> Result<Response> {
+    let url = req.url()?;
+    let Some(profile_id) = query_param(&url, "language_profile_id") else {
+        return error_response(400, "missing_param", "language_profile_id required");
+    };
+    let status = query_param(&url, "status");
+    let rows: Vec<records::ErrorTargetRow> = db(env)?
+        .prepare(records::SELECT_ERROR_TARGETS)
+        .bind(&[
+            profile_id.into(),
+            status.map_or(worker::wasm_bindgen::JsValue::NULL, Into::into),
+            100.into(),
+        ])?
+        .all()
+        .await?
+        .results()?;
+    let domain: Vec<_> = rows
+        .into_iter()
+        .filter_map(|r| r.into_domain().ok())
+        .collect();
+    Response::from_json(&domain)
+}
+
+/// `GET /api/v1/error-targets/{id}`.
+pub async fn get_error_target(env: &Env, target_id: &str) -> Result<Response> {
+    let row = db(env)?
+        .prepare(records::SELECT_ERROR_TARGET)
+        .bind(&[target_id.into()])?
+        .first::<records::ErrorTargetRow>(None)
+        .await?;
+    match row.and_then(|r| r.into_domain().ok()) {
+        Some(target) => Response::from_json(&target),
+        None => error_response(404, "not_found", "unknown error target"),
+    }
+}
+
+/// `POST /api/v1/error-targets/{id}/rechecks/{recheck_id}/complete`
+/// — body `{ "passed": true }`. Failed recheck → target back to active.
+pub async fn complete_recheck(
+    mut req: Request,
+    env: &Env,
+    target_id: &str,
+    recheck_id: &str,
+) -> Result<Response> {
+    #[derive(serde::Deserialize)]
+    struct Body {
+        passed: bool,
+    }
+    let Ok(body) = req.json::<Body>().await else {
+        return error_response(400, "invalid_body", "expected { passed: bool }");
+    };
+    let database = db(env)?;
+    let at = to_rfc3339(now());
+    database
+        .prepare(records::COMPLETE_ERROR_RECHECK)
+        .bind(&[
+            recheck_id.into(),
+            at.clone().into(),
+            u8::from(body.passed).into(),
+        ])?
+        .run()
+        .await?;
+    // Failed 1/3/7 recheck returns the target to active practice (03 §6).
+    let new_status = if body.passed { "recheck" } else { "active" };
+    database
+        .prepare("UPDATE error_targets SET status = ?2, updated_at = ?3 WHERE id = ?1")
+        .bind(&[target_id.into(), new_status.into(), at.into()])?
+        .run()
+        .await?;
+    Response::from_json(&serde_json::json!({ "recheck_id": recheck_id, "passed": body.passed }))
+}
+
+/// `POST /api/v1/listening-attempts`.
+pub async fn create_listening_attempt(mut req: Request, env: &Env) -> Result<Response> {
+    #[derive(serde::Deserialize)]
+    struct Body {
+        language_profile_id: String,
+        #[serde(default)]
+        learning_item_id: Option<String>,
+        #[serde(default)]
+        lesson_id: Option<String>,
+        #[serde(default)]
+        source_reference: Option<String>,
+        #[serde(default)]
+        transcript: Option<String>,
+        success: bool,
+    }
+    let Ok(body) = req.json::<Body>().await else {
+        return error_response(400, "invalid_body", "malformed listening attempt");
+    };
+    let id = new_id("la");
+    db(env)?
+        .prepare(records::INSERT_LISTENING_ATTEMPT)
+        .bind(&[
+            id.clone().into(),
+            body.language_profile_id.into(),
+            body.learning_item_id
+                .map_or(worker::wasm_bindgen::JsValue::NULL, Into::into),
+            body.lesson_id
+                .map_or(worker::wasm_bindgen::JsValue::NULL, Into::into),
+            body.source_reference
+                .map_or(worker::wasm_bindgen::JsValue::NULL, Into::into),
+            body.transcript
+                .map_or(worker::wasm_bindgen::JsValue::NULL, Into::into),
+            u8::from(body.success).into(),
+            to_rfc3339(now()).into(),
+        ])?
+        .run()
+        .await?;
+    Response::from_json(&serde_json::json!({ "id": id })).map(|r| r.with_status(201))
+}
+
+/// `GET /api/v1/export/tutor-context?language_profile_id={id}` — compact
+/// context for pasting into ChatGPT (08-http-api.md §7). Versioned.
+pub async fn tutor_context(
+    registry: &language_pack_registry::LanguagePackRegistry,
+    req: &Request,
+    env: &Env,
+) -> Result<Response> {
+    let url = req.url()?;
+    let Some(profile_id) = query_param(&url, "language_profile_id") else {
+        return error_response(400, "missing_param", "language_profile_id required");
+    };
+    let database = db(env)?;
+    let Some(profile_row) = fetch_profile(&database, &profile_id).await? else {
+        return error_response(404, "not_found", "unknown profile");
+    };
+    let Ok(profile) = profile_row.into_domain() else {
+        return error_response(500, "corrupt_row", "stored profile is invalid");
+    };
+    let Some(pack) = registry.get(&profile.language_pack_id.0) else {
+        return error_response(409, "pack_incompatible", "profile pack not registered");
+    };
+
+    let error_rows: Vec<records::ErrorTargetRow> = database
+        .prepare(records::SELECT_ERROR_TARGETS)
+        .bind(&[
+            profile.id.0.clone().into(),
+            worker::wasm_bindgen::JsValue::NULL,
+            20.into(),
+        ])?
+        .all()
+        .await?
+        .results()?;
+    let errors: Vec<serde_json::Value> = error_rows
+        .into_iter()
+        .filter_map(|r| r.into_domain().ok())
+        .filter(|t| t.status != learning_core::ErrorTargetStatus::Resolved)
+        .map(|t| {
+            serde_json::json!({
+                "error_target_id": t.id.0,
+                "core_category": t.core_category,
+                "pack_error_code": t.pack_error_code,
+                "original_production": t.original_production,
+                "corrected_production": t.corrected_production,
+                "occurrence_count": t.occurrence_count,
+                "method_change_required": t.method_change_required,
+            })
+        })
+        .collect();
+
+    let learner_view = language_pack_api::LearnerLanguageProfile {
+        source_language: profile.source_language.0.clone(),
+        target_locale: profile.target_locale.0.clone(),
+        estimated_level: profile.estimated_level.clone(),
+    };
+    let instructions = pack.tutor_instructions(&learner_view);
+
+    Response::from_json(&serde_json::json!({
+        "schema_version": "1",
+        "language_profile_id": profile.id.0,
+        "language_pack": pack.manifest(),
+        "next_lesson_number": profile.current_lesson_number + 1,
+        "estimated_level": profile.estimated_level,
+        "tutor_instructions": instructions,
+        "active_error_targets": errors,
+        "lesson_result_contract": {
+            "schema_version": tutor_contract::SCHEMA_VERSION,
+            "endpoint": "/api/v1/import/lesson-result/validate",
+        },
+    }))
+}
