@@ -31,3 +31,29 @@ Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓, `cargo test --workspace`
 Fuzz status: proptest not yet needed (no invariant-bearing logic yet); first property suite lands WBS 3.5 (scheduler intervals); cargo-fuzz lands WBS 4.6 (tutor-contract parse).
 
 Next: iteration 2 = WBS 2 plugin spine.
+
+## Iteration 2 — WBS 2 Plugin spine — 2026-07-12
+
+| Task | Status | Note |
+|---|---|---|
+| 2.1 language-pack-api | done | LanguagePack trait + all boundary types; CONTRACT_VERSION=1; manifest parses spec §3 JSON (string or numeric contract_version); 4 tests |
+| 2.2 language-pack-registry | done | ID lookup, contract gate naming offending pack, duplicate-ID rejection; 4 tests vs fake pack |
+| 2.3 synthetic-test-pack | done | full contract, artificial rules, stable SYN-* codes, 4 intent templates; 4 unit tests + conformance |
+| 2.4 es-ES stub | done | embedded manifest.json, baseline normalization (whitespace/case, diacritics kept), exact matching; capability: answer_matching only; registered + selectable via `built_in_language_packs()` in worker; 3 tests + conformance |
+| 2.5 conformance suite | done | test-support: manifest validity, contract check, **proptest determinism+idempotence of normalization (256 cases, fixed ChaCha seed)**, bounded/deterministic evaluation, stable codes, capability↔template coverage both directions; green on both packs |
+| 2.6 dependency-direction gate | done | scans crates/*/Cargo.toml (inline + table syntax); es-ES forbidden everywhere in core, synthetic dev-only; **proven red on injected violation, then reverted** |
+
+Drift found:
+
+1. **Boundary `LearnerLanguageProfile` owned by `language-pack-api`**: 06 §2 trait signature references the type; 02 §3 forbids api→core dependency. Resolution: pack-facing view type lives in the api crate; `application` maps from the `learning-core` domain type at WBS 4. Design clarification, not scope change.
+2. **`built_in_language_packs()` lives in `apps/worker`** (composition root), not the registry crate — reconciles 06 §4 example with 02 §3 "core ↛ concrete pack". Enforced by 2.6 gate + worker test (synthetic pack absent from production composition).
+3. **`CoreErrorCategory` values defined** (grammar, vocabulary, word_order, register, pronunciation, orthography, other): spec declares "core-owned closed set" without enumerating. Recorded here; packs map into it.
+4. **2.6 gate bug caught by prove-red step**: first parser missed `[dependencies.NAME]` table syntax — injected violation passed. Fixed, re-proven on both syntaxes. Prove-red stays mandatory for every future CI gate.
+
+Scope creep: none.
+
+Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓, 27 tests 0 failed ✓, worker wasm32 build ✓, conformance both packs ✓, dependency gate ✓, core grep (spanish/anki) clean ✓.
+
+Fuzz status: **active** — proptest normalization properties run in every `cargo test` via conformance suite. Scheduler property tests next (WBS 3.5); cargo-fuzz at 4.6.
+
+Next: iteration 3 = WBS 3 scheduler spike + review-engine core, then M0 exit gate.
