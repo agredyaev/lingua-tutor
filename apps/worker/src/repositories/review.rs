@@ -195,3 +195,36 @@ impl ScheduleStateRow {
         }
     }
 }
+
+/// Last-window effective grades per card touched in a session (window
+/// function — one query for all cards, 16-rust-guidelines.md §5).
+pub const SELECT_SESSION_CARD_SIGNALS: &str = "SELECT w.card_id, w.grade, w.response_millis
+ FROM (
+   SELECT e.card_id, e.grade, e.response_millis,
+          ROW_NUMBER() OVER (PARTITION BY e.card_id
+                             ORDER BY e.created_at DESC, e.id DESC) AS rn
+   FROM review_events e
+   WHERE e.compensates_event_id IS NULL
+     AND e.id NOT IN (SELECT compensates_event_id FROM review_events
+                      WHERE compensates_event_id IS NOT NULL)
+     AND e.card_id IN (SELECT DISTINCT card_id FROM review_events
+                       WHERE review_session_id = ?1)
+ ) w WHERE w.rn <= 10 ORDER BY w.card_id, w.rn";
+
+/// Evidence + volume aggregates per session card (one grouped query).
+pub const SELECT_SESSION_CARD_EVIDENCE: &str = "SELECT c.id AS card_id,
+    c.source_learning_item_id,
+    COALESCE(SUM(CASE WHEN ev.kind = 'spontaneous_production' AND ev.success = 0
+                      THEN 1 ELSE 0 END), 0) AS spont_fail,
+    COALESCE(SUM(CASE WHEN ev.kind = 'spontaneous_production' AND ev.success = 1
+                      THEN 1 ELSE 0 END), 0) AS spont_ok,
+    COALESCE(SUM(CASE WHEN ev.kind = 'prompted_production' AND ev.success = 1
+                      THEN 1 ELSE 0 END), 0) AS prompted_ok,
+    COALESCE(SUM(CASE WHEN ev.kind = 'listening' AND ev.success = 0
+                      THEN 1 ELSE 0 END), 0) AS listen_fail,
+    (SELECT COUNT(*) FROM review_events re
+      WHERE re.card_id = c.id AND re.compensates_event_id IS NULL) AS review_count
+ FROM cards c
+ LEFT JOIN learning_item_evidence ev ON ev.learning_item_id = c.source_learning_item_id
+ WHERE c.id IN (SELECT DISTINCT card_id FROM review_events WHERE review_session_id = ?1)
+ GROUP BY c.id";

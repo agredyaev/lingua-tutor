@@ -170,6 +170,36 @@ pub async fn complete_recheck(
         .bind(&[target_id.into(), new_status.into(), at.into()])?
         .run()
         .await?;
+    if !body.passed {
+        #[derive(serde::Deserialize)]
+        struct TargetRow {
+            learner_language_profile_id: String,
+        }
+        #[derive(serde::Deserialize)]
+        struct RecheckRow {
+            offset_days: u32,
+        }
+        let profile = database
+            .prepare("SELECT learner_language_profile_id FROM error_targets WHERE id = ?1")
+            .bind(&[target_id.into()])?
+            .first::<TargetRow>(None)
+            .await?;
+        let offset = database
+            .prepare("SELECT offset_days FROM error_rechecks WHERE id = ?1")
+            .bind(&[recheck_id.into()])?
+            .first::<RecheckRow>(None)
+            .await?
+            .map_or(1, |r| r.offset_days);
+        if let Some(profile) = profile {
+            let rec = adaptation::recheck_failed(target_id, offset);
+            crate::handlers::recommendations::insert_all(
+                &database,
+                &profile.learner_language_profile_id,
+                &[rec],
+            )
+            .await?;
+        }
+    }
     Response::from_json(&serde_json::json!({ "recheck_id": recheck_id, "passed": body.passed }))
 }
 
@@ -269,6 +299,32 @@ pub async fn tutor_context(
     };
     let instructions = pack.tutor_instructions(&learner_view);
 
+    // 8.4: review + redesign evidence enter the tutor context.
+    let open_recommendations: Vec<serde_json::Value> = database
+        .prepare(crate::repositories::recommendations::SELECT_OPEN)
+        .bind(&[profile.id.0.clone().into(), 20.into()])?
+        .all()
+        .await?
+        .results()?;
+    let redesign: Vec<serde_json::Value> = database
+        .prepare(crate::repositories::recommendations::SELECT_REDESIGN_CANDIDATES)
+        .bind(&[profile.id.0.clone().into()])?
+        .all()
+        .await?
+        .results()?;
+    #[derive(serde::Deserialize)]
+    struct EventRow {
+        grade: u8,
+    }
+    let week_ago = to_rfc3339(learning_core::Timestamp(now().0 - 7 * 86_400));
+    let week_events: Vec<EventRow> = database
+        .prepare(crate::repositories::review::SELECT_EVENTS_SINCE)
+        .bind(&[profile.id.0.clone().into(), week_ago.into()])?
+        .all()
+        .await?
+        .results()?;
+    let again_count = week_events.iter().filter(|e| e.grade == 1).count();
+
     Response::from_json(&serde_json::json!({
         "schema_version": "1",
         "language_profile_id": profile.id.0,
@@ -277,6 +333,13 @@ pub async fn tutor_context(
         "estimated_level": profile.estimated_level,
         "tutor_instructions": instructions,
         "active_error_targets": errors,
+        "review_summary_7d": {
+            "reviews": week_events.len(),
+            "again_count": again_count,
+        },
+        "redesign_candidates": redesign,
+        "open_recommendations": open_recommendations,
+        "curriculum_scenarios": pack.curriculum_catalog().scenarios,
         "lesson_result_contract": {
             "schema_version": tutor_contract::SCHEMA_VERSION,
             "endpoint": "/api/v1/import/lesson-result/validate",
@@ -412,6 +475,25 @@ pub async fn dashboard(req: &Request, env: &Env) -> Result<Response> {
 
     let budget = crate::handlers::review::effective_budget(&database, &profile_id, at).await?;
 
+    #[derive(serde::Deserialize)]
+    struct RecRow {
+        detail_json: String,
+    }
+    let rec_rows: Vec<RecRow> = database
+        .prepare(crate::repositories::recommendations::SELECT_OPEN)
+        .bind(&[profile_id.clone().into(), 5.into()])?
+        .all()
+        .await?
+        .results()?;
+    let open_recommendations: Vec<String> = rec_rows
+        .iter()
+        .filter_map(|r| {
+            serde_json::from_str::<serde_json::Value>(&r.detail_json)
+                .ok()
+                .and_then(|v| v["detail"].as_str().map(str::to_owned))
+        })
+        .collect();
+
     // Exceptions first (09-frontend.md §6).
     let mut exceptions = Vec::new();
     if overdue > 0 {
@@ -440,5 +522,6 @@ pub async fn dashboard(req: &Request, env: &Env) -> Result<Response> {
         next_lesson_number: profile.current_lesson_number + 1,
         next_lesson_goal: goal,
         items_by_status: items,
+        open_recommendations,
     })
 }

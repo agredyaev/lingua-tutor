@@ -503,7 +503,9 @@ pub async fn undo_last(env: &Env, session_id: &str) -> Result<Response> {
     }))
 }
 
-/// `POST /api/v1/review-sessions/{session_id}/complete`.
+/// `POST /api/v1/review-sessions/{session_id}/complete` — closes the session
+/// and runs the adaptive rule table over its cards (WBS 8.1: recommendations,
+/// never silent mutation).
 pub async fn complete_session(mut req: Request, env: &Env, session_id: &str) -> Result<Response> {
     #[derive(serde::Deserialize)]
     struct Body {
@@ -513,7 +515,20 @@ pub async fn complete_session(mut req: Request, env: &Env, session_id: &str) -> 
     let Ok(body) = req.json::<Body>().await else {
         return error_response(400, "invalid_body", "expected card_count + review_seconds");
     };
-    db(env)?
+    let database = db(env)?;
+    #[derive(serde::Deserialize)]
+    struct SessionRow {
+        learner_language_profile_id: String,
+    }
+    let Some(session) = database
+        .prepare(review::SELECT_SESSION)
+        .bind(&[session_id.into()])?
+        .first::<SessionRow>(None)
+        .await?
+    else {
+        return error_response(404, "not_found", "unknown session");
+    };
+    database
         .prepare(review::COMPLETE_SESSION)
         .bind(&[
             session_id.into(),
@@ -523,7 +538,85 @@ pub async fn complete_session(mut req: Request, env: &Env, session_id: &str) -> 
         ])?
         .run()
         .await?;
-    Response::from_json(&serde_json::json!({ "completed": true }))
+
+    let signals = collect_session_signals(&database, session_id).await?;
+    let recommendations: Vec<adaptation::Recommendation> = signals
+        .iter()
+        .flat_map(adaptation::evaluate_card_rules)
+        .collect();
+    let created = crate::handlers::recommendations::insert_all(
+        &database,
+        &session.learner_language_profile_id,
+        &recommendations,
+    )
+    .await?;
+    Response::from_json(&serde_json::json!({
+        "completed": true,
+        "recommendations_created": created,
+    }))
+}
+
+/// Two fixed queries → bounded per-card signal windows (adaptation input).
+async fn collect_session_signals(
+    database: &D1Database,
+    session_id: &str,
+) -> Result<Vec<adaptation::CardSignals>> {
+    #[derive(serde::Deserialize)]
+    struct GradeRow {
+        card_id: String,
+        grade: u8,
+        response_millis: u32,
+    }
+    #[derive(serde::Deserialize)]
+    struct EvidenceRow {
+        card_id: String,
+        source_learning_item_id: Option<String>,
+        spont_fail: u32,
+        spont_ok: u32,
+        prompted_ok: u32,
+        listen_fail: u32,
+        review_count: u32,
+    }
+    let grades: Vec<GradeRow> = database
+        .prepare(review::SELECT_SESSION_CARD_SIGNALS)
+        .bind(&[session_id.into()])?
+        .all()
+        .await?
+        .results()?;
+    let evidence: Vec<EvidenceRow> = database
+        .prepare(review::SELECT_SESSION_CARD_EVIDENCE)
+        .bind(&[session_id.into()])?
+        .all()
+        .await?
+        .results()?;
+
+    let mut signals: Vec<adaptation::CardSignals> = Vec::with_capacity(evidence.len());
+    for row in evidence {
+        let card_grades: Vec<u8> = grades
+            .iter()
+            .filter(|g| g.card_id == row.card_id)
+            .map(|g| g.grade)
+            .collect();
+        let latencies: Vec<u32> = grades
+            .iter()
+            .filter(|g| g.card_id == row.card_id)
+            .map(|g| g.response_millis)
+            .collect();
+        let avg = (!latencies.is_empty())
+            .then(|| latencies.iter().map(|m| u64::from(*m)).sum::<u64>() / latencies.len() as u64);
+        signals.push(adaptation::CardSignals {
+            card_id: row.card_id,
+            learning_item_id: row.source_learning_item_id,
+            recent_grades: card_grades,
+            avg_response_millis: avg.and_then(|a| u32::try_from(a).ok()),
+            spontaneous_failures: row.spont_fail,
+            spontaneous_successes: row.spont_ok,
+            prompted_successes: row.prompted_ok,
+            listening_failures: row.listen_fail,
+            review_count: row.review_count,
+        });
+    }
+    Ok(signals)
 }
 
 /// `GET /api/v1/review/summary?language_profile_id={id}` — today's counts +

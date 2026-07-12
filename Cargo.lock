@@ -879,8 +879,10 @@ dependencies = [
 name = "integration-tests"
 version = "0.1.0"
 dependencies = [
+ "adaptation",
  "chrono",
  "language-pack-es-es",
+ "learning-core",
  "review-engine",
  "rusqlite",
  "worker-api",

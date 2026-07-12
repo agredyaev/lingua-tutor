@@ -115,6 +115,26 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async("/api/v1/listening-attempts", |req, ctx| async move {
             handlers::records::create_listening_attempt(req, &ctx.env).await
         })
+        .get_async("/api/v1/recommendations", |req, ctx| async move {
+            handlers::recommendations::list(&req, &ctx.env).await
+        })
+        .post_async(
+            "/api/v1/recommendations/:id/accept",
+            |_req, ctx| async move {
+                let id = ctx.param("id").cloned().unwrap_or_default();
+                handlers::recommendations::resolve(&ctx.env, &id, "accepted").await
+            },
+        )
+        .post_async(
+            "/api/v1/recommendations/:id/dismiss",
+            |_req, ctx| async move {
+                let id = ctx.param("id").cloned().unwrap_or_default();
+                handlers::recommendations::resolve(&ctx.env, &id, "dismissed").await
+            },
+        )
+        .get_async("/api/v1/cards/redesign-candidates", |req, ctx| async move {
+            handlers::recommendations::redesign_candidates(&req, &ctx.env).await
+        })
         .get_async("/api/v1/cards", |req, ctx| async move {
             handlers::cards::list(&req, &ctx.env).await
         })

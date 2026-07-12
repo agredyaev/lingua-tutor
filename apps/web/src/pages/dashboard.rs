@@ -78,6 +78,20 @@ fn DashboardView(d: DashboardDto) -> impl IntoView {
                     </a>
                 </li>
             </ul>
+            {(!d.open_recommendations.is_empty())
+                .then(|| {
+                    view! {
+                        <div class="exceptions">
+                            <h2>"Tutor suggestions"</h2>
+                            <ul>
+                                {d.open_recommendations
+                                    .iter()
+                                    .map(|r| view! { <li>{r.clone()}</li> })
+                                    .collect::<Vec<_>>()}
+                            </ul>
+                        </div>
+                    }
+                })}
             <h2>"Items"</h2>
             <ul>
                 {d.items_by_status

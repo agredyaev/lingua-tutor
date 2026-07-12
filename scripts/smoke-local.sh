@@ -130,4 +130,35 @@ FORECAST=$(curl -sf "$BASE/review/forecast?language_profile_id=$LLP&days=7")
 echo "$FORECAST" | grep -q '"due_per_day"' || { echo "FAIL forecast: $FORECAST" >&2; exit 1; }
 echo "14 undo + summary + forecast OK"
 
-echo "smoke OK: full M1+M2 loop green"
+# ---- M4: adaptive loop ----
+HASH2=$(echo "$UNDO" | sed -n 's/.*"state_hash":"\([^"]*\)".*/\1/p')
+for i in 2 3 4; do
+  EV=$(curl -s -X POST "$BASE/review-sessions/$RS/events" -H 'content-type: application/json' \
+    -d "{\"client_operation_id\":\"op-again-$i\",\"card_id\":\"$CARD\",\"grade\":1,
+         \"presented_at\":\"2026-07-12T10:0$i:00Z\",\"answered_at\":\"2026-07-12T10:0$i:05Z\",
+         \"response_millis\":4000,\"answer_revealed\":true,\"prior_state_hash\":\"$HASH2\"}")
+  HASH2=$(echo "$EV" | sed -n 's/.*"state_hash":"\([^"]*\)".*/\1/p')
+  [ -n "$HASH2" ] || { echo "FAIL again-grade $i: $EV" >&2; exit 1; }
+done
+COMPLETE=$(curl -sf -X POST "$BASE/review-sessions/$RS/complete" -H 'content-type: application/json' \
+  -d '{"card_count":4,"review_seconds":120}')
+echo "$COMPLETE" | grep -qE '"recommendations_created":[1-9]' \
+  || { echo "FAIL rules: $COMPLETE" >&2; exit 1; }
+echo "15 adaptive rules fired on session complete OK"
+
+RECS=$(curl -sf "$BASE/recommendations?language_profile_id=$LLP")
+echo "$RECS" | grep -q 'redesign_card' || { echo "FAIL recs: $RECS" >&2; exit 1; }
+REDESIGN=$(curl -sf "$BASE/cards/redesign-candidates?language_profile_id=$LLP")
+echo "$REDESIGN" | grep -q "$CARD" || { echo "FAIL redesign list: $REDESIGN" >&2; exit 1; }
+echo "16 recommendations + redesign candidates OK"
+
+DASH=$(curl -sf "$BASE/dashboard?language_profile_id=$LLP")
+echo "$DASH" | grep -q '"open_recommendations":\[' || { echo "FAIL dash recs: $DASH" >&2; exit 1; }
+CTX=$(curl -sf "$BASE/export/tutor-context?language_profile_id=$LLP")
+echo "$CTX" | grep -q '"redesign_candidates"' || { echo "FAIL ctx redesign: $CTX" >&2; exit 1; }
+echo "$CTX" | grep -q '"review_summary_7d"' || { echo "FAIL ctx summary: $CTX" >&2; exit 1; }
+REC_ID=$(echo "$RECS" | sed -n 's/.*"id":"\(rec_[^"]*\)".*/\1/p' | head -1)
+curl -sf -X POST "$BASE/recommendations/$REC_ID/dismiss" >/dev/null
+echo "17 dashboard + tutor-context surfacing + dismiss OK"
+
+echo "smoke OK: full M1+M2+M4 loop green"

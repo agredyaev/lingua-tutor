@@ -140,6 +140,9 @@ pub struct DashboardDto {
     pub next_lesson_goal: Option<String>,
     /// Item counts by status.
     pub items_by_status: BTreeMap<String, u32>,
+    /// Open adaptive recommendations (detail lines, newest first).
+    #[serde(default)]
+    pub open_recommendations: Vec<String>,
 }
 
 /// One card as served by `/api/v1/cards` (mirrors `learning-core::Card`).

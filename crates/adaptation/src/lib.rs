@@ -1,7 +1,13 @@
 //! Deterministic adaptive rules as explicit Rust (02-workspace.md §2: no
-//! interpreted rule language). M2 scope: backlog protection + new-card
-//! budget throttling (05-review-engine.md §9). Recommendation rules land
-//! at WBS 8.
+//! interpreted rule language): backlog protection + new-card budget
+//! throttling (05-review-engine.md §9) and the 07 §7 recommendation table.
+
+mod rules;
+
+pub use rules::{
+    CardSignals, GRADE_WINDOW, Recommendation, error_escalation, evaluate_card_rules,
+    recheck_failed,
+};
 
 /// One study day's signals, most recent first.
 #[derive(Debug, Clone, Copy, PartialEq)]

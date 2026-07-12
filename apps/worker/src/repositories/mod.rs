@@ -7,6 +7,7 @@ pub mod cards;
 pub mod lessons;
 pub mod packs;
 pub mod profiles;
+pub mod recommendations;
 pub mod records;
 pub mod review;
 

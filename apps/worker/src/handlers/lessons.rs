@@ -625,6 +625,23 @@ async fn persist_plan(
     )?;
 
     database.batch(statements).await?;
+
+    // Escalation recommendations (07 §7 rows 5-6) after the atomic apply.
+    let escalations: Vec<adaptation::Recommendation> = plan
+        .error_actions
+        .iter()
+        .filter_map(|action| match action {
+            ErrorAction::Register {
+                target_id,
+                new_count,
+                ..
+            } => Some(adaptation::error_escalation(&target_id.0, *new_count)),
+            ErrorAction::NewTarget { .. } => None,
+        })
+        .flatten()
+        .collect();
+    crate::handlers::recommendations::insert_all(database, &ctx.profile.id.0, &escalations).await?;
+
     Response::from_json(&serde_json::json!({
         "lesson_id": lesson_id,
         "new_learning_items": new_item_ids,
