@@ -23,6 +23,8 @@ pub const COMPLETE_SESSION: &str = "UPDATE review_sessions SET
 /// Queue candidates: reviewable cards + schedule state (uses
 /// `ix_cards_profile_status` + PK join; due filter applied in logic layer).
 pub const SELECT_QUEUE_CANDIDATES: &str = "SELECT c.id AS card_id, c.status,
+    c.intent, c.prompt, c.prompt_language, c.answer, c.accepted_answers_json,
+    c.answer_evaluation_mode, c.explanation, c.pronunciation_note,
     s.algorithm, s.algorithm_version, s.parameter_set_id, s.difficulty,
     s.stability, s.last_review_at, s.due_at, s.scheduled_interval_seconds,
     s.lapse_count, s.review_count, s.state_version, s.state_hash

@@ -54,6 +54,14 @@ pub async fn create_session(mut req: Request, env: &Env) -> Result<Response> {
 struct CandidateRow {
     card_id: String,
     status: String,
+    intent: String,
+    prompt: String,
+    prompt_language: String,
+    answer: String,
+    accepted_answers_json: String,
+    answer_evaluation_mode: String,
+    explanation: Option<String>,
+    pronunciation_note: Option<String>,
     algorithm: Option<String>,
     algorithm_version: Option<String>,
     parameter_set_id: Option<String>,
@@ -141,35 +149,31 @@ pub async fn queue(env: &Env, session_id: &str) -> Result<Response> {
     let settings = SchedulerSettings::default();
     let ordered = build_queue(&candidates, at, budget, settings.max_review_batch);
 
-    // Load card fronts for the ordered IDs (bounded by max_review_batch).
+    // Card fronts come from the same join — no per-card queries; a 50-card
+    // batch must stay far under D1's 50-queries-per-invocation free-tier cap
+    // (16-rust-guidelines.md §5, 11-infrastructure.md §7).
     let mut items = Vec::with_capacity(ordered.len());
     for card_id in &ordered {
-        let row = database
-            .prepare(cards::select_card_sql())
-            .bind(&[card_id.0.clone().into()])?
-            .first::<cards::CardRow>(None)
-            .await?;
-        let Some(card) = row.and_then(|r| r.into_domain().ok()) else {
+        let Some(row) = rows.iter().find(|r| r.card_id == card_id.0) else {
             continue;
         };
-        let state_hash = database
-            .prepare(review::SELECT_SCHEDULE_STATE)
-            .bind(&[card_id.0.clone().into()])?
-            .first::<review::ScheduleStateRow>(None)
-            .await?
-            .and_then(|r| r.into_state().ok())
+        let accepted: Vec<String> =
+            serde_json::from_str(&row.accepted_answers_json).unwrap_or_default();
+        let state_hash = row
+            .state()
+            .and_then(|s| s.into_state().ok())
             .map(|s| s.state_hash());
         items.push(serde_json::json!({
-            "card_id": card.id.0,
-            "intent": card.intent,
-            "status": card.status,
-            "prompt": card.prompt,
-            "prompt_language": card.prompt_language.0,
-            "answer": card.answer,
-            "accepted_answers": card.accepted_answers,
-            "answer_evaluation_mode": card.answer_evaluation_mode,
-            "explanation": card.explanation,
-            "pronunciation_note": card.pronunciation_note,
+            "card_id": row.card_id,
+            "intent": row.intent,
+            "status": row.status,
+            "prompt": row.prompt,
+            "prompt_language": row.prompt_language,
+            "answer": row.answer,
+            "accepted_answers": accepted,
+            "answer_evaluation_mode": row.answer_evaluation_mode,
+            "explanation": row.explanation,
+            "pronunciation_note": row.pronunciation_note,
             "prior_state_hash": state_hash,
         }));
     }
@@ -181,7 +185,11 @@ pub async fn queue(env: &Env, session_id: &str) -> Result<Response> {
 }
 
 /// Backlog-protected new-card budget (05 §9) from live signals.
-async fn effective_budget(database: &D1Database, profile_id: &str, at: Timestamp) -> Result<u8> {
+pub(crate) async fn effective_budget(
+    database: &D1Database,
+    profile_id: &str,
+    at: Timestamp,
+) -> Result<u8> {
     #[derive(serde::Deserialize)]
     struct OneCount {
         n: u32,

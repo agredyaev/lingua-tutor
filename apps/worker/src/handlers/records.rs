@@ -283,3 +283,162 @@ pub async fn tutor_context(
         },
     }))
 }
+
+/// `GET /api/v1/dashboard?language_profile_id={id}` — one aggregated payload
+/// (08-http-api.md §3): exceptions first; one round trip for the mobile
+/// dashboard (12-testing.md §8 <500ms target).
+#[allow(clippy::too_many_lines)]
+pub async fn dashboard(req: &Request, env: &Env) -> Result<Response> {
+    let url = req.url()?;
+    let Some(profile_id) = query_param(&url, "language_profile_id") else {
+        return error_response(400, "missing_param", "language_profile_id required");
+    };
+    let database = db(env)?;
+    let Some(profile_row) = fetch_profile(&database, &profile_id).await? else {
+        return error_response(404, "not_found", "unknown profile");
+    };
+    let Ok(profile) = profile_row.into_domain() else {
+        return error_response(500, "corrupt_row", "stored profile is invalid");
+    };
+    let at = crate::api::now();
+    let now_text = to_rfc3339(at);
+    let day_start = to_rfc3339(learning_core::Timestamp(at.0 - at.0 % 86_400));
+
+    async fn count(
+        database: &worker::D1Database,
+        sql: &str,
+        params: &[worker::wasm_bindgen::JsValue],
+    ) -> Result<u32> {
+        #[derive(serde::Deserialize)]
+        struct OneCount {
+            n: u32,
+        }
+        Ok(database
+            .prepare(sql)
+            .bind(params)?
+            .first::<OneCount>(None)
+            .await?
+            .map_or(0, |c| c.n))
+    }
+
+    let due_cards = count(
+        &database,
+        "SELECT COUNT(*) AS n FROM card_schedule_state s
+         JOIN cards c ON c.id = s.card_id
+         WHERE c.learner_language_profile_id = ?1
+           AND c.status IN ('new','learning','review','relearning')
+           AND s.due_at <= ?2",
+        &[profile_id.clone().into(), now_text.clone().into()],
+    )
+    .await?;
+    let active_errors = count(
+        &database,
+        "SELECT COUNT(*) AS n FROM error_targets
+         WHERE learner_language_profile_id = ?1 AND status IN ('active','recheck')",
+        &[profile_id.clone().into()],
+    )
+    .await?;
+    let method_change = count(
+        &database,
+        "SELECT COUNT(*) AS n FROM error_targets
+         WHERE learner_language_profile_id = ?1 AND method_change_required = 1
+           AND status != 'resolved'",
+        &[profile_id.clone().into()],
+    )
+    .await?;
+    let due_rechecks = count(
+        &database,
+        "SELECT COUNT(*) AS n FROM error_rechecks r
+         JOIN error_targets t ON t.id = r.error_target_id
+         WHERE t.learner_language_profile_id = ?1
+           AND r.completed_at IS NULL AND r.due_at <= ?2",
+        &[profile_id.clone().into(), now_text.clone().into()],
+    )
+    .await?;
+    let overdue = count(
+        &database,
+        crate::repositories::review::COUNT_OVERDUE,
+        &[profile_id.clone().into(), now_text.clone().into()],
+    )
+    .await?;
+
+    #[derive(serde::Deserialize)]
+    struct EventRow {
+        response_millis: u32,
+    }
+    let events: Vec<EventRow> = database
+        .prepare(crate::repositories::review::SELECT_EVENTS_SINCE)
+        .bind(&[profile_id.clone().into(), day_start.into()])?
+        .all()
+        .await?
+        .results()?;
+    let review_seconds_today: u64 = events
+        .iter()
+        .map(|e| u64::from(e.response_millis))
+        .sum::<u64>()
+        / 1000;
+
+    #[derive(serde::Deserialize)]
+    struct CountRow {
+        status: String,
+        n: u32,
+    }
+    let counts: Vec<CountRow> = database
+        .prepare(
+            "SELECT status, COUNT(*) AS n FROM learning_items
+             WHERE learner_language_profile_id = ?1 GROUP BY status",
+        )
+        .bind(&[profile_id.clone().into()])?
+        .all()
+        .await?
+        .results()?;
+    let items: std::collections::BTreeMap<String, u32> =
+        counts.into_iter().map(|c| (c.status, c.n)).collect();
+
+    #[derive(serde::Deserialize)]
+    struct GoalRow {
+        next_goal: Option<String>,
+    }
+    let goal = database
+        .prepare(
+            "SELECT next_goal FROM lessons
+             WHERE learner_language_profile_id = ?1 AND status = 'completed'
+             ORDER BY lesson_number DESC LIMIT 1",
+        )
+        .bind(&[profile_id.clone().into()])?
+        .first::<GoalRow>(None)
+        .await?
+        .and_then(|g| g.next_goal);
+
+    let budget = crate::handlers::review::effective_budget(&database, &profile_id, at).await?;
+
+    // Exceptions first (09-frontend.md §6).
+    let mut exceptions = Vec::new();
+    if overdue > 0 {
+        exceptions.push(format!("{overdue} overdue reviews — clear backlog first"));
+    }
+    if method_change > 0 {
+        exceptions.push(format!(
+            "{method_change} error targets need a method change"
+        ));
+    }
+    if due_rechecks > 0 {
+        exceptions.push(format!("{due_rechecks} error rechecks due"));
+    }
+    if budget == 0 {
+        exceptions.push("new cards paused by backlog protection".to_owned());
+    }
+
+    Response::from_json(&shared_schema::DashboardDto {
+        exceptions,
+        due_cards,
+        new_card_budget: budget,
+        reviews_today: u32::try_from(events.len()).unwrap_or(u32::MAX),
+        review_seconds_today: u32::try_from(review_seconds_today).unwrap_or(u32::MAX),
+        active_error_targets: active_errors,
+        due_error_rechecks: due_rechecks,
+        next_lesson_number: profile.current_lesson_number + 1,
+        next_lesson_goal: goal,
+        items_by_status: items,
+    })
+}

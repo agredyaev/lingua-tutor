@@ -9,7 +9,15 @@ description = "Leptos CSR PWA frontend"
 
 [dependencies]
 leptos = { workspace = true, features = ["csr"] }
+leptos_router = "0.8"
+shared-schema = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 console_error_panic_hook = "0.1"
+gloo-net = { version = "0.6", default-features = false, features = ["http", "json"] }
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Clipboard", "Navigator", "Window"] }
 
 [lints]
 workspace = true

@@ -71,6 +71,9 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
                 handlers::profiles::patch_profile(req, &ctx.env, &profile_id).await
             },
         )
+        .get_async("/api/v1/dashboard", |req, ctx| async move {
+            handlers::records::dashboard(&req, &ctx.env).await
+        })
         .get_async("/api/v1/learning-state", |req, ctx| async move {
             handlers::records::learning_state(&req, &ctx.env).await
         })

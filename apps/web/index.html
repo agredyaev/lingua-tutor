@@ -5,6 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Lingua Tutor</title>
     <link data-trunk rel="rust" />
+    <style>
+      /* Mobile-first, no framework (09-frontend.md §1). */
+      :root { font-family: -apple-system, system-ui, sans-serif; line-height: 1.45; }
+      body { margin: 0; background: #fafafa; color: #1a1a1a; }
+      .topnav { display: flex; flex-wrap: wrap; gap: 0.75rem; padding: 0.75rem 1rem;
+                background: #1f3a5f; position: sticky; top: 0; }
+      .topnav a { color: #fff; text-decoration: none; font-size: 0.95rem; }
+      main { padding: 1rem; max-width: 640px; margin: 0 auto; }
+      button { padding: 0.6rem 1rem; margin: 0.25rem 0; border: 1px solid #ccc;
+               border-radius: 8px; background: #fff; font-size: 1rem; width: 100%;
+               text-align: left; cursor: pointer; }
+      button:disabled { opacity: 0.5; }
+      textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 0.85rem; }
+      pre.context { white-space: pre-wrap; word-break: break-word; background: #fff;
+                    border: 1px solid #ddd; padding: 0.75rem; font-size: 0.8rem; }
+      ul { padding-left: 1.2rem; }
+      .error { color: #b00020; }
+      .exceptions { background: #fff4e5; border: 1px solid #f0c17a;
+                    border-radius: 8px; padding: 0.5rem 1rem; margin-bottom: 1rem; }
+      .review-card { display: flex; flex-direction: column; gap: 0.5rem; }
+      .review-card .prompt { font-size: 1.4rem; }
+      .review-card .answer .primary { font-size: 1.3rem; font-weight: 600; }
+      .review-card .progress { color: #666; font-size: 0.85rem; }
+      .grades { display: flex; flex-direction: column; gap: 0.4rem; }
+      .undo { background: #f2f2f2; font-size: 0.85rem; }
+      .method-change { border-left: 3px solid #b00020; padding-left: 0.5rem; }
+      .destructive { color: #b00020; font-weight: 600; }
+    </style>
   </head>
   <body></body>
 </html>
