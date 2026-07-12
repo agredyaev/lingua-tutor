@@ -210,3 +210,34 @@ Scope creep: none. Zero core-crate changes (dependency gate held; the one worker
 Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓, **98 tests 0 failed** ✓, conformance both packs ✓, 14-step smoke green ✓, wasm32 builds ✓.
 
 **M3 complete.** Next: iteration 8 = WBS 8 adaptive loop (M4) — table-driven rules in `adaptation`, recommendations persistence + endpoints + dashboard, redesign candidates, richer tutor context, recheck escalation wiring.
+
+## Iteration 8 — WBS 8 Adaptive loop (M4) — 2026-07-12
+
+| Task | Status | Note |
+|---|---|---|
+| 8.1 Rule table | done | 07 §7 as explicit Rust in `adaptation`: failed-review→practice, pass-but-spontaneous-fail→transfer (not more reviews), listening card, transfer target, retirement (volume+silence guards), escalation 3/5, recheck-failed; 13 unit tests + cross-crate threshold pin |
+| 8.2 Recommendations | done | persistence w/ open-duplicate guard (no spam), GET /recommendations, accept/dismiss, dashboard top-5 in DTO + web view |
+| 8.3 Redesign candidates | done | 05 §10 detectors: ≥3 Again in window; ≥3 Hard + ≥10s latency; review-pass-conversation-fail; GET /cards/redesign-candidates joins card fronts; in tutor context |
+| 8.4 Tutor context evidence | done | review_summary_7d, redesign_candidates, open_recommendations, curriculum_scenarios added to export |
+| 8.5 Recheck escalation | done | failed recheck → practice_again recommendation; import escalations (3/5) → mini-target/method-change recommendations |
+
+**Anti-pattern / performance review (explicit pass):**
+
+- Signals for a whole session come from **two fixed queries** (ROW_NUMBER window over last-10 effective events + one grouped evidence join) — no per-card N+1; compensated events excluded in SQL, not post-filtered.
+- Rules are pure fns over bounded windows (≤ [`GRADE_WINDOW`]=10); no allocation beyond the output Vec; stable order; determinism unit-pinned.
+- `adaptation` still has **zero deps** — thresholds mirrored, sync enforced by an integration test instead of a dependency edge (thinner than coupling the crates).
+- No trait/dispatch for the rule table: one function, straight conditionals — closed set, enum-over-abstraction rule.
+- Recommendation dedup is per-item SELECT (bounded by rule output, ≤ ~6/session); acceptable vs building a unique index migration for M4 — noted for revisit if volume grows.
+
+Drift found:
+
+1. **Recommendation endpoint paths defined here** (`/api/v1/recommendations`, `/accept`, `/dismiss`) — 08-http-api.md names dashboard surfacing but no resource routes; follows §1 conventions.
+2. **05 §10 detectors subset**: "failure despite successful related cards" and "conflict with another card" need card-relation data that doesn't exist yet — deferred, documented; "learner-reported ambiguous prompt" arrives with a UI affordance later.
+3. Rule "success in 3 distinct contexts" not re-emitted as recommendation — already auto-assessed server-side at mastery re-check (iteration 4); duplicate signal would be noise.
+4. Tutor context now includes curriculum scenarios (pack catalog) — satisfies "lesson planning from evidence" without exposing pack seeds through the trait (contract unchanged).
+
+Scope creep: none.
+
+Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓, **107 tests 0 failed** ✓, wasm32 builds ✓, **17-step smoke green** (…15 rules fire on session complete, 16 redesign candidate listed, 17 dashboard + context surfacing + dismiss) ✓.
+
+**M4 complete.** Next: iteration 9 = WBS 9 offline (M2 tail) — service worker, due-batch prefetch + IndexedDB queue, ordered idempotent replay with 409 reconciliation.
