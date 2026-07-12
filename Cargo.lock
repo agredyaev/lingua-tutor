@@ -29,6 +29,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
+name = "application"
+version = "0.1.0"
+dependencies = [
+ "language-pack-api",
+ "learning-core",
+ "semver",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tutor-contract",
+]
+
+[[package]]
 name = "async-lock"
 version = "3.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
