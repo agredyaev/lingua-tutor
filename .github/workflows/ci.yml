@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Toolchain pinned by rust-toolchain.toml (WBS 1.1)
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk@0.21.14,cargo-deny@0.20.2
+
+      - name: fmt
+        run: cargo fmt --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: test
+        run: cargo test --workspace
+
+      - name: worker build (wasm32)
+        run: cargo build -p worker-api --target wasm32-unknown-unknown --release
+
+      - name: web build + size budget
+        run: bash scripts/wasm-size-report.sh
+
+      - name: cargo-deny
+        run: cargo deny check
