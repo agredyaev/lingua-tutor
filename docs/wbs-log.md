@@ -144,3 +144,37 @@ Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓ (one masked failure caugh
 **M2 exit gate: partial.** Tutor creates cards via lesson completion ✓; duplicates rejected ✓; restart loses nothing ✓ (D1). "Daily review end-to-end **in UI**" pending → gate closes after WBS 6 frontend.
 
 Next: iteration 6 = WBS 6 frontend core (routes, dashboard, import/export pages, review screen, card management).
+
+## Iteration 6 — WBS 6 Frontend core — 2026-07-12
+
+| Task | Status | Note |
+|---|---|---|
+| 6.1 App shell | done | leptos_router, all 20 routes from 09 §3; ActiveProfile context; typed api_client over shared-schema (no handwritten JSON in components); ErrorBoundary per page |
+| 6.2 Dashboard | done | new `GET /api/v1/dashboard` aggregate (08 §3 shape, one round trip), exceptions rendered first |
+| 6.3 Lessons + import/export | done | full no-MCP loop: /export tutor-context + clipboard copy → /import paste → validate → preview (card mutations highlighted) → apply with token; /learn walks the 5 steps |
+| 6.4 Review screen | done | one card, reveal-first, 4 grades with definitions (Hard marked passing), Action pending = double-submit guard, keyboard space/1–4, undo, `<Transition>`, summary page |
+| 6.5 Card management | done | list + status filter, detail (source/reason/accepted), suspend/restore/retire; mutation history + redesign warnings arrive with WBS 8 data |
+| 6.6 Items/errors/listening | done | items-by-status, error targets with method-change flags; listening shares items view until analytics (WBS 8) |
+
+**Anti-pattern / performance review (rust-anti-pattern, rust-performance, 16 §1–5) — explicit pass requested:**
+
+- **Caught + fixed: queue N+1.** First cut fetched card front + state per ordered ID → up to ~100 D1 subrequests per queue at full batch; D1 free tier caps 50 queries/invocation. Replaced with one join query; fronts + hashes come from the same rows (16 §5 batch rule, 11 §7 free-tier fit).
+- **Caught + fixed: effect-writes-signal.** Profile bootstrap first wrote context from an `Effect` — forbidden by 09 §2 (own binding table). Rewritten as derived signal: user choice `.or(server default)`.
+- Clones in views = leptos by-value props (genuinely independent render copies), not borrow-checker escapes. No `.unwrap()` on production paths (JS interop uses `unwrap_or_default`; one `expect` with invariant comment on context). `&str` params throughout api_client. No index loops. `BTreeMap` only for ordered display of a small map. No speculative abstractions: no component library, no state-management crate, CSS is 40 lines inline.
+- Deps added (size-reviewed per 09 §9): leptos_router, gloo-net (http+json only), js-sys, wasm-bindgen-futures, web-sys (3 features). Result: **259 KB gzip** vs 3 MB budget.
+
+Drift found:
+
+1. **`GET /api/v1/dashboard` implemented at 6.2** (WBS 4.5 hadn't listed it; 08 §3 defines it) — client-side composition would cost 4 round trips on mobile.
+2. **Trunk dev proxy** added (`/api` → wrangler dev :8787) — dev-only, ADR-0003 continuation.
+3. **Card mutation history / duplicate candidates / redesign list UI** deferred to WBS 8 (data exists in `card_mutations`; endpoint for history arrives with redesign loop).
+4. **`/listening` route shares the items view** until listening analytics (WBS 8); route exists, no placeholder logic.
+5. Review event `response_millis` sent as 0 — measured client timing arrives with offline work (WBS 9) where presented_at capture matters anyway.
+
+Scope creep: none.
+
+Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓, **89 tests 0 failed** ✓, web+worker wasm32 ✓, WASM 259 KB gzip ✓, 14-step API smoke green after queue rewrite ✓, grep gates ✓.
+
+**M2 EXIT GATE — PASSED:** tutor creates cards via lesson completion ✓; daily review end-to-end in UI ✓ (review screen wired to live queue/grade/undo; automated browser e2e lands with Playwright at WBS 10.6); restart loses nothing (D1 + idempotency) ✓; duplicates rejected ✓.
+
+Next: iteration 7 = WBS 7 Spanish pack (7.1–7.7) — real normalization, error taxonomy, templates, tutor instructions, curriculum; parallel-safe, zero core changes expected (dependency gate enforces).
