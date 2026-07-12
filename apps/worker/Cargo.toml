@@ -8,7 +8,8 @@ publish.workspace = true
 description = "Cloudflare Worker serving /api/v1"
 
 [lib]
-crate-type = ["cdylib"]
+# rlib: lets integration-tests exercise repository SQL against scratch SQLite.
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 worker = { workspace = true }
@@ -16,6 +17,12 @@ shared-schema = { workspace = true }
 language-pack-api = { workspace = true }
 language-pack-registry = { workspace = true }
 language-pack-es-es = { workspace = true }
+learning-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+semver = "1"
+thiserror = { workspace = true }
 
 [lints]
 workspace = true

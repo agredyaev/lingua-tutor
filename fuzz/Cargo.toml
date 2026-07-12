@@ -1,0 +1,23 @@
+[package]
+name = "lingua-tutor-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tutor-contract = { path = "../crates/tutor-contract" }
+
+[[bin]]
+name = "lesson_result_parse"
+path = "fuzz_targets/lesson_result_parse.rs"
+test = false
+doc = false
+bench = false
+
+# Fuzz binaries only; keep panic-abort profile cargo-fuzz expects.
+[profile.release]
+debug = 1

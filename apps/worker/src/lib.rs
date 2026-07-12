@@ -1,6 +1,8 @@
 //! Cloudflare Worker API entry point: routing for `/api/v1`.
 //! Owns HTTP concerns only; domain rules live in `application` (02-workspace.md §2).
 
+pub mod repositories;
+
 use language_pack_registry::{LanguagePackRegistry, RegistryError};
 use worker::{Context, Env, Request, Response, Result, Router, event};
 

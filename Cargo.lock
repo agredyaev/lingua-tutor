@@ -862,8 +862,10 @@ name = "integration-tests"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "language-pack-es-es",
  "review-engine",
  "rusqlite",
+ "worker-api",
 ]
 
 [[package]]
@@ -2199,6 +2201,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tutor-contract"
+version = "0.1.0"
+dependencies = [
+ "language-pack-api",
+ "learning-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "typed-builder"
 version = "0.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2512,10 +2524,16 @@ dependencies = [
 name = "worker-api"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "language-pack-api",
  "language-pack-es-es",
  "language-pack-registry",
+ "learning-core",
+ "semver",
+ "serde",
+ "serde_json",
  "shared-schema",
+ "thiserror 2.0.18",
  "worker",
 ]
 
