@@ -71,7 +71,7 @@ Binding where mapped; Rust makes several rules free.
 | 6 | Min two assertions per function | Adapted: invariants asserted at boundaries — schema validation, state-hash check, `debug_assert!` for internal invariants (scheduler transitions). Not a per-function quota. |
 | 7 | Minimal scope for data | Rust default; no module-level mutable state, `OnceLock` for true singletons. |
 | 8 | Check every return value | Free: `#[must_use]` + `Result` + clippy `unwrap_used = deny`. Ignoring a `Result` (`let _ =`) requires justification comment. |
-| 9 | Limited preprocessor/pointer use | Adapted: macro discipline — no proc-macros of our own; declarative macros only for test tables. No `unsafe` (already binding). |
+| 9 | Limited preprocessor/pointer use | Adapted: macro discipline — no proc-macros of our own; declarative macros only for test tables and mechanical ID newtypes (`learning-core/src/ids.rs`). No `unsafe` (already binding). |
 | 10 | All warnings on, zero tolerance | Already: `-D warnings`, clippy gate, `cargo-deny` ([11-infrastructure.md](11-infrastructure.md) §3). |
 
 ## 4. Review checklist additions (PR)
