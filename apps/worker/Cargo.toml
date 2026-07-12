@@ -1,0 +1,18 @@
+[package]
+name = "worker-api"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Cloudflare Worker serving /api/v1"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+worker = { workspace = true }
+shared-schema = { workspace = true }
+
+[lints]
+workspace = true
