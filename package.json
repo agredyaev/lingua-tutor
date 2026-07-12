@@ -1,0 +1,10 @@
+{
+  "name": "lingua-tutor-tooling",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "wrangler": "4.110.0"
+  }
+}
