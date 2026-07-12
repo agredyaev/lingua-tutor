@@ -3,10 +3,12 @@
 //! types happens here, including RFC 3339 ⇄ unix-seconds timestamps.
 //! SQL constants are exercised against scratch SQLite in `tests/`.
 
+pub mod cards;
 pub mod lessons;
 pub mod packs;
 pub mod profiles;
 pub mod records;
+pub mod review;
 
 use learning_core::Timestamp;
 

@@ -24,6 +24,8 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 semver = "1"
 thiserror = { workspace = true }
 application = { workspace = true }
+adaptation = { workspace = true }
+review-engine = { workspace = true }
 tutor-contract = { workspace = true }
 uuid = { version = "1", features = ["v4", "js"] }
 

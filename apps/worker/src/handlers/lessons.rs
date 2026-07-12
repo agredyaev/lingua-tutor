@@ -250,7 +250,17 @@ async fn complete_from_result(env: &Env, result: &LessonResult) -> Result<Respon
             "status": "duplicate", "client_operation_id": result.client_operation_id
         }));
     }
-    persist_plan(&database, result, &context, &plan).await
+    let mutation_ctx = build_mutation_context(&database, result, &context).await?;
+    let mutations = application::plan_card_mutations(&result.card_mutations, &mutation_ctx);
+    persist_plan(
+        &database,
+        result,
+        &context,
+        &plan,
+        &mutations,
+        &mutation_ctx,
+    )
+    .await
 }
 
 async fn build_context(
@@ -367,12 +377,71 @@ async fn build_context(
     })
 }
 
+/// Card-mutation planning context: existing cards for duplicate detection +
+/// target lookups, remaining activation budget (07 §4).
+async fn build_mutation_context(
+    database: &D1Database,
+    result: &LessonResult,
+    ctx: &LessonCompletionContext,
+) -> Result<application::MutationContext> {
+    use crate::repositories::cards as card_repo;
+    let mut existing = Vec::new();
+    for mutation in &result.card_mutations {
+        if let Some(payload) = &mutation.card {
+            let hash = learning_core::Card::content_hash_of(
+                payload.intent,
+                &payload.prompt,
+                &payload.answer,
+                &payload.accepted_answers,
+            );
+            let row = database
+                .prepare(card_repo::select_card_by_hash_sql())
+                .bind(&[ctx.profile.id.0.clone().into(), hash.into()])?
+                .first::<card_repo::CardRow>(None)
+                .await?;
+            if let Some(card) = row.and_then(|r| r.into_domain().ok()) {
+                existing.push(card);
+            }
+        }
+        if let Some(card_id) = &mutation.card_id {
+            let row = database
+                .prepare(card_repo::select_card_sql())
+                .bind(&[card_id.clone().into()])?
+                .first::<card_repo::CardRow>(None)
+                .await?;
+            if let Some(card) = row.and_then(|r| r.into_domain().ok()) {
+                existing.push(card);
+            }
+        }
+    }
+    #[derive(serde::Deserialize)]
+    struct OneCount {
+        n: u32,
+    }
+    let day_start = to_rfc3339(learning_core::Timestamp(ctx.now.0 - ctx.now.0 % 86_400));
+    let activated_today = database
+        .prepare(card_repo::COUNT_ACTIVATED_TODAY)
+        .bind(&[ctx.profile.id.0.clone().into(), day_start.into()])?
+        .first::<OneCount>(None)
+        .await?
+        .map_or(0, |c| c.n);
+    #[allow(clippy::cast_possible_truncation)] // min() bounds to u8 range
+    let remaining = 8_u8.saturating_sub(activated_today.min(255) as u8);
+    Ok(application::MutationContext {
+        existing_cards: existing,
+        remaining_activation_budget: remaining,
+        now: ctx.now,
+    })
+}
+
 /// Builds the D1 batch for a plan and runs it (04-database.md §1: atomic).
 async fn persist_plan(
     database: &D1Database,
     result: &LessonResult,
     ctx: &LessonCompletionContext,
     plan: &LessonCompletionPlan,
+    mutations: &[application::PlannedMutation],
+    mutation_ctx: &application::MutationContext,
 ) -> Result<Response> {
     let at = to_rfc3339(ctx.now);
     let mut statements = Vec::new();
@@ -536,11 +605,23 @@ async fn persist_plan(
         );
     }
 
+    let card_summary = push_card_mutation_statements(
+        database,
+        &mut statements,
+        result,
+        ctx,
+        mutations,
+        mutation_ctx,
+        &lesson_id,
+        &at,
+    )?;
+
     database.batch(statements).await?;
     Response::from_json(&serde_json::json!({
         "lesson_id": lesson_id,
         "new_learning_items": new_item_ids,
         "reused_learning_items": plan.reused_items.iter().map(|(_, id)| id.0.clone()).collect::<Vec<_>>(),
+        "card_mutations": card_summary,
         "warnings": plan.warnings,
     }))
 }
@@ -633,4 +714,257 @@ fn opt(value: &Option<String>) -> worker::wasm_bindgen::JsValue {
     value
         .as_ref()
         .map_or(worker::wasm_bindgen::JsValue::NULL, |v| v.clone().into())
+}
+
+/// Card mutations → statements: card rows + tags + one audit row per attempt
+/// (07 §3: applied or not). Returns per-mutation outcome for the response.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn push_card_mutation_statements(
+    database: &D1Database,
+    statements: &mut Vec<worker::D1PreparedStatement>,
+    result: &LessonResult,
+    ctx: &LessonCompletionContext,
+    mutations: &[application::PlannedMutation],
+    mutation_ctx: &application::MutationContext,
+    lesson_id: &str,
+    at: &str,
+) -> Result<Vec<serde_json::Value>> {
+    use crate::repositories::cards as card_repo;
+    use application::MutationEffect;
+
+    let mut summary = Vec::with_capacity(mutations.len());
+    for planned in mutations {
+        let source = &result.card_mutations[planned.source_index];
+        let mut created_card_id: Option<String> = None;
+
+        match &planned.effect {
+            Some(MutationEffect::CreateCard {
+                source_index,
+                initial_status,
+            }) => {
+                let payload = result.card_mutations[*source_index]
+                    .card
+                    .as_ref()
+                    .ok_or_else(|| worker::Error::RustError("create without payload".into()))?;
+                let card_id = new_id("crd");
+                let hash = learning_core::Card::content_hash_of(
+                    payload.intent,
+                    &payload.prompt,
+                    &payload.answer,
+                    &payload.accepted_answers,
+                );
+                statements.push(
+                    database.prepare(card_repo::INSERT_CARD).bind(&[
+                        card_id.clone().into(),
+                        ctx.profile.id.0.clone().into(),
+                        ctx.profile.language_pack_id.0.clone().into(),
+                        result.language_pack_version.clone().into(),
+                        enum_str(&payload.intent).into(),
+                        enum_str(initial_status).into(),
+                        payload.prompt.clone().into(),
+                        payload
+                            .prompt_language
+                            .clone()
+                            .unwrap_or_else(|| ctx.profile.source_language.0.clone())
+                            .into(),
+                        payload.answer.clone().into(),
+                        ctx.profile.target_locale.0.clone().into(),
+                        serde_json::to_string(&payload.accepted_answers)
+                            .unwrap_or_else(|_| "[]".to_owned())
+                            .into(),
+                        "exact".into(),
+                        opt(&payload.explanation),
+                        worker::wasm_bindgen::JsValue::NULL,
+                        opt(&payload.source_learning_item_id),
+                        opt(&payload.source_error_target_id),
+                        lesson_id.into(),
+                        payload.creation_reason.clone().into(),
+                        payload
+                            .priority_score
+                            .map_or(worker::wasm_bindgen::JsValue::NULL, Into::into),
+                        hash.into(),
+                        1.into(),
+                        worker::wasm_bindgen::JsValue::NULL,
+                        worker::wasm_bindgen::JsValue::NULL,
+                        "tutor".into(),
+                        at.into(),
+                    ])?,
+                );
+                for (tag_type, tags) in [
+                    ("scenario", &payload.scenario_tags),
+                    ("skill", &payload.skill_tags),
+                ] {
+                    for tag in tags {
+                        statements.push(database.prepare(card_repo::INSERT_CARD_TAG).bind(&[
+                            card_id.clone().into(),
+                            tag_type.into(),
+                            tag.trim().to_lowercase().into(),
+                        ])?);
+                    }
+                }
+                if *initial_status == learning_core::CardStatus::New {
+                    // Activation persists the initial schedule state so the
+                    // first queue fetch and grade share one stable hash.
+                    use review_engine::ReviewScheduler as _;
+                    let scheduler = review_engine::FsrsScheduler::new()
+                        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+                    let state = scheduler
+                        .initial_state(review_engine::InitialReviewInput {
+                            now: review_engine::Timestamp(ctx.now.0),
+                        })
+                        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+                    let row =
+                        crate::repositories::review::ScheduleStateRow::from_state(&card_id, &state);
+                    statements.push(
+                        database
+                            .prepare(crate::repositories::review::UPSERT_SCHEDULE_STATE)
+                            .bind(&[
+                                row.card_id.clone().into(),
+                                row.algorithm.clone().into(),
+                                row.algorithm_version.clone().into(),
+                                worker::wasm_bindgen::JsValue::NULL,
+                                worker::wasm_bindgen::JsValue::NULL,
+                                worker::wasm_bindgen::JsValue::NULL,
+                                worker::wasm_bindgen::JsValue::NULL,
+                                row.due_at
+                                    .clone()
+                                    .map_or(worker::wasm_bindgen::JsValue::NULL, Into::into),
+                                worker::wasm_bindgen::JsValue::NULL,
+                                0.into(),
+                                0.into(),
+                                row.state_version.into(),
+                                row.state_hash.clone().into(),
+                                at.into(),
+                            ])?,
+                    );
+                }
+                created_card_id = Some(card_id);
+            }
+            Some(MutationEffect::UpdateContent {
+                card_id,
+                source_index,
+            }) => {
+                let payload = result.card_mutations[*source_index]
+                    .card
+                    .as_ref()
+                    .ok_or_else(|| worker::Error::RustError("update without payload".into()))?;
+                let hash = learning_core::Card::content_hash_of(
+                    payload.intent,
+                    &payload.prompt,
+                    &payload.answer,
+                    &payload.accepted_answers,
+                );
+                statements.push(
+                    database.prepare(card_repo::UPDATE_CARD_CONTENT).bind(&[
+                        card_id.0.clone().into(),
+                        payload.prompt.clone().into(),
+                        opt(&payload.explanation),
+                        worker::wasm_bindgen::JsValue::NULL,
+                        serde_json::to_string(&payload.accepted_answers)
+                            .unwrap_or_else(|_| "[]".to_owned())
+                            .into(),
+                        hash.into(),
+                        at.into(),
+                    ])?,
+                );
+            }
+            Some(MutationEffect::SetStatus {
+                card_id,
+                status,
+                reason,
+            }) => {
+                statements.push(database.prepare(card_repo::UPDATE_CARD_STATUS).bind(&[
+                    card_id.0.clone().into(),
+                    enum_str(status).into(),
+                    opt(reason),
+                    at.into(),
+                ])?);
+            }
+            Some(
+                MutationEffect::AddAcceptedAnswer { card_id, answer }
+                | MutationEffect::RemoveAcceptedAnswer { card_id, answer },
+            ) => {
+                let target = mutation_ctx
+                    .existing_cards
+                    .iter()
+                    .find(|c| &c.id == card_id);
+                if let Some(target) = target {
+                    let mut accepted = target.accepted_answers.clone();
+                    let adding = matches!(
+                        planned.effect,
+                        Some(MutationEffect::AddAcceptedAnswer { .. })
+                    );
+                    if adding {
+                        accepted.push(answer.clone());
+                    } else {
+                        accepted
+                            .retain(|a| a.trim().to_lowercase() != answer.trim().to_lowercase());
+                    }
+                    let hash = learning_core::Card::content_hash_of(
+                        target.intent,
+                        &target.prompt,
+                        &target.answer,
+                        &accepted,
+                    );
+                    statements.push(
+                        database
+                            .prepare(card_repo::UPDATE_ACCEPTED_ANSWERS)
+                            .bind(&[
+                                card_id.0.clone().into(),
+                                serde_json::to_string(&accepted)
+                                    .unwrap_or_else(|_| "[]".to_owned())
+                                    .into(),
+                                hash.into(),
+                                at.into(),
+                            ])?,
+                    );
+                }
+            }
+            None => {}
+        }
+
+        // Audit row for every attempt (idempotent on client_operation_id).
+        let audit_card_id = created_card_id.clone().or_else(|| source.card_id.clone());
+        statements.push(
+            database.prepare(card_repo::INSERT_CARD_MUTATION).bind(&[
+                new_id("cm").into(),
+                audit_card_id
+                    .clone()
+                    .map_or(worker::wasm_bindgen::JsValue::NULL, Into::into),
+                enum_str(&source.operation).into(),
+                source.client_operation_id.clone().into(),
+                worker::wasm_bindgen::JsValue::NULL,
+                source
+                    .card
+                    .as_ref()
+                    .and_then(|c| serde_json::to_string(c).ok())
+                    .map_or(worker::wasm_bindgen::JsValue::NULL, Into::into),
+                lesson_id.into(),
+                "tutor".into(),
+                planned
+                    .note
+                    .clone()
+                    .or_else(|| source.reason.clone())
+                    .unwrap_or_else(|| "lesson result".to_owned())
+                    .into(),
+                ctx.profile.language_pack_id.0.clone().into(),
+                result.language_pack_version.clone().into(),
+                match planned.verdict {
+                    application::Verdict::Applied => "applied",
+                    application::Verdict::Rejected => "rejected",
+                    application::Verdict::Warned => "warned",
+                }
+                .into(),
+                at.into(),
+            ])?,
+        );
+
+        summary.push(serde_json::json!({
+            "client_operation_id": source.client_operation_id,
+            "verdict": planned.verdict,
+            "note": planned.note,
+            "card_id": audit_card_id,
+        }));
+    }
+    Ok(summary)
 }

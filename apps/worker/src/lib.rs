@@ -112,6 +112,77 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async("/api/v1/listening-attempts", |req, ctx| async move {
             handlers::records::create_listening_attempt(req, &ctx.env).await
         })
+        .get_async("/api/v1/cards", |req, ctx| async move {
+            handlers::cards::list(&req, &ctx.env).await
+        })
+        .get_async("/api/v1/cards/:card_id", |_req, ctx| async move {
+            let card_id = ctx.param("card_id").cloned().unwrap_or_default();
+            handlers::cards::get(&ctx.env, &card_id).await
+        })
+        .patch_async("/api/v1/cards/:card_id", |req, ctx| async move {
+            let card_id = ctx.param("card_id").cloned().unwrap_or_default();
+            handlers::cards::patch(req, &ctx.env, &card_id).await
+        })
+        .post_async("/api/v1/cards/:card_id/suspend", |req, ctx| async move {
+            let card_id = ctx.param("card_id").cloned().unwrap_or_default();
+            handlers::cards::set_status(
+                req,
+                &ctx.env,
+                &card_id,
+                learning_core::CardStatus::Suspended,
+            )
+            .await
+        })
+        .post_async("/api/v1/cards/:card_id/restore", |req, ctx| async move {
+            let card_id = ctx.param("card_id").cloned().unwrap_or_default();
+            handlers::cards::set_status(req, &ctx.env, &card_id, learning_core::CardStatus::Review)
+                .await
+        })
+        .post_async("/api/v1/cards/:card_id/retire", |req, ctx| async move {
+            let card_id = ctx.param("card_id").cloned().unwrap_or_default();
+            handlers::cards::set_status(req, &ctx.env, &card_id, learning_core::CardStatus::Retired)
+                .await
+        })
+        .post_async("/api/v1/review-sessions", |req, ctx| async move {
+            handlers::review::create_session(req, &ctx.env).await
+        })
+        .get_async(
+            "/api/v1/review-sessions/:session_id/queue",
+            |_req, ctx| async move {
+                let session_id = ctx.param("session_id").cloned().unwrap_or_default();
+                handlers::review::queue(&ctx.env, &session_id).await
+            },
+        )
+        .post_async(
+            "/api/v1/review-sessions/:session_id/events",
+            |req, ctx| async move {
+                let session_id = ctx.param("session_id").cloned().unwrap_or_default();
+                handlers::review::submit_event(req, &ctx.env, &session_id).await
+            },
+        )
+        .post_async(
+            "/api/v1/review-sessions/:session_id/undo-last",
+            |_req, ctx| async move {
+                let session_id = ctx.param("session_id").cloned().unwrap_or_default();
+                handlers::review::undo_last(&ctx.env, &session_id).await
+            },
+        )
+        .post_async(
+            "/api/v1/review-sessions/:session_id/complete",
+            |req, ctx| async move {
+                let session_id = ctx.param("session_id").cloned().unwrap_or_default();
+                handlers::review::complete_session(req, &ctx.env, &session_id).await
+            },
+        )
+        .get_async("/api/v1/review/summary", |req, ctx| async move {
+            handlers::review::summary(&req, &ctx.env).await
+        })
+        .get_async("/api/v1/review/forecast", |req, ctx| async move {
+            handlers::review::forecast(&req, &ctx.env).await
+        })
+        .post_async("/api/v1/review/evaluate", |req, ctx| async move {
+            handlers::review::evaluate(&ctx.data, req, &ctx.env).await
+        })
         .get_async("/api/v1/export/tutor-context", |req, ctx| async move {
             handlers::records::tutor_context(&ctx.data, &req, &ctx.env).await
         })

@@ -10,6 +10,7 @@ PORT="${SMOKE_PORT:-8787}"
 BASE="http://localhost:$PORT/api/v1"
 
 cd "$ROOT/apps/worker"
+rm -rf .wrangler/state # fresh local D1 every run — smoke is self-contained
 npx wrangler d1 migrations apply DB --local >/dev/null
 npx wrangler dev --local --port "$PORT" >"$ROOT/target/wrangler-dev.log" 2>&1 &
 WRANGLER_PID=$!
@@ -48,7 +49,16 @@ BODY=$(cat <<EOF
  "lesson":{"scenario":"pharmacy","duration_seconds":900,"tutor_summary":"ok","next_goal":"dosage"},
  "metrics":{"speaking_seconds":300,"unaided_recall_count":2,"aided_recall_count":1,"long_pause_count":0},
  "new_learning_items":[{"item_type":"phrase","target_text":"¿Tiene algo para la tos?","prompt_text":"Спросите что-нибудь от кашля","prompt_language":"ru"}],
- "error_occurrences":[{"core_category":"grammar","pack_error_code":"es.verb.ser_estar","original_production":"estoy médico","corrected_production":"soy médico"}]}
+ "error_occurrences":[{"core_category":"grammar","pack_error_code":"es.verb.ser_estar","original_production":"estoy médico","corrected_production":"soy médico"}],
+ "card_mutations":[
+   {"operation":"create","client_operation_id":"op-smoke-card-1","card":{
+     "intent":"production","prompt":"Спросите, есть ли что-нибудь от кашля",
+     "answer":"¿Tiene algo para la tos?","accepted_answers":["¿Hay algo para la tos?"],
+     "prompt_language":"ru","creation_reason":"new high-value phrase"}},
+   {"operation":"create","client_operation_id":"op-smoke-card-dup","card":{
+     "intent":"production","prompt":"Спросите, есть ли что-нибудь от кашля",
+     "answer":"¿Tiene algo para la tos?","accepted_answers":["¿Hay algo para la tos?"],
+     "prompt_language":"ru","creation_reason":"duplicate on purpose"}}]}
 EOF
 )
 VALIDATE=$(curl -sf -X POST "$BASE/import/lesson-result/validate" -H 'content-type: application/json' -d "$BODY")
@@ -72,4 +82,52 @@ DUP=$(curl -sf -X POST "$BASE/import/lesson-result/apply?validation_token=$TOKEN
 echo "$DUP" | grep -q '"duplicate"' || { echo "FAIL idempotency: $DUP" >&2; exit 1; }
 echo "8 idempotent re-apply OK"
 
-echo "smoke OK: full M1 loop green"
+# ---- M2: cards + review loop ----
+echo "$APPLY" | grep -q '"verdict":"applied"' || { echo "FAIL card create: $APPLY" >&2; exit 1; }
+echo "$APPLY" | grep -q '"verdict":"rejected"' || { echo "FAIL duplicate card not rejected: $APPLY" >&2; exit 1; }
+CARDS=$(curl -sf "$BASE/cards?language_profile_id=$LLP")
+CARD=$(echo "$CARDS" | sed -n 's/.*"id":"\(crd_[^"]*\)".*/\1/p' | head -1)
+[ -n "$CARD" ] || { echo "FAIL cards list: $CARDS" >&2; exit 1; }
+echo "9 tutor card created + duplicate rejected OK"
+
+RS=$(curl -sf -X POST "$BASE/review-sessions" -H 'content-type: application/json' \
+  -d "{\"language_profile_id\":\"$LLP\"}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+QUEUE=$(curl -sf "$BASE/review-sessions/$RS/queue")
+echo "$QUEUE" | grep -q "$CARD" || { echo "FAIL queue: $QUEUE" >&2; exit 1; }
+HASH=$(echo "$QUEUE" | sed -n 's/.*"prior_state_hash":"\([^"]*\)".*/\1/p' | head -1)
+echo "10 review queue OK"
+
+EVAL=$(curl -sf -X POST "$BASE/review/evaluate" -H 'content-type: application/json' \
+  -d "{\"card_id\":\"$CARD\",\"learner_answer\":\"¿tiene algo para la tos?\"}")
+echo "$EVAL" | grep -q '"correct"' || { echo "FAIL evaluate: $EVAL" >&2; exit 1; }
+echo "11 pack evaluation OK"
+
+EVENT=$(curl -sf -X POST "$BASE/review-sessions/$RS/events" -H 'content-type: application/json' \
+  -d "{\"client_operation_id\":\"op-grade-1\",\"card_id\":\"$CARD\",\"grade\":3,
+       \"presented_at\":\"2026-07-12T10:00:00Z\",\"answered_at\":\"2026-07-12T10:00:05Z\",
+       \"response_millis\":5000,\"answer_revealed\":true,\"prior_state_hash\":\"$HASH\"}")
+echo "$EVENT" | grep -q '"event_id"' || { echo "FAIL grade: $EVENT" >&2; exit 1; }
+echo "$EVENT" | grep -q '"card_status":"learning"' || { echo "FAIL status transition: $EVENT" >&2; exit 1; }
+echo "12 grade submit OK"
+
+STALE=$(curl -s -X POST "$BASE/review-sessions/$RS/events" -H 'content-type: application/json' \
+  -d "{\"client_operation_id\":\"op-grade-2\",\"card_id\":\"$CARD\",\"grade\":3,
+       \"presented_at\":\"2026-07-12T10:00:00Z\",\"answered_at\":\"2026-07-12T10:00:05Z\",
+       \"response_millis\":5000,\"answer_revealed\":true,\"prior_state_hash\":\"$HASH\"}")
+echo "$STALE" | grep -q 'conflict_stale_state' || { echo "FAIL stale hash: $STALE" >&2; exit 1; }
+DUP_EV=$(curl -sf -X POST "$BASE/review-sessions/$RS/events" -H 'content-type: application/json' \
+  -d "{\"client_operation_id\":\"op-grade-1\",\"card_id\":\"$CARD\",\"grade\":1,
+       \"presented_at\":\"x\",\"answered_at\":\"x\",\"response_millis\":1,
+       \"answer_revealed\":false,\"prior_state_hash\":\"whatever\"}")
+echo "$DUP_EV" | grep -q '"duplicate":true' || { echo "FAIL event idempotency: $DUP_EV" >&2; exit 1; }
+echo "13 stale-hash 409 + event idempotency OK"
+
+UNDO=$(curl -sf -X POST "$BASE/review-sessions/$RS/undo-last")
+echo "$UNDO" | grep -q '"compensating_event_id"' || { echo "FAIL undo: $UNDO" >&2; exit 1; }
+SUMMARY=$(curl -sf "$BASE/review/summary?language_profile_id=$LLP")
+echo "$SUMMARY" | grep -q '"reviews_today"' || { echo "FAIL summary: $SUMMARY" >&2; exit 1; }
+FORECAST=$(curl -sf "$BASE/review/forecast?language_profile_id=$LLP&days=7")
+echo "$FORECAST" | grep -q '"due_per_day"' || { echo "FAIL forecast: $FORECAST" >&2; exit 1; }
+echo "14 undo + summary + forecast OK"
+
+echo "smoke OK: full M1+M2 loop green"

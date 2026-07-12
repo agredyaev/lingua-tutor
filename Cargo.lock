@@ -2542,12 +2542,14 @@ dependencies = [
 name = "worker-api"
 version = "0.1.0"
 dependencies = [
+ "adaptation",
  "application",
  "chrono",
  "language-pack-api",
  "language-pack-es-es",
  "language-pack-registry",
  "learning-core",
+ "review-engine",
  "semver",
  "serde",
  "serde_json",
