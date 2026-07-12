@@ -57,3 +57,28 @@ Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓, 27 tests 0 failed ✓, w
 Fuzz status: **active** — proptest normalization properties run in every `cargo test` via conformance suite. Scheduler property tests next (WBS 3.5); cargo-fuzz at 4.6.
 
 Next: iteration 3 = WBS 3 scheduler spike + review-engine core, then M0 exit gate.
+
+## Iteration 3 — WBS 3 Scheduler spike + review-engine — 2026-07-12
+
+| Task | Status | Note |
+|---|---|---|
+| 3.1 Trait + types | done | ReviewScheduler, ScheduledState, SchedulerSettings (§6 defaults), Grade, ScheduleError; FNV-1a state_hash over exact float bits |
+| 3.2 FSRS spike | done | **GO** — ADR-0004: fsrs-rs 6.6.1 wasm32 ✓ (12.5 KB gzip), deterministic ✓; rs-fsrs rejected (stale 2024-10) |
+| 3.3 FSRS adapter | done | FsrsScheduler, FSRS-6 DEFAULT_PARAMETERS, crate types never leak; getrandom wasm_js backend via .cargo/config.toml |
+| 3.4 Fallback scheduler | done | integer multiplicative (Again 10min, Hard ×1.2, Good ×2.5, Easy ×3.5), same trait, ships regardless |
+| 3.5 Golden + property tests | done | golden vectors recorded from 6.6.1 (4 grades, lapse, retrievability); proptest fixed-seed 128×40-step sequences: bounded finite intervals, deterministic apply, hash-changes-per-review — both schedulers |
+
+Drift found:
+
+1. **`SchedulerSettings.timezone: String`** (IANA name), not `Tz` — chrono-tz dep deferred; day-boundary math is `application`'s job (WBS 5). Avoids embedded TZ database in every crate now.
+2. **`initial_state` takes `now` and dues immediately** — spec's "second daily session" placement is queue/application policy, not scheduler math.
+3. **Grep-gate refinement**: "Spanish (Spain)" appears in language-pack-api manifest test fixture + doc example — verbatim spec §3 JSON, not identifiers. Rule reads: no locale in *names*; fixtures quoting spec allowed.
+4. `parameter_set_id` assigned by application at persist time; schedulers pass it through.
+
+Scope creep: none.
+
+**M0 EXIT GATE — PASSED (2026-07-12):** builds pass (host + wasm32 web/worker/review-engine) ✓; pack registered + selected (es-ES via composition root) ✓; conformance green on synthetic ✓; one review event persists next due date (scheduler_persistence integration test, RFC 3339 boundary) ✓; fallback documented (ADR-0004 + rustdoc) ✓; no Spanish identifier in core ✓. 37 tests, 0 failed.
+
+Fuzz status: property suites now cover normalization (conformance) + scheduler intervals (128-case fixed-seed sequences). cargo-fuzz next at WBS 4.6.
+
+Next: iteration 4 = WBS 4 core records (M1) — learning-core domain types, D1 repositories, application services, HTTP endpoints, tutor-contract crate.
