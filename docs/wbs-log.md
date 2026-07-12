@@ -241,3 +241,31 @@ Scope creep: none.
 Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓, **107 tests 0 failed** ✓, wasm32 builds ✓, **17-step smoke green** (…15 rules fire on session complete, 16 redesign candidate listed, 17 dashboard + context surfacing + dismiss) ✓.
 
 **M4 complete.** Next: iteration 9 = WBS 9 offline (M2 tail) — service worker, due-batch prefetch + IndexedDB queue, ordered idempotent replay with 409 reconciliation.
+
+## Iteration 9 — WBS 9 Offline (M2 tail) — 2026-07-12
+
+| Task | Status | Note |
+|---|---|---|
+| 9.1 Service worker | done | sw.js: cache-first same-origin static assets, network-first `/api/v1/dashboard` snapshot, API otherwise network-only; PWA manifest + registration |
+| 9.2 Prefetch + queue | done | queue cached on every online fetch (`lt-prefetch-queue`); grades queue to `lt-offline-events` on network failure with measured latency; **hard bound 50 — full queue stops the session, never drops history** |
+| 9.3 Replay | done | on review entry: ordered replay; success/duplicate → dequeue; `conflict_stale_state` → conflict audit list (`lt-conflict-events`), local copy dropped, never guessed; network error → stop and stay offline; offline banner in UI |
+
+**Anti-pattern / performance review (explicit pass):**
+
+- **ADR-0005**: localStorage over IndexedDB for a ≤50-event (~15–60 KB) queue — async IDB schema/versioning machinery or a wrapper dep would be speculative for this size (16 §1). Functional guarantees identical (durable, ordered, bounded, idempotent). Revisit trigger written down (~1 MB or indexed lookup).
+- Queue ops split pure/IO: parse/append/serialize are host-tested pure fns (corrupt storage → empty queue, never panic); Storage access is two 4-line wrappers. No mocking.
+- `response_millis` now measured (reveal→grade instant via non-reactive `StoredValue` — no signal-from-effect) and clamped ≤ 10 min.
+- No new crate deps for offline (web-sys `Storage` feature only). WASM 266 KB gzip (+7 KB).
+
+Drift found:
+
+1. **IndexedDB → localStorage** (ADR-0005) — the one deliberate spec deviation this iteration; functional requirements of 09 §7 all met.
+2. **Repeat-grading the same card offline** produces `conflict_stale_state` for the second+ events on replay (hash advanced server-side) — those land in the conflict audit list exactly as spec prescribes ("reconcile safely, never guess"). Documented behavior, not a bug.
+3. Offline semantic edits: no offline path exists for PATCH (network error surfaces to the user) — client-side rejection requirement satisfied structurally.
+4. Browser-level offline e2e (airplane-mode round trip) deferred to Playwright (WBS 10.6); pure logic + server idempotency/409 paths are covered by tests + smoke today.
+
+Scope creep: none.
+
+Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓, **110 tests 0 failed** ✓, wasm32 builds ✓, WASM 266 KB gzip ✓, 17-step smoke green ✓.
+
+Next: iteration 10 = WBS 10 production hardening (M5) — Terraform (D1/Worker/Access, prevent_destroy), Access JWT verification, CD pipeline, backups + restore drill, full /health, Playwright e2e, PWA/perf/security checklists.
