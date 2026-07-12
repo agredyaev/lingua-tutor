@@ -4,34 +4,8 @@
 // tests exempt from panic-family lints (16-rust-guidelines.md §2)
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use integration_tests::{migrated_connection, seed_profile_and_pack};
 use rusqlite::Connection;
-use std::fs;
-use std::path::PathBuf;
-
-fn migrations_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../migrations")
-}
-
-/// Fresh in-memory DB with every migration applied in numeric order.
-fn migrated_connection() -> Connection {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.pragma_update(None, "foreign_keys", "ON").unwrap();
-
-    let mut files: Vec<PathBuf> = fs::read_dir(migrations_dir())
-        .expect("migrations/ directory exists")
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|ext| ext == "sql"))
-        .collect();
-    files.sort();
-    assert!(!files.is_empty(), "no migration files found");
-
-    for file in files {
-        let sql = fs::read_to_string(&file).unwrap();
-        conn.execute_batch(&sql)
-            .unwrap_or_else(|e| panic!("{} failed: {e}", file.display()));
-    }
-    conn
-}
 
 fn names(conn: &Connection, kind: &str) -> Vec<String> {
     let mut stmt = conn
@@ -143,22 +117,6 @@ fn foreign_keys_enforced() {
                  's', 'g', 'pwa', '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z');",
     );
     assert!(result.is_err(), "FK to missing profile must be rejected");
-}
-
-fn seed_profile_and_pack(conn: &Connection) {
-    conn.execute_batch(
-        "INSERT INTO language_packs (id, package_name, version, contract_version,
-             target_language, target_locale, display_name, installed_at, updated_at)
-         VALUES ('test-pack', 'synthetic-test-pack', '0.1.0', 1, 'zz', 'zz-ZZ',
-                 'Synthetic', '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z');
-         INSERT INTO learner_profile (id, created_at, updated_at)
-         VALUES ('learner-1', '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z');
-         INSERT INTO learner_language_profiles (id, learner_id, language_pack_id,
-             source_language, target_locale, created_at, updated_at)
-         VALUES ('llp-1', 'learner-1', 'test-pack', 'ru', 'zz-ZZ',
-                 '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z');",
-    )
-    .unwrap();
 }
 
 fn insert_card(conn: &Connection, id: &str, status: &str) -> rusqlite::Result<usize> {

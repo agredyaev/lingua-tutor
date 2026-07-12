@@ -10,8 +10,12 @@ description = "Cross-crate integration tests (02-workspace.md §1)"
 [lib]
 path = "lib.rs"
 
-[dev-dependencies]
+[dependencies]
 rusqlite = { version = "0.37", features = ["bundled"] }
+
+[dev-dependencies]
+review-engine = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 [lints]
 workspace = true

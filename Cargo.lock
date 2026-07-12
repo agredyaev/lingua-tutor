@@ -861,6 +861,8 @@ dependencies = [
 name = "integration-tests"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "review-engine",
  "rusqlite",
 ]
 
