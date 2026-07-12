@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lingua Tutor</title>
+    
+<script type="module">
+import init, * as bindings from '/web-8ca6e3ef630433d6.js';
+const wasm = await init({ module_or_path: '/web-8ca6e3ef630433d6_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+  <link rel="modulepreload" href="/web-8ca6e3ef630433d6.js" crossorigin="anonymous" integrity="sha384-b5tqHu21kCdsGaxeYp2KBkZCLCLmoJk+tWkIEwbvgcgazdIRnimRDejWyVbkx0td"><link rel="preload" href="/web-8ca6e3ef630433d6_bg.wasm" crossorigin="anonymous" integrity="sha384-Thm0zSNLfOuaho4mYh5XDhu2TUJlMYlbo3LKCatxZIefSIHiKSQR5jqT18VCAlmv" as="fetch" type="application/wasm"></head>
+  <body></body>
+</html>

@@ -1,0 +1,15 @@
+[package]
+name = "web"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Leptos CSR PWA frontend"
+
+[dependencies]
+leptos = { workspace = true, features = ["csr"] }
+console_error_panic_hook = "0.1"
+
+[lints]
+workspace = true
