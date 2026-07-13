@@ -19,8 +19,8 @@
     {
       "binding": "DB",
       "database_name": "lingua-tutor-dev",
-      // Placeholder for --local; real dev id via Terraform output (ADR-0003).
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // Real dev DB (Terraform); wrangler dev --local ignores the id.
+      "database_id": "30f6ac95-78e9-4993-9d38-b8173d76bb46",
       "migrations_dir": "../../migrations"
     }
   ],
@@ -29,8 +29,8 @@
       "name": "lingua-tutor-api",
       "vars": {
         "AUTH_ENFORCED": "true",
-        "ACCESS_TEAM_DOMAIN": "SET_AFTER_ZT_SETUP.cloudflareaccess.com",
-        "ACCESS_AUD": "SET_FROM_TERRAFORM_OUTPUT",
+        "ACCESS_TEAM_DOMAIN": "absent-twin.cloudflareaccess.com",
+        "ACCESS_AUD": "ef3a0e549f57c25821692fe4adcf596ca53da43e6f95cbbec54099aaf4f11657",
         "OWNER_EMAIL": "aleksey.gredyaev.dev@gmail.com"
       },
       "assets": {
@@ -42,7 +42,7 @@
         {
           "binding": "DB",
           "database_name": "lingua-tutor-prod",
-          "database_id": "SET_FROM_TERRAFORM_OUTPUT",
+          "database_id": "0ea14e2b-4462-48d7-99ac-aea7f8c797c1",
           "migrations_dir": "../../migrations"
         }
       ]

@@ -6,3 +6,6 @@ package-lock.json.bak
 *.wasm.map
 /test-results
 /playwright-report
+infra/terraform/.terraform/
+infra/terraform/*.tfstate*
+infra/terraform/tf.plan
