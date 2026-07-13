@@ -2,6 +2,7 @@
 //! Owns HTTP concerns only; domain rules live in `application` (02-workspace.md §2).
 
 pub mod api;
+pub mod auth;
 pub mod handlers;
 pub mod repositories;
 
@@ -40,16 +41,19 @@ mod tests {
 /// Routes every incoming request through the `/api/v1` router.
 #[event(fetch)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
+    // Access gate first (10-security.md): enforced in production only.
+    match auth::enforce(&req, &env).await? {
+        auth::AuthOutcome::Allow => {}
+        auth::AuthOutcome::Deny(response) => return Ok(response),
+    }
     let registry = match built_in_language_packs() {
         Ok(registry) => registry,
         // Startup must fail clearly on contract mismatch (06 §4).
         Err(e) => return error_response(500, "pack_registry", &e.to_string()),
     };
     Router::with_data(registry)
-        .get("/api/v1/health", |_req, _ctx| {
-            Response::from_json(&shared_schema::HealthResponse::ok(env!(
-                "CARGO_PKG_VERSION"
-            )))
+        .get_async("/api/v1/health", |_req, ctx| async move {
+            handlers::records::health(&ctx.env).await
         })
         .get("/api/v1/language-packs", |_req, ctx| {
             handlers::profiles::list_packs(&ctx.data)

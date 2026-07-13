@@ -28,6 +28,8 @@ adaptation = { workspace = true }
 review-engine = { workspace = true }
 tutor-contract = { workspace = true }
 uuid = { version = "1", features = ["v4", "js"] }
+rsa = { version = "0.9", default-features = false, features = ["sha2"] }
+base64 = "0.22"
 
 [lints]
 workspace = true

@@ -6,13 +6,46 @@
   "build": {
     "command": "cargo install -q worker-build && worker-build --release"
   },
+  // PWA served by the same Worker: one origin, no CORS (09-frontend.md §1).
+  "assets": {
+    "directory": "../web/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "vars": {
+    "AUTH_ENFORCED": "false" // local dev; production overrides below
+  },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "lingua-tutor-dev",
-      // Placeholder until WBS 10.1 (Terraform creates real dev/prod DBs, ADR-0003).
+      // Placeholder for --local; real dev id via Terraform output (ADR-0003).
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "../../migrations"
     }
-  ]
+  ],
+  "env": {
+    "production": {
+      "name": "lingua-tutor-api",
+      "vars": {
+        "AUTH_ENFORCED": "true",
+        "ACCESS_TEAM_DOMAIN": "SET_AFTER_ZT_SETUP.cloudflareaccess.com",
+        "ACCESS_AUD": "SET_FROM_TERRAFORM_OUTPUT",
+        "OWNER_EMAIL": "aleksey.gredyaev.dev@gmail.com"
+      },
+      "assets": {
+        "directory": "../web/dist",
+        "not_found_handling": "single-page-application",
+        "run_worker_first": ["/api/*"]
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "lingua-tutor-prod",
+          "database_id": "SET_FROM_TERRAFORM_OUTPUT",
+          "migrations_dir": "../../migrations"
+        }
+      ]
+    }
+  }
 }

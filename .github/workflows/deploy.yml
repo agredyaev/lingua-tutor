@@ -1,0 +1,85 @@
+name: deploy-production
+
+# Manual, gated deploy (11-infrastructure.md §4): approval via the
+# `production` environment, backup before migrate, plan gate, smoke after.
+on:
+  workflow_dispatch:
+
+concurrency: production-deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production # configure required reviewers in repo settings
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk@0.21.14,cargo-deny@0.20.2
+
+      # 1-3: full PR gate re-run
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace
+      - run: cargo deny check
+
+      # 4: backup BEFORE any migration (11 §5)
+      - name: backup prod D1
+        working-directory: apps/worker
+        run: |
+          npx wrangler d1 export lingua-tutor-prod --remote \
+            --output ../../backup-$(date +%Y%m%dT%H%M%S).sql
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pre-deploy-backup-${{ github.run_id }}
+          path: backup-*.sql
+          retention-days: 90
+
+      # 5: terraform plan gate — refuses to deploy over unexpected drift
+      - uses: hashicorp/setup-terraform@v3
+      - name: terraform plan (drift gate)
+        working-directory: infra/terraform
+        run: |
+          terraform init -input=false
+          terraform plan -input=false -detailed-exitcode || {
+            code=$?
+            if [ "$code" = "2" ]; then
+              echo "::error::infrastructure drift detected — reconcile before deploying"
+              exit 1
+            fi
+            exit "$code"
+          }
+
+      # 6: migrations (forward-only, 04-database.md §4)
+      - name: apply migrations
+        working-directory: apps/worker
+        run: npx wrangler d1 migrations apply DB --env production --remote
+
+      # 7: build web assets, deploy Worker (+assets)
+      - name: build web
+        working-directory: apps/web
+        run: trunk build --release --cargo-profile wasm-release
+      - name: deploy worker
+        working-directory: apps/worker
+        run: npx wrangler deploy --env production
+
+      # 8: smoke against prod
+      - name: smoke
+        run: |
+          curl -sf https://lingua-tutor-api.aleksey-gredyaev-dev.workers.dev/api/v1/health \
+            | grep -q '"d1_connected":true'
+
+      # 9: release metadata (11 §4.9)
+      - name: record release metadata
+        run: |
+          echo "{\"sha\":\"$GITHUB_SHA\",\"run\":\"$GITHUB_RUN_ID\",\"date\":\"$(date -u +%FT%TZ)\"}" \
+            > release-metadata.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-metadata-${{ github.run_id }}
+          path: release-metadata.json
+          retention-days: 90

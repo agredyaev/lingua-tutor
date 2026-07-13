@@ -525,3 +525,33 @@ pub async fn dashboard(req: &Request, env: &Env) -> Result<Response> {
         open_recommendations,
     })
 }
+
+/// `GET /api/v1/health` — full report (11-infrastructure.md §6): Worker
+/// status, D1 connectivity, latest migration, scheduler algorithm/version,
+/// deployment version.
+pub async fn health(env: &Env) -> Result<Response> {
+    #[derive(serde::Deserialize)]
+    struct MigrationRow {
+        name: String,
+    }
+    let (d1_ok, latest_migration) = match db(env) {
+        Ok(database) => match database
+            .prepare("SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1")
+            .first::<MigrationRow>(None)
+            .await
+        {
+            Ok(row) => (true, row.map(|r| r.name)),
+            Err(_) => (false, None),
+        },
+        Err(_) => (false, None),
+    };
+    Response::from_json(&serde_json::json!({
+        "status": if d1_ok { "ok" } else { "degraded" },
+        "version": env!("CARGO_PKG_VERSION"),
+        "d1_connected": d1_ok,
+        "latest_migration": latest_migration,
+        "schema_version": latest_migration,
+        "scheduler": { "algorithm": "fsrs", "algorithm_version": "fsrs-rs-6.6.1",
+                        "parameter_set": "default" },
+    }))
+}
