@@ -20,7 +20,7 @@ jobs:
         run: |
           npx wrangler d1 export lingua-tutor-prod --remote \
             --output ../../backup-$(date +%Y%m%dT%H%M%S).sql
-      - name: dry-run restore (11 §5: validate every backup)
+      - name: "dry-run restore (11 §5 — validate every backup)"
         run: |
           sudo apt-get install -yq sqlite3 >/dev/null
           sqlite3 :memory: ".read $(ls backup-*.sql)" "SELECT count(*) FROM cards;"
