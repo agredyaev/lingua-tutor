@@ -31,7 +31,10 @@ impl FakePack {
                 level_framework: "CEFR".to_owned(),
                 capabilities: vec![],
             },
-            catalog: CurriculumCatalog { scenarios: vec![] },
+            catalog: CurriculumCatalog {
+                scenarios: vec![],
+                seeds: vec![],
+            },
         })
     }
 }

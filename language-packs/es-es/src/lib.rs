@@ -18,7 +18,6 @@ const MANIFEST_JSON: &str = include_str!("../manifest.json");
 const TEMPLATES_JSON: &str = include_str!("../assets/card-templates/templates.json");
 const SCENARIOS_JSON: &str = include_str!("../assets/curriculum/scenarios.json");
 const TAXONOMY_JSON: &str = include_str!("../assets/error-taxonomy/taxonomy.json");
-#[cfg(test)]
 const SEEDS_JSON: &str = include_str!("../assets/phrase-seeds/a1.json");
 const INSTRUCTIONS_RU: &str = include_str!("../assets/tutor-instructions/instructions-ru.md");
 const CORRECTIONS_RU: &str = include_str!("../assets/tutor-instructions/corrections-ru.md");
@@ -87,7 +86,6 @@ mod assets {
 
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
-    #[cfg_attr(not(test), allow(dead_code))] // parsed by asset tests only until WBS 8.4
     pub struct SeedsFile {
         #[allow(dead_code)] // asset version pin
         pub version: u32,
@@ -96,10 +94,8 @@ mod assets {
 
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
-    #[cfg_attr(not(test), allow(dead_code))]
     pub struct SeedEntry {
         pub target_text: String,
-        #[allow(dead_code)] // used when seeds enter tutor context (WBS 8.4)
         pub prompt_ru: String,
         pub scenario: String,
     }
@@ -125,6 +121,8 @@ impl EsEsPack {
             serde_json::from_str(SCENARIOS_JSON).expect("scenarios.json matches schema");
         let taxonomy: assets::TaxonomyFile =
             serde_json::from_str(TAXONOMY_JSON).expect("taxonomy.json matches schema");
+        let seeds: assets::SeedsFile =
+            serde_json::from_str(SEEDS_JSON).expect("a1.json matches schema");
         Self {
             manifest,
             templates: templates
@@ -145,6 +143,15 @@ impl EsEsPack {
                         id: s.id,
                         title: s.title,
                         level: s.level,
+                    })
+                    .collect(),
+                seeds: seeds
+                    .seeds
+                    .into_iter()
+                    .map(|seed| language_pack_api::PhraseSeed {
+                        target_text: seed.target_text,
+                        prompt: seed.prompt_ru,
+                        scenario_id: seed.scenario,
                     })
                     .collect(),
             },

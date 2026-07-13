@@ -2,6 +2,7 @@
 //! repositories → decide via `application`/domain → persist → respond.
 
 pub mod cards;
+pub mod export;
 pub mod lessons;
 pub mod profiles;
 pub mod recommendations;

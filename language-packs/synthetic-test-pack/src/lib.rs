@@ -6,7 +6,7 @@ use language_pack_api::{
     AnswerEvaluation, AnswerEvaluationRequest, AnswerVerdict, Capability, CardIntent, CardTemplate,
     CoreErrorCategory, CurriculumCatalog, LanguageErrorClassification,
     LanguageErrorClassificationRequest, LanguagePack, LanguagePackManifest, LearnerLanguageProfile,
-    NormalizationMode, NormalizedText, Scenario, TutorInstructionBundle,
+    NormalizationMode, NormalizedText, PhraseSeed, Scenario, TutorInstructionBundle,
 };
 
 /// Builds the pack for registration in test compositions.
@@ -73,6 +73,11 @@ impl SyntheticTestPack {
                         level: "A2".to_owned(),
                     },
                 ],
+                seeds: vec![PhraseSeed {
+                    target_text: "zug bla".to_owned(),
+                    prompt: "say the greeting".to_owned(),
+                    scenario_id: "syn-greetings".to_owned(),
+                }],
             },
         }
     }

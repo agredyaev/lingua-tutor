@@ -325,6 +325,111 @@ pub async fn tutor_context(
         .results()?;
     let again_count = week_events.iter().filter(|e| e.grade == 1).count();
 
+    // Items inventory: the tutor MUST reference existing IDs in evidence/
+    // mastery blocks — without this list the contract is unusable.
+    #[derive(serde::Deserialize)]
+    struct ItemRowSlim {
+        id: String,
+        target_text: String,
+        normalized_target_text: String,
+        status: String,
+    }
+    let items: Vec<ItemRowSlim> = database
+        .prepare(
+            "SELECT id, target_text, normalized_target_text, status
+             FROM learning_items WHERE learner_language_profile_id = ?1
+             ORDER BY updated_at DESC LIMIT 200",
+        )
+        .bind(&[profile.id.0.clone().into()])?
+        .all()
+        .await?
+        .results()?;
+    let items_json: Vec<serde_json::Value> = items
+        .iter()
+        .map(|i| {
+            serde_json::json!({ "learning_item_id": i.id, "target_text": i.target_text,
+                                     "status": i.status })
+        })
+        .collect();
+
+    // Due rechecks: the tutor runs the 1/3/7 protocol inside the lesson.
+    let due_rechecks: Vec<serde_json::Value> = database
+        .prepare(
+            "SELECT r.id AS recheck_id, r.offset_days, t.id AS error_target_id,
+                    t.original_production, t.corrected_production
+             FROM error_rechecks r JOIN error_targets t ON t.id = r.error_target_id
+             WHERE t.learner_language_profile_id = ?1
+               AND r.completed_at IS NULL AND r.due_at <= ?2
+             ORDER BY r.due_at LIMIT 20",
+        )
+        .bind(&[profile.id.0.clone().into(), to_rfc3339(now()).into()])?
+        .all()
+        .await?
+        .results()?;
+
+    // Next-lesson goal from the last completed lesson.
+    #[derive(serde::Deserialize)]
+    struct GoalRow2 {
+        next_goal: Option<String>,
+    }
+    let goal = database
+        .prepare(
+            "SELECT next_goal FROM lessons
+             WHERE learner_language_profile_id = ?1 AND status = 'completed'
+             ORDER BY lesson_number DESC LIMIT 1",
+        )
+        .bind(&[profile.id.0.clone().into()])?
+        .first::<GoalRow2>(None)
+        .await?
+        .and_then(|g| g.next_goal);
+
+    // Unlearned curriculum seeds (set difference vs item canonical texts).
+    let known: Vec<&str> = items
+        .iter()
+        .map(|i| i.normalized_target_text.as_str())
+        .collect();
+    let suggested_seeds: Vec<serde_json::Value> = pack
+        .curriculum_catalog()
+        .seeds
+        .iter()
+        .filter(|seed| {
+            let canonical = pack
+                .normalize_target_text(
+                    &seed.target_text,
+                    language_pack_api::NormalizationMode::Canonical,
+                )
+                .0;
+            !known.contains(&canonical.as_str())
+        })
+        .take(10)
+        .map(|seed| {
+            serde_json::json!({ "target_text": seed.target_text,
+                                        "prompt": seed.prompt,
+                                        "scenario_id": seed.scenario_id })
+        })
+        .collect();
+
+    // Existing card fronts: duplicate-avoidance signal for card proposals.
+    #[derive(serde::Deserialize)]
+    struct CardSlim {
+        answer: String,
+        intent: String,
+    }
+    let existing_cards: Vec<CardSlim> = database
+        .prepare(
+            "SELECT answer, intent FROM cards
+             WHERE learner_language_profile_id = ?1 AND status != 'retired'
+             ORDER BY created_at DESC LIMIT 50",
+        )
+        .bind(&[profile.id.0.clone().into()])?
+        .all()
+        .await?
+        .results()?;
+    let existing_card_answers: Vec<serde_json::Value> = existing_cards
+        .iter()
+        .map(|c| serde_json::json!({ "answer": c.answer, "intent": c.intent }))
+        .collect();
+
     Response::from_json(&serde_json::json!({
         "schema_version": "1",
         "language_profile_id": profile.id.0,
@@ -333,6 +438,11 @@ pub async fn tutor_context(
         "estimated_level": profile.estimated_level,
         "tutor_instructions": instructions,
         "active_error_targets": errors,
+        "next_lesson_goal": goal,
+        "learning_items": items_json,
+        "due_error_rechecks": due_rechecks,
+        "suggested_new_phrases": suggested_seeds,
+        "existing_card_answers": existing_card_answers,
         "review_summary_7d": {
             "reviews": week_events.len(),
             "again_count": again_count,
@@ -340,10 +450,7 @@ pub async fn tutor_context(
         "redesign_candidates": redesign,
         "open_recommendations": open_recommendations,
         "curriculum_scenarios": pack.curriculum_catalog().scenarios,
-        "lesson_result_contract": {
-            "schema_version": tutor_contract::SCHEMA_VERSION,
-            "endpoint": "/api/v1/import/lesson-result/validate",
-        },
+        "lesson_result_contract": lesson_result_contract(&profile, pack),
     }))
 }
 
@@ -554,4 +661,53 @@ pub async fn health(env: &Env) -> Result<Response> {
         "scheduler": { "algorithm": "fsrs", "algorithm_version": "fsrs-rs-6.6.1",
                         "parameter_set": "default" },
     }))
+}
+
+/// Embedded lesson-result contract: exact template + closed enum sets so the
+/// tutor produces an importable block on the first try (methodology audit).
+fn lesson_result_contract(
+    profile: &learning_core::LearnerLanguageProfile,
+    pack: &dyn language_pack_api::LanguagePack,
+) -> serde_json::Value {
+    let enums = serde_json::json!({
+        "item_type": ["phrase","collocation","pattern","word","response_frame"],
+        "evidence_kind": ["recognition","listening","prompted_production",
+                           "spontaneous_production","transfer","correction"],
+        "core_category": ["grammar","vocabulary","word_order","register",
+                           "pronunciation","orthography","other"],
+        "mastery_status": ["candidate","introduced","learning","transfer_pending",
+                            "provisionally_mastered","mastered","suspended"],
+        "card_operation": ["create","update","suspend","restore","retire",
+                            "add_accepted_answer","remove_accepted_answer"],
+        "card_intent": ["production","listening","contrast","transfer"],
+    });
+    let template = serde_json::json!({
+        "schema_version": "1",
+        "client_operation_id": "op-<уникальный-id-урока>",
+        "language_profile_id": profile.id.0,
+        "language_pack_id": profile.language_pack_id.0,
+        "language_pack_version": pack.manifest().version,
+        "lesson": { "scenario": "<scenario_id>", "duration_seconds": 0,
+                     "tutor_summary": "…", "next_goal": "…" },
+        "metrics": { "speaking_seconds": 0, "unaided_recall_count": 0,
+                      "aided_recall_count": 0, "long_pause_count": 0 },
+        "new_learning_items": [ { "item_type": "phrase", "target_text": "…",
+                                   "prompt_text": "…", "prompt_language": "ru" } ],
+        "evidence": [ { "learning_item_id": "<из learning_items>",
+                         "kind": "spontaneous_production", "success": true } ],
+        "error_occurrences": [ { "error_target_id": null, "core_category": "grammar",
+                                  "pack_error_code": "es.…", "original_production": "…",
+                                  "corrected_production": "…" } ],
+        "card_mutations": [ { "operation": "create", "client_operation_id": "op-…-c1",
+                               "card": { "intent": "production", "prompt": "…",
+                                          "answer": "…", "prompt_language": "ru",
+                                          "creation_reason": "…" } } ],
+    });
+    serde_json::json!({
+        "schema_version": tutor_contract::SCHEMA_VERSION,
+        "endpoint": "/api/v1/import/lesson-result/validate",
+        "instructions": "В конце урока верни ровно один JSON-блок по template; ссылайся на learning_item_id из learning_items; error code — из таксономии пака.",
+        "enums": enums,
+        "template": template,
+    })
 }

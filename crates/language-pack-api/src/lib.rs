@@ -211,11 +211,25 @@ pub struct Scenario {
     pub level: String,
 }
 
+/// One seed phrase for the initial curriculum (06-language-packs.md §7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PhraseSeed {
+    /// Target-language phrase.
+    pub target_text: String,
+    /// Learner-facing prompt in the source language.
+    pub prompt: String,
+    /// Scenario this seed belongs to.
+    pub scenario_id: String,
+}
+
 /// Pack curriculum (06-language-packs.md §7).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CurriculumCatalog {
     /// Scenarios in recommended order.
     pub scenarios: Vec<Scenario>,
+    /// Seed phrases feeding early lessons via the tutor context.
+    #[serde(default)]
+    pub seeds: Vec<PhraseSeed>,
 }
 
 /// The plugin contract (06-language-packs.md §2). All target-language

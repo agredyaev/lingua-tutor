@@ -210,6 +210,12 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .post_async("/api/v1/review/evaluate", |req, ctx| async move {
             handlers::review::evaluate(&ctx.data, req, &ctx.env).await
         })
+        .get_async("/api/v1/export/full", |req, ctx| async move {
+            handlers::export::full(&req, &ctx.env).await
+        })
+        .get_async("/api/v1/export/cards.csv", |req, ctx| async move {
+            handlers::export::cards_csv(&req, &ctx.env).await
+        })
         .get_async("/api/v1/export/tutor-context", |req, ctx| async move {
             handlers::records::tutor_context(&ctx.data, &req, &ctx.env).await
         })
