@@ -14,6 +14,6 @@ export default defineConfig({
       "sh -c 'cd apps/worker && rm -rf .wrangler/state && npx wrangler d1 migrations apply DB --local && npx wrangler dev --local --port 8787'",
     url: "http://localhost:8787/api/v1/health",
     reuseExistingServer: false,
-    timeout: 180_000,
+    timeout: 600_000, // CI cold worker-build
   },
 });
