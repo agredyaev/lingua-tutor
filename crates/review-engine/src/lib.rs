@@ -210,6 +210,27 @@ pub trait ReviewScheduler {
     ) -> Result<f64, ScheduleError>;
 }
 
+/// Recomputes a card's state by replaying `events` from the card's
+/// activation instant (05-review-engine.md §7 undo). Pure function of its
+/// inputs — it must NOT observe the wall clock, so a replay run at any later
+/// time reproduces the exact pre-event state and hash.
+///
+/// # Errors
+///
+/// Propagates [`ScheduleError`] from the underlying scheduler.
+pub fn replay(
+    scheduler: &dyn ReviewScheduler,
+    activated_at: Timestamp,
+    events: &[ReviewEventInput],
+    settings: &SchedulerSettings,
+) -> Result<ScheduledState, ScheduleError> {
+    let mut state = scheduler.initial_state(InitialReviewInput { now: activated_at })?;
+    for event in events {
+        state = scheduler.apply_review(&state, event, settings)?;
+    }
+    Ok(state)
+}
+
 /// Clamps a produced interval into `[MIN_INTERVAL_SECONDS, max_interval_days]`,
 /// rejecting non-finite input. Shared by both schedulers.
 fn clamp_interval(

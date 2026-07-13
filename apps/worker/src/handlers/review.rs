@@ -6,8 +6,7 @@ use crate::repositories::{cards, review, to_rfc3339};
 use application::{QueueCandidate, build_queue, next_card_status};
 use learning_core::{CardId, CardStatus, Timestamp};
 use review_engine::{
-    FallbackScheduler, FsrsScheduler, Grade, InitialReviewInput, ReviewEventInput, ReviewScheduler,
-    SchedulerSettings,
+    FallbackScheduler, FsrsScheduler, Grade, ReviewEventInput, ReviewScheduler, SchedulerSettings,
 };
 use worker::{D1Database, Env, Request, Response, Result};
 
@@ -305,9 +304,14 @@ pub async fn submit_event(mut req: Request, env: &Env, session_id: &str) -> Resu
     };
 
     let scheduler = scheduler_for(&state.algorithm)?;
-    let answered_at = crate::repositories::from_rfc3339(&body.answered_at)
-        .map(|t| review_engine::Timestamp(t.0))
-        .unwrap_or_else(|_| now_re());
+    // Reject instead of falling back to the wall clock: undo replays events
+    // from their stored answered_at, so an unparsable value would make the
+    // replayed state diverge from the applied one.
+    let Ok(answered_at) =
+        crate::repositories::from_rfc3339(&body.answered_at).map(|t| review_engine::Timestamp(t.0))
+    else {
+        return error_response(400, "invalid_timestamp", "answered_at must be RFC 3339");
+    };
     let result = match scheduler.apply_review(
         &state,
         &ReviewEventInput { grade, answered_at },
@@ -399,10 +403,6 @@ fn bind_state(
     ])
 }
 
-fn now_re() -> review_engine::Timestamp {
-    review_engine::Timestamp(now().0)
-}
-
 /// `POST /api/v1/review-sessions/{session_id}/undo-last` — compensating
 /// event + state recomputed by deterministic replay (05 §7: never deletes).
 pub async fn undo_last(env: &Env, session_id: &str) -> Result<Response> {
@@ -428,7 +428,9 @@ pub async fn undo_last(env: &Env, session_id: &str) -> Result<Response> {
         return error_response(409, "already_undone", "only the immediately previous grade");
     }
 
-    // Replay all effective events except the undone one.
+    // Replay all effective events except the undone one, seeded from the
+    // card's activation instant — never the wall clock, or the replayed
+    // hash drifts from the queue's prior_state_hash (409 on the next grade).
     let history: Vec<EventRow> = database
         .prepare(review::SELECT_EVENTS_FOR_CARD)
         .bind(&[last.card_id.clone().into()])?
@@ -439,36 +441,45 @@ pub async fn undo_last(env: &Env, session_id: &str) -> Result<Response> {
         .iter()
         .filter_map(|e| e.compensates_event_id.as_deref())
         .collect();
-    let effective: Vec<&EventRow> = history
+    let effective: Vec<ReviewEventInput> = history
         .iter()
         .filter(|e| e.compensates_event_id.is_none())
         .filter(|e| !compensated.contains(&e.id.as_str()))
         .filter(|e| e.id != last.id)
+        .filter_map(|event| {
+            let grade = Grade::try_from(event.grade).ok()?;
+            let answered = crate::repositories::from_rfc3339(&event.answered_at)
+                .map(|t| review_engine::Timestamp(t.0))
+                .ok()?;
+            Some(ReviewEventInput {
+                grade,
+                answered_at: answered,
+            })
+        })
         .collect();
 
-    let scheduler = FsrsScheduler::new().map_err(|e| worker::Error::RustError(e.to_string()))?;
-    let settings = SchedulerSettings::default();
-    let mut state = scheduler
-        .initial_state(InitialReviewInput { now: now_re() })
-        .map_err(|e| worker::Error::RustError(e.to_string()))?;
-    for event in &effective {
-        let Ok(grade) = Grade::try_from(event.grade) else {
-            continue;
-        };
-        let answered = crate::repositories::from_rfc3339(&event.answered_at)
-            .map(|t| review_engine::Timestamp(t.0))
-            .unwrap_or_else(|_| now_re());
-        state = scheduler
-            .apply_review(
-                &state,
-                &ReviewEventInput {
-                    grade,
-                    answered_at: answered,
-                },
-                &settings,
-            )
-            .map_err(|e| worker::Error::RustError(e.to_string()))?;
+    #[derive(serde::Deserialize)]
+    struct CreatedRow {
+        created_at: String,
     }
+    let created: CreatedRow = database
+        .prepare("SELECT created_at FROM cards WHERE id = ?1")
+        .bind(&[last.card_id.clone().into()])?
+        .first(None)
+        .await?
+        .ok_or_else(|| worker::Error::RustError("card missing for undo".to_owned()))?;
+    let activated_at = crate::repositories::from_rfc3339(&created.created_at)
+        .map(|t| review_engine::Timestamp(t.0))
+        .map_err(|e| worker::Error::RustError(e.to_string()))?;
+
+    let scheduler = FsrsScheduler::new().map_err(|e| worker::Error::RustError(e.to_string()))?;
+    let state = review_engine::replay(
+        &scheduler,
+        activated_at,
+        &effective,
+        &SchedulerSettings::default(),
+    )
+    .map_err(|e| worker::Error::RustError(e.to_string()))?;
 
     let event_id = new_id("ev");
     let at = to_rfc3339(now());
