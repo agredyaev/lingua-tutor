@@ -1,0 +1,30 @@
+name: e2e
+
+# Browser suite (12-testing.md §7): out of the default PR gate; runs on main
+# pushes and manual dispatch.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  playwright:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk@0.21.14
+      - name: build web
+        working-directory: apps/web
+        run: trunk build --release --cargo-profile wasm-release
+      - run: npm ci || npm install
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 14

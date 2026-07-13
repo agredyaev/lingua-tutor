@@ -5,6 +5,7 @@
     "node": ">=22"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "wrangler": "4.110.0"
   }
 }

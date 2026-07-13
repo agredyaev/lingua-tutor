@@ -208,6 +208,15 @@ pub fn ReviewPage() -> impl IntoView {
                                         view! {
                                             <p>{format!("Session done — reviewed {index} cards.")}</p>
                                             <a href="/review/summary">"See summary"</a>
+                                            // Undo stays reachable after the last grade (09 §4).
+                                            <button
+                                                class="undo"
+                                                on:click=move |_| {
+                                                    undo.dispatch(());
+                                                }
+                                            >
+                                                "Undo last grade"
+                                            </button>
                                         }
                                             .into_any()
                                     }
