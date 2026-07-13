@@ -269,3 +269,38 @@ Scope creep: none.
 Gate run (2026-07-12): fmt ✓, clippy -D warnings ✓, **110 tests 0 failed** ✓, wasm32 builds ✓, WASM 266 KB gzip ✓, 17-step smoke green ✓.
 
 Next: iteration 10 = WBS 10 production hardening (M5) — Terraform (D1/Worker/Access, prevent_destroy), Access JWT verification, CD pipeline, backups + restore drill, full /health, Playwright e2e, PWA/perf/security checklists.
+
+## Iteration 10 — WBS 10 Production hardening (M5) — 2026-07-13
+
+| Task | Status | Note |
+|---|---|---|
+| 10.1 Terraform | done | account-scoped provider v5; D1 dev+prod (`prevent_destroy`), Access self-hosted app on workers.dev origin + standalone owner-email policy (v5 schema: policy attached via `policies=[{id,precedence}]`); outputs (aud, D1 ids) wired into `wrangler.jsonc`; state/lock gitignored |
+| 10.2 Access JWT | done | worker-side RS256 verify of `Cf-Access-Jwt-Assertion` (pure-Rust `rsa`+`sha2` — no ring on wasm), JWKS from team domain, aud string-or-array, exp, owner-email claim; `AUTH_ENFORCED` off locally, on in `env.production` |
+| 10.3 CD pipeline | done | `deploy-production`: dispatch-only + `production` environment approval → gates → pre-migration backup → terraform plan drift gate (`-detailed-exitcode`) → prod migrations → trunk build → wrangler deploy (PWA as Worker static assets, single origin) → runtime secret sync → prod smoke → release metadata |
+| 10.4 Backups | done | daily `backup.yml`: D1 export artifact + `sqlite3` dry-run restore drill |
+| 10.5 Full /health | done | version, D1 reachability, migration count, pack registry, auth mode |
+| 10.6 Playwright e2e | done | core loop (profile → import → review → undo → dashboard) against `wrangler dev --local`; separate CI job; trace/screenshot retained on failure |
+| 10.7 Checklists | done | `m5-security-review.md` 13/13 (HMAC-signed validation token fixed in-code, not risk-logged), `m5-launch-readiness.md`; owner one-command follow-ups: long-lived CI token before 2026-07-21, CF 2FA |
+| 10.8 Secrets | done | GitHub env `production` (required reviewer = owner), `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`/`TOKEN_SIGNING_KEY`; CF has no OIDC federation — env-protected secrets are the standard |
+
+**Anti-pattern / performance review (explicit pass):**
+
+- **e2e flake root-caused, not retried away**: undo replay seeded `initial_state(now)` — wall clock in a replay path. Zero surviving events → replayed `due_at` = undo second ≠ apply second → `prior_state_hash` mismatch → 409 on next grade (~1/5 locally, worse on CI). Fix: pure `review_engine::replay()` (clock access impossible by construction), undo seeds from `cards.created_at`; 3 regression tests pin zero-event identity, fold equality, purity. `retries: 0` stands — flaky test was a bug, per 16 §6.
+- Same lens killed a second silent-wall-clock path: `submit_event` substituted `now` for unparsable `answered_at` (`unwrap_or_else` fallback) — would diverge from replay; now explicit 400 `invalid_timestamp`.
+- Auth verify is per-request pure computation over a fetched JWKS; no ring dependency (wasm), RSA verify-only justifies the Marvin advisory ignore in `deny.toml`.
+- `export/full` = 15 fixed bounded queries (`LIMIT 10000`), no N+1 joins through parents; CSV built with `String::with_capacity`, quotes escaped, no per-row allocation churn.
+- Queue remains single-join (no per-card D1 subrequests) — D1 free-tier 50-queries cap respected.
+
+Drift found:
+
+1. **WBS "dev deploy" rows replaced by local-first** (ADR-0003) — cloud contact deferred to this iteration as decided; Terraform applied directly to prod account (4 resources).
+2. **Zero Trust required a card on file** even on free tier — owner attached; team `absent-twin.cloudflareaccess.com`.
+3. **Access policy schema drift** (provider v5 split app/policy) vs 11-infrastructure sketch — resolved per current provider docs, spec sketch outdated, code is source of truth.
+4. **Production deploy dispatch is an owner action by design** (environment approval); pipeline proven to green on CI, first prod deploy pending owner `gh workflow run deploy-production` + approval.
+5. Export scope grew beyond WBS wording (full JSON + cards.csv + tutor-context self-sufficiency) — traceable to 08 §7 and the LLM-tutor effectiveness audit; recorded, not creep.
+
+Scope creep: none.
+
+Gate run (2026-07-13): fmt ✓, clippy -D warnings ✓, **113 tests 0 failed** ✓ (incl. new replay suite), wasm32 builds ✓, 17-step smoke green ✓, ci+e2e green on `2e18b8e` ✓, local e2e stress 7/7 test-passes (1 wrangler spawn timeout, infra not test) ✓.
+
+**M5 code complete.** Remaining to close M5: owner dispatches `deploy-production` + approves; prod smoke; iPhone PWA install (10.7 owner item). Next: iteration 11 = WBS 11 first real lesson + fix-forward list.
