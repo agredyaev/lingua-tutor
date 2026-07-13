@@ -6,8 +6,11 @@ export default defineConfig({
   testDir: "tests/e2e",
   timeout: 30_000,
   retries: 0, // flaky test = bug (16-rust-guidelines.md §6)
+  reporter: [["list"], ["html", { open: "never" }]],
   use: {
     baseURL: "http://localhost:8787",
+    trace: "retain-on-failure",
+    screenshot: "only-on-failure",
   },
   webServer: {
     command:
