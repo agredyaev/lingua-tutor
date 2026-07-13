@@ -30,6 +30,9 @@ tutor-contract = { workspace = true }
 uuid = { version = "1", features = ["v4", "js"] }
 rsa = { version = "0.9", default-features = false, features = ["sha2"] }
 base64 = "0.22"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 
 [lints]
 workspace = true

@@ -18,8 +18,8 @@ Date: 2026-07-13. Reviewer: owner + assistant. Status per requirement:
 | Infra | ✅ | `prevent_destroy` on prod D1; CD backs up before migrations; drift gate blocks deploys |
 | Model access | ✅ | ChatGPT sees only tutor-context export + pasted results; no SQL/credentials/tools |
 
-Residual risks (accepted, tracked):
+Follow-ups (no accepted risks left open):
 
-1. Import validation token is unsigned (FNV + expiry) — binds apply to the validated payload; forgery is moot behind Access (single owner). Revisit only if multi-user ever happens (it won't, v1).
-2. API token for CI expires 2026-07-21 — owner to mint a long-lived scoped token for GitHub secrets before then.
-3. Access dashboard recovery: owner email is the single identity — keep Cloudflare account recovery healthy.
+1. ~~Unsigned validation token~~ **FIXED 2026-07-13**: HMAC-SHA256 over body+expiry with `TOKEN_SIGNING_KEY` (wrangler secret in prod, set by CD from GitHub secret; plain var locally); constant-time comparison.
+2. **Owner action before 2026-07-21**: mint a long-lived Cloudflare token (same 5 scopes, no expiry) and run `gh secret set CLOUDFLARE_API_TOKEN --repo agredyaev/lingua-tutor --body "<new token>"`. Local keychain entry may keep the short-lived one.
+3. **Owner action**: enable 2FA on the Cloudflare account (dash → My Profile → Authentication) — single-identity recovery hygiene, one-time.

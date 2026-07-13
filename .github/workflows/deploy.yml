@@ -67,6 +67,11 @@ jobs:
         working-directory: apps/worker
         run: npx wrangler deploy --env production
 
+      - name: sync runtime secrets
+        working-directory: apps/worker
+        run: |
+          printf '%s' "${{ secrets.TOKEN_SIGNING_KEY }}"             | npx wrangler secret put TOKEN_SIGNING_KEY --env production
+
       # 8: smoke against prod
       - name: smoke
         run: |

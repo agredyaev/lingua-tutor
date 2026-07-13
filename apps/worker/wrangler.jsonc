@@ -13,7 +13,8 @@
     "run_worker_first": ["/api/*"]
   },
   "vars": {
-    "AUTH_ENFORCED": "false" // local dev; production overrides below
+    "AUTH_ENFORCED": "false", // local dev; production overrides below
+    "TOKEN_SIGNING_KEY": "local-dev-only-key" // prod: wrangler secret put
   },
   "d1_databases": [
     {

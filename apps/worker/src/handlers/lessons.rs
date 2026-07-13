@@ -109,7 +109,7 @@ pub async fn get_lesson(env: &Env, lesson_id: &str) -> Result<Response> {
 
 /// `POST /api/v1/import/lesson-result/validate` — parse + validate + preview
 /// + stateless validation token (08-http-api.md §7).
-pub async fn validate_import(mut req: Request) -> Result<Response> {
+pub async fn validate_import(mut req: Request, env: &Env) -> Result<Response> {
     let text = req.text().await?;
     let (result, issues) = match parse_and_validate(&text) {
         Ok(pair) => pair,
@@ -124,8 +124,9 @@ pub async fn validate_import(mut req: Request) -> Result<Response> {
         );
     }
     let expires = now().0 + 15 * 60;
+    let key = signing_key(env)?;
     Response::from_json(&serde_json::json!({
-        "validation_token": validation_token(&text, expires),
+        "validation_token": validation_token(&key, &text, expires),
         "expires_at": to_rfc3339(Timestamp(expires)),
         "preview": {
             "lesson_scenario": result.lesson.scenario,
@@ -151,7 +152,8 @@ pub async fn apply_import(mut req: Request, env: &Env) -> Result<Response> {
         );
     };
     let text = req.text().await?;
-    let Some(expires) = token_expiry_if_valid(&token, &text) else {
+    let key = signing_key(env)?;
+    let Some(expires) = token_expiry_if_valid(&key, &token, &text) else {
         return error_response(409, "validation_required", "token mismatch — re-validate");
     };
     if expires < now().0 {
@@ -212,24 +214,38 @@ fn parse_and_validate(
     }
 }
 
-/// Stateless token: FNV over body + expiry. Owner-only API behind Cloudflare
-/// Access (WBS 10.2); binds apply to the exact validated payload.
-fn validation_token(body: &str, expires: i64) -> String {
-    format!("vt_{}_{expires}", fnv(body.as_bytes(), expires))
-}
-
-fn token_expiry_if_valid(token: &str, body: &str) -> Option<i64> {
-    let expires: i64 = token.rsplit('_').next()?.parse().ok()?;
-    (validation_token(body, expires) == token).then_some(expires)
-}
-
-fn fnv(bytes: &[u8], seed: i64) -> String {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325 ^ (seed as u64);
-    for b in bytes {
-        hash ^= u64::from(*b);
-        hash = hash.wrapping_mul(0x100_0000_01b3);
+/// Signing key: `TOKEN_SIGNING_KEY` secret in production (wrangler secret),
+/// plain var locally. Missing entirely = hard error, never a silent
+/// unsigned fallback (10-security.md).
+fn signing_key(env: &Env) -> Result<String> {
+    if let Ok(secret) = env.secret("TOKEN_SIGNING_KEY") {
+        return Ok(secret.to_string());
     }
-    format!("{hash:016x}")
+    Ok(env.var("TOKEN_SIGNING_KEY")?.to_string())
+}
+
+/// HMAC-SHA256 over body + expiry: apply is bound to the exact validated
+/// payload and cannot be forged without the key.
+fn validation_token(key: &str, body: &str, expires: i64) -> String {
+    use hmac::Mac as _;
+    #[allow(clippy::expect_used)] // invariant: HMAC accepts any key length
+    let mut mac = hmac::Hmac::<sha2::Sha256>::new_from_slice(key.as_bytes())
+        .expect("HMAC accepts any key length");
+    mac.update(body.as_bytes());
+    mac.update(&expires.to_be_bytes());
+    format!("vt_{}_{expires}", hex::encode(mac.finalize().into_bytes()))
+}
+
+fn token_expiry_if_valid(key: &str, token: &str, body: &str) -> Option<i64> {
+    let expires: i64 = token.rsplit('_').next()?.parse().ok()?;
+    // Constant-time comparison via HMAC recompute + fixed-length eq.
+    let expected = validation_token(key, body, expires);
+    let mismatch = expected
+        .as_bytes()
+        .iter()
+        .zip(token.as_bytes())
+        .fold(expected.len() != token.len(), |acc, (a, b)| acc | (a != b));
+    (!mismatch).then_some(expires)
 }
 
 /// Shared completion path: fetch context, plan, persist atomically.

@@ -215,7 +215,7 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         })
         .post_async(
             "/api/v1/import/lesson-result/validate",
-            |req, _ctx| async move { handlers::lessons::validate_import(req).await },
+            |req, ctx| async move { handlers::lessons::validate_import(req, &ctx.env).await },
         )
         .post_async(
             "/api/v1/import/lesson-result/apply",
