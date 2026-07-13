@@ -213,7 +213,26 @@ pub fn ExportPage() -> impl IntoView {
             </section>
             <section>
                 <h2>"Data export"</h2>
-                <p>"Full JSON + cards.csv export endpoints land with backup work (WBS 10)."</p>
+                {move || {
+                    active
+                        .id()
+                        .map(|id| {
+                            view! {
+                                <ul>
+                                    <li>
+                                        <a href=format!(
+                                            "/api/v1/export/full?language_profile_id={id}",
+                                        )>"Full JSON export"</a>
+                                    </li>
+                                    <li>
+                                        <a href=format!(
+                                            "/api/v1/export/cards.csv?language_profile_id={id}",
+                                        )>"cards.csv"</a>
+                                    </li>
+                                </ul>
+                            }
+                        })
+                }}
             </section>
         </Page>
     }
