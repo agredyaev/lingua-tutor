@@ -19,6 +19,9 @@ adaptation = { workspace = true }
 learning-core = { workspace = true }
 worker-api = { path = "../apps/worker" }
 language-pack-es-es = { workspace = true }
+language-pack-zh-cn = { workspace = true }
+language-pack-registry = { workspace = true }
+language-pack-api = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 [lints]
