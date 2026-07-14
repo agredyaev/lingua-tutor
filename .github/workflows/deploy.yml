@@ -81,11 +81,16 @@ jobs:
         run: |
           printf '%s' "${{ secrets.TOKEN_SIGNING_KEY }}"             | npx wrangler secret put TOKEN_SIGNING_KEY --env production
 
-      # 8: smoke against prod
+      # 8: smoke against prod — the endpoint sits behind Cloudflare Access, so
+      # an unauthenticated probe must get the Access login redirect: proves the
+      # Worker route is live AND protected. ponytail: add an Access service
+      # token if we ever need to assert d1_connected from CI.
       - name: smoke
         run: |
-          curl -sf https://lingua-tutor-api.aleksey-gredyaev-dev.workers.dev/api/v1/health \
-            | grep -q '"d1_connected":true'
+          redirect=$(curl -s -o /dev/null -w '%{redirect_url}' \
+            https://lingua-tutor-api.aleksey-gredyaev-dev.workers.dev/api/v1/health)
+          echo "$redirect" | grep -q 'cloudflareaccess.com' \
+            || { echo "::error::expected Access login redirect, got: ${redirect:-<none>}"; exit 1; }
 
       # 9: release metadata (11 §4.9)
       - name: record release metadata
