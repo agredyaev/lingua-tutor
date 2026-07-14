@@ -304,3 +304,13 @@ Scope creep: none.
 Gate run (2026-07-13): fmt ✓, clippy -D warnings ✓, **113 tests 0 failed** ✓ (incl. new replay suite), wasm32 builds ✓, 17-step smoke green ✓, ci+e2e green on `2e18b8e` ✓, local e2e stress 7/7 test-passes (1 wrangler spawn timeout, infra not test) ✓.
 
 **M5 code complete.** Remaining to close M5: owner dispatches `deploy-production` + approves; prod smoke; iPhone PWA install (10.7 owner item). Next: iteration 11 = WBS 11 first real lesson + fix-forward list.
+
+## Iteration 11 — WBS 11 first real lesson (owner-in-loop)
+
+- 11.1 prod deploy: done in iteration 10 close-out (run 29317910454 green: gates, D1 backup, terraform drift gate, migrations, deploy, Access-aware smoke).
+- 11.2 first real lesson: owner checklist at `docs/checklists/first-real-lesson.md`; execution pending owner.
+- 11.3 fix-forward list: capture below as items surface.
+
+### Fix-forward (11.3)
+
+_(empty — owner adds items while running the checklist; severity: blocker / annoying / cosmetic)_
