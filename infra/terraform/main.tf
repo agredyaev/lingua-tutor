@@ -36,6 +36,11 @@ variable "workers_subdomain" {
 resource "cloudflare_d1_database" "dev" {
   account_id = var.account_id
   name       = "lingua-tutor-dev"
+
+  # Provider v5 bug: PUTs read_replication=null on unrelated updates → 400.
+  lifecycle {
+    ignore_changes = [read_replication]
+  }
 }
 
 resource "cloudflare_d1_database" "prod" {
@@ -46,6 +51,8 @@ resource "cloudflare_d1_database" "prod" {
   # reviewed change (11-infrastructure.md §2 D1 lifecycle protection).
   lifecycle {
     prevent_destroy = true
+    # Provider v5 bug: PUTs read_replication=null on unrelated updates → 400.
+    ignore_changes = [read_replication]
   }
 }
 
