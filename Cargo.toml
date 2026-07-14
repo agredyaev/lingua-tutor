@@ -16,6 +16,7 @@ members = [
     "crates/test-support",
     "language-packs/es-es",
     "language-packs/synthetic-test-pack",
+    "language-packs/zh-cn",
     "tests",
 ]
 
@@ -31,6 +32,7 @@ language-pack-api = { path = "crates/language-pack-api" }
 language-pack-registry = { path = "crates/language-pack-registry" }
 language-pack-es-es = { path = "language-packs/es-es" }
 synthetic-test-pack = { path = "language-packs/synthetic-test-pack" }
+language-pack-zh-cn = { path = "language-packs/zh-cn" }
 test-support = { path = "crates/test-support" }
 review-engine = { path = "crates/review-engine" }
 learning-core = { path = "crates/learning-core" }

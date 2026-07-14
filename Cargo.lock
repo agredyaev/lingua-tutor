@@ -920,7 +920,10 @@ version = "0.1.0"
 dependencies = [
  "adaptation",
  "chrono",
+ "language-pack-api",
  "language-pack-es-es",
+ "language-pack-registry",
+ "language-pack-zh-cn",
  "learning-core",
  "review-engine",
  "rusqlite",
@@ -999,6 +1002,14 @@ dependencies = [
  "language-pack-api",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "language-pack-zh-cn"
+version = "0.1.0"
+dependencies = [
+ "language-pack-api",
+ "test-support",
 ]
 
 [[package]]
