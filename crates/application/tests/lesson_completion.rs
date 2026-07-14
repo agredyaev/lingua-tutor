@@ -10,7 +10,7 @@ use learning_core::{
     CoreErrorCategory, ErrorTarget, ErrorTargetId, ErrorTargetStatus, EvidenceId, EvidenceKind,
     LanguagePackId, LanguageProfileId, LanguageTag, LearnerId, LearnerLanguageProfile,
     LearningItem, LearningItemEvidence, LearningItemId, LearningItemStatus, LearningItemType,
-    ProfileStatus, Timestamp,
+    Lesson, LessonId, LessonSource, LessonStatus, ProfileStatus, Timestamp,
 };
 use tutor_contract::parse_lesson_result;
 
@@ -104,6 +104,26 @@ fn spontaneous(item: &str, lesson: &str) -> LearningItemEvidence {
     }
 }
 
+fn open_lesson(id: &str) -> Lesson {
+    Lesson {
+        id: LessonId(id.to_owned()),
+        language_profile_id: LanguageProfileId("llp-1".to_owned()),
+        language_pack_id: LanguagePackId("es-ES".to_owned()),
+        language_pack_version: semver::Version::new(0, 1, 0),
+        lesson_number: 8,
+        status: LessonStatus::Active,
+        scenario: "pharmacy".to_owned(),
+        planned_goal: String::new(),
+        source: LessonSource::Mcp,
+        started_at: Some(NOW),
+        completed_at: None,
+        duration_seconds: None,
+        tutor_summary: None,
+        next_goal: None,
+        idempotency_key: None,
+    }
+}
+
 fn ctx() -> LessonCompletionContext {
     LessonCompletionContext {
         profile: profile(),
@@ -169,6 +189,26 @@ fn plan_creates_lesson_dedups_items_and_escalates_errors() {
         )]
     );
     assert!(plan.warnings.is_empty());
+}
+
+#[test]
+fn completion_without_lesson_id_attaches_to_the_open_lesson_not_a_new_one() {
+    // `base_result_json()`'s `lesson` object carries no `lesson_id` — the
+    // common MCP shape (the tutor doesn't echo back what `start_lesson`
+    // returned). Before this fix, that always took the `CreateCompleted`
+    // branch and computed `lesson_number = current_lesson_number + 1`,
+    // colliding (UNIQUE constraint) with the `active` row `start_lesson`
+    // already reserved that exact number for. It must instead resolve to
+    // the profile's open lesson.
+    let result = parse_lesson_result(&base_result_json().to_string()).unwrap();
+    assert!(result.lesson.lesson_id.is_none());
+    let mut context = ctx();
+    context.existing_lesson = Some(open_lesson("les-open"));
+    let plan = plan_lesson_completion(&result, &context).unwrap();
+    assert_eq!(
+        plan.lesson,
+        LessonOutcome::CompleteExisting(LessonId("les-open".to_owned()))
+    );
 }
 
 #[test]

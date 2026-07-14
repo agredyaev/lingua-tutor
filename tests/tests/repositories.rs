@@ -177,6 +177,49 @@ fn lesson_insert_complete_and_idempotency_lookup() {
 }
 
 #[test]
+fn latest_open_lesson_excludes_completed_and_picks_most_recent() {
+    // Regression for the production incident where a completion call
+    // without `lesson_id` always tried to *create* a new lesson row,
+    // colliding with the `active` one `start_lesson` already reserved a
+    // `lesson_number` for. `SELECT_LATEST_OPEN_LESSON` is what lets the
+    // handler attach to that row instead.
+    let conn = migrated_connection();
+    seed_profile_and_pack(&conn);
+    let insert = |id: &str, number: i64, status: &str, started_at: &str| {
+        conn.execute(
+            lessons::INSERT_LESSON,
+            params![
+                id,
+                "llp-1",
+                "test-pack",
+                "0.1.0",
+                number,
+                status,
+                "pharmacy",
+                "ask for meds",
+                "mcp",
+                started_at,
+                Option::<String>::None,
+                Option::<u32>::None,
+                Option::<String>::None,
+                Option::<String>::None,
+                Option::<String>::None,
+                NOW,
+            ],
+        )
+        .unwrap();
+    };
+    insert("les-completed", 1, "completed", "2026-07-10T00:00:00Z");
+    insert("les-older-active", 2, "active", "2026-07-11T00:00:00Z");
+    insert("les-newest-active", 3, "active", "2026-07-12T00:00:00Z");
+
+    let row = conn
+        .query_row(lessons::SELECT_LATEST_OPEN_LESSON, ["llp-1"], lesson_row)
+        .unwrap();
+    assert_eq!(row.into_domain().unwrap().id.0, "les-newest-active");
+}
+
+#[test]
 fn item_evidence_and_duplicate_lookup() {
     let conn = migrated_connection();
     seed_profile_and_pack(&conn);

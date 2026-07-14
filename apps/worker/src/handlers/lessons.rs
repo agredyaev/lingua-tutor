@@ -306,7 +306,15 @@ async fn build_context(
             .first::<lessons::LessonRow>(None)
             .await?
             .and_then(|r| r.into_domain().ok()),
-        None => None,
+        // No explicit lesson_id: attach to whatever lesson `start_lesson`
+        // already left open for this profile, rather than creating a new
+        // lesson_number that collides with the one it reserved.
+        None => database
+            .prepare(lessons::SELECT_LATEST_OPEN_LESSON)
+            .bind(&[profile.id.0.clone().into()])?
+            .first::<lessons::LessonRow>(None)
+            .await?
+            .and_then(|r| r.into_domain().ok()),
     };
 
     let normalized: Vec<String> = result

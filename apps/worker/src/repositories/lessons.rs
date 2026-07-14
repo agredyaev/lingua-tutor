@@ -44,6 +44,18 @@ pub const SELECT_LESSON_BY_KEY: &str = "SELECT id, learner_language_profile_id,
     tutor_summary, next_goal, idempotency_key
  FROM lessons WHERE idempotency_key = ?1";
 
+/// Most recent open (started but not yet completed) lesson for a profile —
+/// completion-without-`lesson_id` fallback: without this, a completion
+/// call that omits `lesson_id` always tries to *create* a new lesson row
+/// numbered `current_lesson_number + 1`, colliding (UNIQUE constraint) with
+/// the `active` row `start_lesson` already reserved that same number for.
+pub const SELECT_LATEST_OPEN_LESSON: &str = "SELECT id, learner_language_profile_id,
+    language_pack_id, language_pack_version, lesson_number, status, scenario,
+    planned_goal, source, started_at, completed_at, duration_seconds,
+    tutor_summary, next_goal, idempotency_key
+ FROM lessons WHERE learner_language_profile_id = ?1 AND status IN ('planned','active')
+ ORDER BY started_at DESC LIMIT 1";
+
 /// Profile lessons, newest first, bounded.
 pub const SELECT_LESSONS: &str = "SELECT id, learner_language_profile_id,
     language_pack_id, language_pack_version, lesson_number, status, scenario,

@@ -215,9 +215,11 @@ fn lesson_outcome(
     ctx: &LessonCompletionContext,
 ) -> Result<LessonOutcome, PlanError> {
     match (&result.lesson.lesson_id, &ctx.existing_lesson) {
-        (Some(_), Some(lesson)) => Ok(LessonOutcome::CompleteExisting(lesson.id.clone())),
+        (Some(_), Some(lesson)) | (None, Some(lesson)) => {
+            Ok(LessonOutcome::CompleteExisting(lesson.id.clone()))
+        }
         (Some(id), None) => Err(PlanError::UnknownLesson(id.clone())),
-        (None, _) => Ok(LessonOutcome::CreateCompleted {
+        (None, None) => Ok(LessonOutcome::CreateCompleted {
             lesson_number: ctx.profile.current_lesson_number + 1,
         }),
     }
