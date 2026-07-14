@@ -51,7 +51,9 @@ pub fn LessonsPage() -> impl IntoView {
                                 }
                                     .into_any()
                             }
-                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                            Err(e) => {
+                                view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
+                            }
                         })
                 }}
             </Suspense>

@@ -59,13 +59,15 @@ pub fn ImportPage() -> impl IntoView {
     view! {
         <Page>
             <h1>"Import lesson result"</h1>
-            <p>"Paste the tutor's lesson-result JSON block:"</p>
+            <label for="import-paste">"Paste the tutor's lesson-result JSON block:"</label>
             <textarea
+                id="import-paste"
                 rows=12
                 prop:value=move || pasted.get()
                 on:input=move |ev| pasted.set(event_target_value(&ev))
             ></textarea>
             <button
+                class="btn-primary"
                 disabled=validate.pending()
                 on:click=move |_| {
                     validate.dispatch(pasted.get_untracked());
@@ -73,7 +75,7 @@ pub fn ImportPage() -> impl IntoView {
             >
                 "Validate"
             </button>
-            {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
+            {move || error.get().map(|e| view! { <p class="error" role="alert">{e}</p> })}
             {move || {
                 validated
                     .get()
@@ -93,6 +95,7 @@ pub fn ImportPage() -> impl IntoView {
                                     )>{format!("{} card mutations", p.card_mutations)}</li>
                                 </ul>
                                 <button
+                                    class="btn-primary"
                                     disabled=apply.pending()
                                     on:click=move |_| {
                                         apply.dispatch(());
@@ -188,6 +191,7 @@ pub fn ExportPage() -> impl IntoView {
             <section>
                 <h2>"Tutor context (paste into ChatGPT)"</h2>
                 <button
+                    class="btn-primary"
                     disabled=fetch_context.pending()
                     on:click=move |_| {
                         copied.set(false);

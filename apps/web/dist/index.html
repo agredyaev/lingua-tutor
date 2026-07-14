@@ -6,8 +6,8 @@
     <title>Lingua Tutor</title>
     
 <script type="module">
-import init, * as bindings from '/web-1178c4a71c7a72e0.js';
-const wasm = await init({ module_or_path: '/web-1178c4a71c7a72e0_bg.wasm' });
+import init, * as bindings from '/web-37bd813d340bd5b1.js';
+const wasm = await init({ module_or_path: '/web-37bd813d340bd5b1_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -16,42 +16,21 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
+    <link rel="stylesheet" href="/style-192bf03e5387f001.css" integrity="sha384-ij/jWAXENVeb0c4rBPu5xdIQvuDkgLzhZ0IIXYeC+C30cmKW/n2cgOT69yIl384y"/>
+    
+    
+    
     
     
     <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <meta name="theme-color" content="#b3541e" />
     <script>
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js"));
       }
     </script>
-    <style>
-      /* Mobile-first, no framework (09-frontend.md §1). */
-      :root { font-family: -apple-system, system-ui, sans-serif; line-height: 1.45; }
-      body { margin: 0; background: #fafafa; color: #1a1a1a; }
-      .topnav { display: flex; flex-wrap: wrap; gap: 0.75rem; padding: 0.75rem 1rem;
-                background: #1f3a5f; position: sticky; top: 0; }
-      .topnav a { color: #fff; text-decoration: none; font-size: 0.95rem; }
-      main { padding: 1rem; max-width: 640px; margin: 0 auto; }
-      button { padding: 0.6rem 1rem; margin: 0.25rem 0; border: 1px solid #ccc;
-               border-radius: 8px; background: #fff; font-size: 1rem; width: 100%;
-               text-align: left; cursor: pointer; }
-      button:disabled { opacity: 0.5; }
-      textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 0.85rem; }
-      pre.context { white-space: pre-wrap; word-break: break-word; background: #fff;
-                    border: 1px solid #ddd; padding: 0.75rem; font-size: 0.8rem; }
-      ul { padding-left: 1.2rem; }
-      .error { color: #b00020; }
-      .exceptions { background: #fff4e5; border: 1px solid #f0c17a;
-                    border-radius: 8px; padding: 0.5rem 1rem; margin-bottom: 1rem; }
-      .review-card { display: flex; flex-direction: column; gap: 0.5rem; }
-      .review-card .prompt { font-size: 1.4rem; }
-      .review-card .answer .primary { font-size: 1.3rem; font-weight: 600; }
-      .review-card .progress { color: #666; font-size: 0.85rem; }
-      .grades { display: flex; flex-direction: column; gap: 0.4rem; }
-      .undo { background: #f2f2f2; font-size: 0.85rem; }
-      .method-change { border-left: 3px solid #b00020; padding-left: 0.5rem; }
-      .destructive { color: #b00020; font-weight: 600; }
-    </style>
-  <link rel="modulepreload" href="/web-1178c4a71c7a72e0.js" crossorigin="anonymous" integrity="sha384-yQco0tkZChqinSPQt+YCL2bdcxr//V+oKoyN2i8o6KjhN2/BTkssqT53JmbJM63L"><link rel="preload" href="/web-1178c4a71c7a72e0_bg.wasm" crossorigin="anonymous" integrity="sha384-47l7nX6QaW3s3X9PnfY81DKZP79uQBLwt9HQMerXrDdcHFtvObScrX07RfbeqVwx" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="/web-37bd813d340bd5b1.js" crossorigin="anonymous" integrity="sha384-bVnT1U5/5pRQogsV4JenhLg5BsmDtcW2H59+kylyo/2w8iOlK2Wkz7KSVrdMDyvy"><link rel="preload" href="/web-37bd813d340bd5b1_bg.wasm" crossorigin="anonymous" integrity="sha384-XgQYimN91NUD39nqwO42IlDjnsDDcr1lQyi8LrPqH6i24dN6C5ErQftbM8a8fpuy" as="fetch" type="application/wasm"></head>
   <body></body>
 </html>

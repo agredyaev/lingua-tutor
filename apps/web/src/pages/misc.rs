@@ -39,7 +39,9 @@ pub fn LearnPage() -> impl IntoView {
                                     .into_any()
                             }
                             Ok(None) => view! { <p>"No profile selected."</p> }.into_any(),
-                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                            Err(e) => {
+                                view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
+                            }
                         })
                 }}
             </Suspense>
@@ -85,7 +87,9 @@ pub fn SystemPage() -> impl IntoView {
                                 view! { <p>{format!("API {} — v{}", h.status, h.version)}</p> }
                                     .into_any()
                             }
-                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                            Err(e) => {
+                                view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
+                            }
                         })
                 }}
             </Suspense>

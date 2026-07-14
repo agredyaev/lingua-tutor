@@ -4,6 +4,7 @@
 use crate::pages;
 use leptos::prelude::*;
 use leptos_router::components::{Route, Router, Routes};
+use leptos_router::hooks::use_location;
 use leptos_router::path;
 use shared_schema::LanguageProfileDto;
 
@@ -53,14 +54,19 @@ pub fn App() -> impl IntoView {
     view! {
         <Router>
             <nav class="topnav">
-                <a href="/dashboard">"Dashboard"</a>
-                <a href="/review">"Review"</a>
-                <a href="/stats">"Stats"</a>
-                <a href="/cards">"Cards"</a>
-                <a href="/lessons">"Lessons"</a>
-                <a href="/import">"Import"</a>
-                <a href="/export">"Export"</a>
-                <a href="/languages">"Languages"</a>
+                <NavLink href="/dashboard" label="Dashboard" />
+                <NavLink href="/review" label="Review" />
+                <NavLink href="/cards" label="Cards" />
+                <NavLink href="/stats" label="Stats" />
+                <NavLink href="/lessons" label="Lessons" />
+                <details class="nav-more">
+                    <summary>"More"</summary>
+                    <div class="nav-more-panel">
+                        <a href="/import">"Import"</a>
+                        <a href="/export">"Export"</a>
+                        <a href="/languages">"Languages"</a>
+                    </div>
+                </details>
             </nav>
             <main>
                 <Routes fallback=|| view! { <p>"Not found."</p> }>
@@ -92,6 +98,22 @@ pub fn App() -> impl IntoView {
     }
 }
 
+/// Primary nav link: highlights itself via `aria-current="page"` from the
+/// router's current path, so active state needs no extra signal.
+#[component]
+fn NavLink(href: &'static str, label: &'static str) -> impl IntoView {
+    let location = use_location();
+    let active = move || {
+        let path = location.pathname.get();
+        path == href || (href == "/dashboard" && path == "/")
+    };
+    view! {
+        <a href=href aria-current=move || active().then_some("page")>
+            {label}
+        </a>
+    }
+}
+
 /// Per-page error boundary: render error + retry hint, never a blank screen
 /// (09 §2).
 #[component]
@@ -99,7 +121,7 @@ pub fn Page(children: Children) -> impl IntoView {
     view! {
         <ErrorBoundary fallback=|errors| {
             view! {
-                <div class="error">
+                <div class="error" role="alert">
                     <p>"Something failed:"</p>
                     <ul>
                         {move || {

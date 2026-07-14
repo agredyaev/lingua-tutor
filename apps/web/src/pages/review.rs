@@ -18,6 +18,18 @@ const GRADE_LABELS: [(u8, &str); 4] = [
     (4, "4 Easy — immediate and confident"),
 ];
 
+/// Left-border accent per grade — a light differentiation cue, not a wall
+/// of color, since review happens under time pressure (09 §4).
+fn grade_class(grade: u8) -> &'static str {
+    match grade {
+        1 => "grade grade-again",
+        2 => "grade grade-hard",
+        3 => "grade grade-good",
+        4 => "grade grade-easy",
+        _ => "grade",
+    }
+}
+
 /// `/review`.
 #[component]
 pub fn ReviewPage() -> impl IntoView {
@@ -207,30 +219,40 @@ pub fn ReviewPage() -> impl IntoView {
                                     None => {
                                         view! {
                                             <p>{format!("Session done — reviewed {index} cards.")}</p>
-                                            <a href="/review/summary">"See summary"</a>
-                                            // Undo stays reachable after the last grade (09 §4).
-                                            <button
-                                                class="undo"
-                                                on:click=move |_| {
-                                                    undo.dispatch(());
-                                                }
-                                            >
-                                                "Undo last grade"
-                                            </button>
+                                            <div class="actions">
+                                                <a href="/review/summary">"See summary"</a>
+                                                // Undo stays reachable after the last grade (09 §4).
+                                                <button
+                                                    class="undo"
+                                                    on:click=move |_| {
+                                                        undo.dispatch(());
+                                                    }
+                                                >
+                                                    "Undo last grade"
+                                                </button>
+                                            </div>
                                         }
                                             .into_any()
                                     }
                                 }
                             }
                             Ok(None) => view! { <p>"Pick a language profile first."</p> }.into_any(),
-                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                            Err(e) => {
+                                view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
+                            }
                         })
                 }}
             </Transition>
             {move || {
                 offline_mode
                     .get()
-                    .then(|| view! { <p class="offline">"Offline — grades sync on reconnect."</p> })
+                    .then(|| {
+                        view! {
+                            <p class="offline" role="status">
+                                "Offline — grades sync on reconnect."
+                            </p>
+                        }
+                    })
             }}
         </Page>
     }
@@ -257,10 +279,13 @@ fn CardView(
                 when=move || revealed.get()
                 fallback=move || {
                     view! {
-                        <button on:click=move |_| {
-                            revealed_at_ms.set_value(now_ms());
-                            revealed.set(true);
-                        }>
+                        <button
+                            class="btn-primary"
+                            on:click=move |_| {
+                                revealed_at_ms.set_value(now_ms());
+                                revealed.set(true);
+                            }
+                        >
                             "Reveal (space) — say it out loud first"
                         </button>
                     }
@@ -286,6 +311,7 @@ fn CardView(
                         .map(|(grade, label)| {
                             view! {
                                 <button
+                                    class=grade_class(grade)
                                     disabled=submit.pending()
                                     on:click=move |_| {
                                         let (card_id, hash) = handle.get_value();
@@ -351,7 +377,9 @@ pub fn SummaryPage() -> impl IntoView {
                                     .into_any()
                             }
                             Ok(None) => view! { <p>"No profile selected."</p> }.into_any(),
-                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                            Err(e) => {
+                                view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
+                            }
                         })
                 }}
             </Suspense>
@@ -359,8 +387,8 @@ pub fn SummaryPage() -> impl IntoView {
     }
 }
 
-/// `/stats`: retention weeks + due forecast (WBS 12.3, M8 charts as SVG-free
-/// text bars — 09-frontend.md keeps JS chart libs out).
+/// `/stats`: retention weeks + due forecast, rendered as native inline SVG
+/// bars — no JS chart library (09-frontend.md §1).
 #[component]
 pub fn StatsPage() -> impl IntoView {
     let active = use_active_profile();
@@ -379,7 +407,6 @@ pub fn StatsPage() -> impl IntoView {
             Ok(Some((retention, forecast)))
         }
     });
-    let bar = |fraction: f64| "█".repeat((fraction * 10.0).round().clamp(0.0, 10.0) as usize);
     view! {
         <Page>
             <h1>"Stats"</h1>
@@ -425,16 +452,24 @@ pub fn StatsPage() -> impl IntoView {
                                                     .map(|s| s.chars().take(10).collect::<String>())
                                                     .unwrap_or_default();
                                                 view! {
-                                                    <li>
+                                                    <li class="stat-row">
+                                                        <span class="stat-label">{label}</span>
                                                         {match rate {
                                                             Some(rate) => {
-                                                                format!(
-                                                                    "{label}: {} {:.0}% ({n})",
-                                                                    bar(rate),
-                                                                    rate * 100.0,
-                                                                )
+                                                                view! {
+                                                                    <div class="stat-bar-wrap">
+                                                                        {bar_svg(rate)}
+                                                                        <span class="stat-value">
+                                                                            {format!("{:.0}% ({n})", rate * 100.0)}
+                                                                        </span>
+                                                                    </div>
+                                                                }
+                                                                    .into_any()
                                                             }
-                                                            None => format!("{label}: — (0)"),
+                                                            None => {
+                                                                view! { <span class="stat-value">"— (0)"</span> }
+                                                                    .into_any()
+                                                            }
                                                         }}
                                                     </li>
                                                 }
@@ -450,8 +485,12 @@ pub fn StatsPage() -> impl IntoView {
                                                 #[allow(clippy::cast_precision_loss)]
                                                 let fraction = *count as f64 / max_due as f64;
                                                 view! {
-                                                    <li>
-                                                        {format!("+{day}d: {} {count}", bar(fraction))}
+                                                    <li class="stat-row">
+                                                        <span class="stat-label">{format!("+{day}d")}</span>
+                                                        <div class="stat-bar-wrap">
+                                                            {bar_svg(fraction)}
+                                                            <span class="stat-value">{count.to_string()}</span>
+                                                        </div>
                                                     </li>
                                                 }
                                             })
@@ -461,11 +500,25 @@ pub fn StatsPage() -> impl IntoView {
                                     .into_any()
                             }
                             Ok(None) => view! { <p>"No profile selected."</p> }.into_any(),
-                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                            Err(e) => {
+                                view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
+                            }
                         })
                 }}
             </Suspense>
         </Page>
+    }
+}
+
+/// One inline SVG bar, `fraction` (0.0–1.0) of the track filled — a native
+/// element, not a chart library (09-frontend.md §1).
+fn bar_svg(fraction: f64) -> impl IntoView {
+    let width = format!("{}", fraction.clamp(0.0, 1.0) * 100.0);
+    view! {
+        <svg class="bar" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true">
+            <rect class="bar-track" x="0" y="0" width="100" height="10" rx="2" />
+            <rect class="bar-fill" x="0" y="0" width=width height="10" rx="2" />
+        </svg>
     }
 }
 

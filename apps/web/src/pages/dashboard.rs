@@ -39,7 +39,9 @@ pub fn DashboardPage() -> impl IntoView {
                                 }
                                     .into_any()
                             }
-                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                            Err(e) => {
+                                view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
+                            }
                         })
                 }}
             </Suspense>
@@ -54,7 +56,7 @@ fn DashboardView(d: DashboardDto) -> impl IntoView {
             {(!d.exceptions.is_empty())
                 .then(|| {
                     view! {
-                        <div class="exceptions">
+                        <div class="callout-warning">
                             <h2>"Needs attention"</h2>
                             <ul>
                                 {d.exceptions
@@ -81,7 +83,7 @@ fn DashboardView(d: DashboardDto) -> impl IntoView {
             {(!d.open_recommendations.is_empty())
                 .then(|| {
                     view! {
-                        <div class="exceptions">
+                        <div class="callout-info">
                             <h2>"Tutor suggestions"</h2>
                             <ul>
                                 {d.open_recommendations

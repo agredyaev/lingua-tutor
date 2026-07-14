@@ -39,7 +39,7 @@ pub fn LanguagesPage() -> impl IntoView {
     view! {
         <Page>
             <h1>"Languages"</h1>
-            {move || error.get().map(|e| view! { <p class="error">{e}</p> })}
+            {move || error.get().map(|e| view! { <p class="error" role="alert">{e}</p> })}
             <Suspense fallback=|| view! { <p>"Loading…"</p> }>
                 {move || {
                     profiles
@@ -74,7 +74,9 @@ pub fn LanguagesPage() -> impl IntoView {
                                 }
                                     .into_any()
                             }
-                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                            Err(e) => {
+                                view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
+                            }
                         })
                 }}
             </Suspense>
@@ -113,7 +115,9 @@ pub fn LanguagesPage() -> impl IntoView {
                                 }
                                     .into_any()
                             }
-                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                            Err(e) => {
+                                view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
+                            }
                         })
                 }}
             </Suspense>

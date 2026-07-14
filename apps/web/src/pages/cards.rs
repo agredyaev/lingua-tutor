@@ -30,7 +30,13 @@ pub fn CardsPage() -> impl IntoView {
     view! {
         <Page>
             <h1>"Cards"</h1>
-            <select on:change=move |ev| status_filter.set(event_target_value(&ev))>
+            <label class="visually-hidden" for="cards-status-filter">
+                "Filter by status"
+            </label>
+            <select
+                id="cards-status-filter"
+                on:change=move |ev| status_filter.set(event_target_value(&ev))
+            >
                 <option value="">"all statuses"</option>
                 <option value="candidate">"candidate"</option>
                 <option value="new">"new"</option>
@@ -53,10 +59,11 @@ pub fn CardsPage() -> impl IntoView {
                                             .map(|c| {
                                                 view! {
                                                     <li>
-                                                        <a href=format!(
-                                                            "/cards/{}",
-                                                            c.id,
-                                                        )>{format!("[{}·{}] {}", c.status, c.intent, c.prompt)}</a>
+                                                        <a href=format!("/cards/{}", c.id)>
+                                                            <span class="badge">{c.status.to_string()}</span>
+                                                            <span class="badge">{c.intent.to_string()}</span>
+                                                            <span>{c.prompt.clone()}</span>
+                                                        </a>
                                                     </li>
                                                 }
                                             })
@@ -65,7 +72,9 @@ pub fn CardsPage() -> impl IntoView {
                                 }
                                     .into_any()
                             }
-                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                            Err(e) => {
+                                view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
+                            }
                         })
                 }}
             </Suspense>
@@ -149,7 +158,9 @@ pub fn CardDetailPage() -> impl IntoView {
                                 }
                                     .into_any()
                             }
-                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                            Err(e) => {
+                                view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
+                            }
                         })
                 }}
             </Suspense>

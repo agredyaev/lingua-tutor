@@ -51,7 +51,9 @@ pub fn ItemsPage() -> impl IntoView {
                                     .into_any()
                             }
                             Ok(None) => view! { <p>"No profile selected."</p> }.into_any(),
-                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                            Err(e) => {
+                                view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
+                            }
                         })
                 }}
             </Suspense>
@@ -119,7 +121,9 @@ pub fn ErrorsPage() -> impl IntoView {
                                 }
                                     .into_any()
                             }
-                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                            Err(e) => {
+                                view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
+                            }
                         })
                 }}
             </Suspense>
