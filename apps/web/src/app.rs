@@ -55,6 +55,7 @@ pub fn App() -> impl IntoView {
             <nav class="topnav">
                 <a href="/dashboard">"Dashboard"</a>
                 <a href="/review">"Review"</a>
+                <a href="/stats">"Stats"</a>
                 <a href="/cards">"Cards"</a>
                 <a href="/lessons">"Lessons"</a>
                 <a href="/import">"Import"</a>
@@ -70,6 +71,7 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/learn") view=pages::misc::LearnPage />
                     <Route path=path!("/review") view=pages::review::ReviewPage />
                     <Route path=path!("/review/summary") view=pages::review::SummaryPage />
+                    <Route path=path!("/stats") view=pages::review::StatsPage />
                     <Route path=path!("/cards") view=pages::cards::CardsPage />
                     <Route path=path!("/cards/redesign") view=pages::cards::CardsPage />
                     <Route path=path!("/cards/:id") view=pages::cards::CardDetailPage />

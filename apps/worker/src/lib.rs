@@ -215,6 +215,9 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/api/v1/review/forecast", |req, ctx| async move {
             handlers::review::forecast(&req, &ctx.env).await
         })
+        .get_async("/api/v1/review/retention", |req, ctx| async move {
+            handlers::review::retention(&req, &ctx.env).await
+        })
         .post_async("/api/v1/review/evaluate", |req, ctx| async move {
             handlers::review::evaluate(&ctx.data, req, &ctx.env).await
         })

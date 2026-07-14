@@ -95,6 +95,17 @@ pub const SELECT_EVENTS_SINCE: &str = "SELECT e.grade, e.response_millis
  WHERE c.learner_language_profile_id = ?1 AND e.created_at >= ?2
    AND e.compensates_event_id IS NULL";
 
+/// Effective (never-undone) review events since an instant, for retention
+/// stats: grade + creation instant, compensation lineage excluded both ways.
+pub const SELECT_EVENTS_FOR_RETENTION: &str = "SELECT e.grade, e.created_at
+ FROM review_events e
+ JOIN cards c ON c.id = e.card_id
+ WHERE c.learner_language_profile_id = ?1 AND e.created_at >= ?2
+   AND e.compensates_event_id IS NULL
+   AND NOT EXISTS (
+       SELECT 1 FROM review_events x WHERE x.compensates_event_id = e.id)
+ ORDER BY e.created_at";
+
 /// Due counts per day for the forecast (uses `ix_schedule_due`).
 pub const SELECT_DUE_BETWEEN: &str = "SELECT s.due_at
  FROM card_schedule_state s

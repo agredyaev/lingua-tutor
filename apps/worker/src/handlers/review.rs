@@ -702,6 +702,76 @@ pub async fn forecast(req: &Request, env: &Env) -> Result<Response> {
     Response::from_json(&serde_json::json!({ "days": days, "due_per_day": per_day }))
 }
 
+/// `GET /api/v1/review/retention?language_profile_id={id}&days=28` — observed
+/// retention (grade > Again) in weekly buckets from effective review events
+/// (WBS 12.3; M8 retention charts). Undone events excluded.
+pub async fn retention(req: &Request, env: &Env) -> Result<Response> {
+    let url = req.url()?;
+    let Some(profile_id) = query_param(&url, "language_profile_id") else {
+        return error_response(400, "missing_param", "language_profile_id required");
+    };
+    let days: i64 = query_param(&url, "days")
+        .and_then(|d| d.parse().ok())
+        .unwrap_or(28)
+        .clamp(7, 365);
+    let at = now();
+    let since = Timestamp(at.0 - days * 86_400);
+    #[derive(serde::Deserialize)]
+    struct EventRow {
+        grade: u8,
+        created_at: String,
+    }
+    let events: Vec<EventRow> = db(env)?
+        .prepare(review::SELECT_EVENTS_FOR_RETENTION)
+        .bind(&[profile_id.into(), to_rfc3339(since).into()])?
+        .all()
+        .await?
+        .results()?;
+    let bucket_count = usize::try_from((days + 6) / 7).unwrap_or(4);
+    let mut buckets = vec![(0_u32, 0_u32, [0_u32; 4]); bucket_count]; // (reviews, successes, grades)
+    let mut total = (0_u32, 0_u32);
+    for event in &events {
+        let Ok(created) = crate::repositories::from_rfc3339(&event.created_at) else {
+            continue;
+        };
+        let offset = ((created.0 - since.0).max(0)) / (7 * 86_400);
+        let Ok(index) = usize::try_from(offset) else {
+            continue;
+        };
+        let Some(bucket) = buckets.get_mut(index.min(bucket_count.saturating_sub(1))) else {
+            continue;
+        };
+        let success = u32::from(event.grade > 1);
+        bucket.0 += 1;
+        bucket.1 += success;
+        if (1..=4).contains(&event.grade) {
+            bucket.2[usize::from(event.grade - 1)] += 1;
+        }
+        total.0 += 1;
+        total.1 += success;
+    }
+    let rate = |ok: u32, n: u32| (n > 0).then(|| f64::from(ok) / f64::from(n));
+    let weeks: Vec<serde_json::Value> = buckets
+        .iter()
+        .enumerate()
+        .map(|(i, (n, ok, grades))| {
+            serde_json::json!({
+                "week_start": to_rfc3339(Timestamp(since.0 + i64::try_from(i).unwrap_or_default() * 7 * 86_400)),
+                "reviews": n,
+                "retention": rate(*ok, *n),
+                "grades": { "again": grades[0], "hard": grades[1],
+                             "good": grades[2], "easy": grades[3] },
+            })
+        })
+        .collect();
+    Response::from_json(&serde_json::json!({
+        "days": days,
+        "reviews": total.0,
+        "retention": rate(total.1, total.0),
+        "weeks": weeks,
+    }))
+}
+
 /// `POST /api/v1/review/evaluate` — pack-driven answer check before grading
 /// (WBS 5.7). Body `{ card_id, learner_answer }`.
 pub async fn evaluate(

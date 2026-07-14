@@ -6,7 +6,7 @@
 
 use integration_tests::{migrated_connection, seed_profile_and_pack};
 use rusqlite::params;
-use worker_api::repositories::{lessons, oauth, packs, profiles, records};
+use worker_api::repositories::{lessons, oauth, packs, profiles, records, review};
 
 const NOW: &str = "2026-07-12T10:00:00Z";
 
@@ -580,4 +580,50 @@ fn oauth_purge_removes_expired_rows() {
         .query_row("SELECT COUNT(*) FROM oauth_codes", [], |r| r.get(0))
         .unwrap();
     assert_eq!((tokens, codes), (0, 0));
+}
+
+#[test]
+fn retention_query_excludes_undo_lineage_both_ways() {
+    let conn = migrated_connection();
+    seed_profile_and_pack(&conn);
+    conn.execute_batch(
+        "INSERT INTO cards (id, learner_language_profile_id, language_pack_id,
+             language_pack_version, intent, status, prompt, prompt_language, answer,
+             answer_language, accepted_answers_json, answer_evaluation_mode,
+             creation_reason, created_by, created_at, updated_at, content_hash,
+             content_version)
+         VALUES ('crd-1', 'llp-1', 'test-pack', '0.1.0', 'production', 'review',
+                 'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+                 '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z', 'h', 1);
+         INSERT INTO review_sessions (id, learner_language_profile_id, started_at,
+             source, created_at)
+         VALUES ('rs-1', 'llp-1', '2026-07-12T00:00:00Z', 'online',
+                 '2026-07-12T00:00:00Z');",
+    )
+    .unwrap();
+    let insert_event = |id: &str, grade: i64, compensates: Option<&str>| {
+        conn.execute(
+            "INSERT INTO review_events (id, card_id, review_session_id,
+                 client_operation_id, presented_at, answered_at, grade,
+                 response_millis, answer_revealed, prior_state_hash,
+                 result_state_hash, algorithm_version, source, compensates_event_id,
+                 created_at)
+             VALUES (?1, 'crd-1', 'rs-1', ?1, '2026-07-12T01:00:00Z',
+                     '2026-07-12T01:00:00Z', ?2, 1000, 1, 'x', 'y', 'v', 'online',
+                     ?3, '2026-07-12T01:00:00Z')",
+            rusqlite::params![id, grade, compensates],
+        )
+        .unwrap();
+    };
+    insert_event("ev-kept", 3, None); // effective
+    insert_event("ev-undone", 1, None); // later compensated → excluded
+    insert_event("ev-undo", 3, Some("ev-undone")); // the compensation → excluded
+    let grades: Vec<i64> = conn
+        .prepare(review::SELECT_EVENTS_FOR_RETENTION)
+        .unwrap()
+        .query_map(params!["llp-1", "2026-07-11T00:00:00Z"], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(grades, vec![3], "only the effective event survives");
 }

@@ -359,6 +359,116 @@ pub fn SummaryPage() -> impl IntoView {
     }
 }
 
+/// `/stats`: retention weeks + due forecast (WBS 12.3, M8 charts as SVG-free
+/// text bars — 09-frontend.md keeps JS chart libs out).
+#[component]
+pub fn StatsPage() -> impl IntoView {
+    let active = use_active_profile();
+    let stats = LocalResource::new(move || {
+        let id = active.id();
+        async move {
+            let Some(id) = id else { return Ok(None) };
+            let retention = api_client::get::<serde_json::Value>(&format!(
+                "/review/retention?language_profile_id={id}&days=28"
+            ))
+            .await?;
+            let forecast = api_client::get::<serde_json::Value>(&format!(
+                "/review/forecast?language_profile_id={id}&days=7"
+            ))
+            .await?;
+            Ok(Some((retention, forecast)))
+        }
+    });
+    let bar = |fraction: f64| "█".repeat((fraction * 10.0).round().clamp(0.0, 10.0) as usize);
+    view! {
+        <Page>
+            <h1>"Stats"</h1>
+            <Suspense fallback=|| view! { <p>"Loading…"</p> }>
+                {move || {
+                    stats
+                        .get()
+                        .map(|result: Result<_, ApiError>| match result {
+                            Ok(Some((retention, forecast))) => {
+                                let overall = retention["retention"].as_f64();
+                                let weeks: Vec<_> = retention["weeks"]
+                                    .as_array()
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let due: Vec<u64> = forecast["due_per_day"]
+                                    .as_array()
+                                    .map(|a| a.iter().filter_map(serde_json::Value::as_u64).collect())
+                                    .unwrap_or_default();
+                                let max_due = due.iter().copied().max().unwrap_or(0).max(1);
+                                view! {
+                                    <h2>"Retention (28 days)"</h2>
+                                    <p>
+                                        {overall
+                                            .map_or_else(
+                                                || "No reviews yet.".to_owned(),
+                                                |r| {
+                                                    format!(
+                                                        "{:.0}% over {} reviews",
+                                                        r * 100.0,
+                                                        retention["reviews"].as_u64().unwrap_or(0),
+                                                    )
+                                                },
+                                            )}
+                                    </p>
+                                    <ul class="stats-weeks">
+                                        {weeks
+                                            .iter()
+                                            .map(|week| {
+                                                let n = week["reviews"].as_u64().unwrap_or(0);
+                                                let rate = week["retention"].as_f64();
+                                                let label = week["week_start"]
+                                                    .as_str()
+                                                    .map(|s| s.chars().take(10).collect::<String>())
+                                                    .unwrap_or_default();
+                                                view! {
+                                                    <li>
+                                                        {match rate {
+                                                            Some(rate) => {
+                                                                format!(
+                                                                    "{label}: {} {:.0}% ({n})",
+                                                                    bar(rate),
+                                                                    rate * 100.0,
+                                                                )
+                                                            }
+                                                            None => format!("{label}: — (0)"),
+                                                        }}
+                                                    </li>
+                                                }
+                                            })
+                                            .collect::<Vec<_>>()}
+                                    </ul>
+                                    <h2>"Due next 7 days"</h2>
+                                    <ul class="stats-forecast">
+                                        {due
+                                            .iter()
+                                            .enumerate()
+                                            .map(|(day, count)| {
+                                                #[allow(clippy::cast_precision_loss)]
+                                                let fraction = *count as f64 / max_due as f64;
+                                                view! {
+                                                    <li>
+                                                        {format!("+{day}d: {} {count}", bar(fraction))}
+                                                    </li>
+                                                }
+                                            })
+                                            .collect::<Vec<_>>()}
+                                    </ul>
+                                }
+                                    .into_any()
+                            }
+                            Ok(None) => view! { <p>"No profile selected."</p> }.into_any(),
+                            Err(e) => view! { <p class="error">{e.to_string()}</p> }.into_any(),
+                        })
+                }}
+            </Suspense>
+        </Page>
+    }
+}
+
 fn now_rfc3339() -> String {
     js_sys::Date::new_0()
         .to_iso_string()
