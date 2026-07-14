@@ -361,3 +361,25 @@ Recorded, not creep. `suspend_cards`/`upsert_cards` audit rows use
 
 Owner actions to close M6: run `docs/checklists/mcp-connector.md`
 (desktop + mobile), after `terraform apply` + deploy.
+
+## Iteration 12.2 — zh-CN second pack (M7)
+
+Commits: 7c140e1 (pack), 49fc716 (composition proof), cf6f45c (quote-escape fix).
+
+- `language-packs/zh-cn`: Mandarin (Simplified), HSK framework, 4 card
+  templates, 2 scenarios, seed phrase. CJK-aware normalization: canonical
+  drops whitespace adjacent to hanzi while keeping single spaces in Latin
+  runs (pinyin/names); comparison additionally strips ASCII+CJK punctuation
+  and lowercases pinyin. Deterministic error taxonomy: zh.orth.form /
+  zh.gram.structure / zh.voc.choice.
+- Shared conformance suite passes unchanged (incl. proptest normalization
+  idempotence) — the suite needed zero edits for a no-whitespace script.
+- Composition test: es-ES + zh-CN in one registry, no collisions.
+- **Zero core changes proof (M7 exit gate)**: pack commit 7c140e1 touches
+  only `Cargo.toml`/`Cargo.lock` (member registration) + new files under
+  `language-packs/zh-cn/` — no `crates/*`, no `apps/*` diffs. Dependency
+  direction CI unchanged and green.
+- Production composition still es-ES-only (worker lib.rs test enforces);
+  zh-CN registers via test composition until the owner opts in.
+
+Drift: none. M7 validated.
