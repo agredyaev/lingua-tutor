@@ -314,3 +314,50 @@ Gate run (2026-07-13): fmt ✓, clippy -D warnings ✓, **113 tests 0 failed** �
 ### Fix-forward (11.3)
 
 _(empty — owner adds items while running the checklist; severity: blocker / annoying / cosmetic)_
+
+## Iteration 12.1 — MCP over Streamable HTTP + embedded OAuth 2.1 (M6)
+
+Commits: 5c39920 (storage+ADR-0006), 7b5d927 (path classifier + gate), 6df3179
+(discovery+DCR), 07d23ad (authorize+token), 1b8028e (transport+scopes),
+47de575 (read tools), b1e52a7 (write tools), + infra/smoke (this commit).
+
+- Transport: hand-rolled JSON-RPC over `POST /mcp` (stateless Streamable
+  HTTP; GET/DELETE 405). No new crates anywhere in the iteration.
+- OAuth 2.1 embedded in the worker: discovery metadata, RFC 7591 DCR
+  (redirect hosts allowlisted to chatgpt.com/openai.com; localhost only when
+  AUTH_ENFORCED=false), PKCE S256 only, single-use hashed codes (10 min),
+  opaque tokens hashed at rest (access 1 h; refresh 30 d rotated on use),
+  scope subset validation, opportunistic expiry purge in the token handler.
+- Identity: `/oauth/authorize` stays behind Access; `auth::verify_owner`
+  extracted and re-verified in-worker. Every token acts as the owner bounded
+  by scopes (single-user, ADR-0006 §4).
+- Tools: all 14 roadmap §3 tools + `get_tutor_context`; reads bridge to the
+  existing handlers via synthetic internal requests (no duplicate queries);
+  `complete_lesson` funnels into the same `complete_from_result` path as the
+  UI import — idempotency via `client_operation_id` held.
+- Refactors for reuse (mechanical): `parse_and_validate`,
+  `complete_from_result`, `build_mutation_context` (takes `&[CardMutation]`),
+  `push_card_mutation_statements` (takes mutations+pack version,
+  `Option<lesson_id>`), `push_rechecks` (takes `Timestamp`).
+- Edge topology: Terraform adds one `bypass` policy + five exact-path Access
+  applications (`/mcp`, `/oauth/token`, `/oauth/register`, two well-known).
+  `/oauth/authorize` deliberately not bypassed. `run_worker_first` grew to
+  cover `/mcp`, `/oauth/*`, `/.well-known/*` (assets would swallow them).
+- Gate: `MCP_ENABLED` (default off; prod on after Terraform). Off → 404 on
+  every MCP/OAuth path.
+- Token-leak audit (owner request): hashes-only at rest; zero logging calls
+  in the worker; error texts never echo secrets; access tokens never in
+  URLs; consent page same-origin only; smoke prints no token material.
+- Verification: `scripts/smoke-mcp.sh` 15/15 locally (metadata, DCR, PKCE
+  good+bad, code single-use, 401+WWW-Authenticate, GET 405, initialize,
+  tools/list 15, read tool, complete_lesson + duplicate noop, scope
+  enforcement, refresh rotation, disabled-gate 404). Deploy smoke extended
+  with the prod auth-matrix asserts.
+
+Drift: 13-roadmap §3 lists 14 tools — `get_tutor_context` added as a 15th
+(traceable to 08 §7 tutor-context export; primary lesson entry point).
+Recorded, not creep. `suspend_cards`/`upsert_cards` audit rows use
+`source_lesson_id = NULL` outside lessons — schema already allowed it.
+
+Owner actions to close M6: run `docs/checklists/mcp-connector.md`
+(desktop + mobile), after `terraform apply` + deploy.

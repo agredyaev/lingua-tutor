@@ -78,6 +78,47 @@ resource "cloudflare_zero_trust_access_application" "api" {
   }]
 }
 
+# --- MCP surface: exact-path Access bypass (ADR-0006 §5) ---
+# The worker enforces OAuth Bearer + per-tool scopes on these paths
+# (10-security.md §2); bypass only removes the Access login wall so ChatGPT
+# can reach them. NEVER a wildcard here — /oauth/authorize must stay under
+# the owner-only application above.
+resource "cloudflare_zero_trust_access_policy" "everyone_bypass" {
+  account_id = var.account_id
+  name       = "mcp-public-paths"
+  decision   = "bypass"
+
+  include = [{
+    everyone = {}
+  }]
+}
+
+locals {
+  worker_host = "lingua-tutor-api.${var.workers_subdomain}.workers.dev"
+  mcp_bypass_paths = {
+    mcp         = "/mcp"
+    oauth-token = "/oauth/token"
+    oauth-reg   = "/oauth/register"
+    prm         = "/.well-known/oauth-protected-resource"
+    asm         = "/.well-known/oauth-authorization-server"
+  }
+}
+
+resource "cloudflare_zero_trust_access_application" "mcp_bypass" {
+  for_each = local.mcp_bypass_paths
+
+  account_id       = var.account_id
+  name             = "lingua-tutor-mcp-${each.key}"
+  domain           = "${local.worker_host}${each.value}"
+  type             = "self_hosted"
+  session_duration = "24h"
+
+  policies = [{
+    id         = cloudflare_zero_trust_access_policy.everyone_bypass.id
+    precedence = 1
+  }]
+}
+
 output "d1_dev_id" {
   value = cloudflare_d1_database.dev.id
 }

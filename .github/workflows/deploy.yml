@@ -87,10 +87,21 @@ jobs:
       # token if we ever need to assert d1_connected from CI.
       - name: smoke
         run: |
-          redirect=$(curl -s -o /dev/null -w '%{redirect_url}' \
-            https://lingua-tutor-api.aleksey-gredyaev-dev.workers.dev/api/v1/health)
+          host=https://lingua-tutor-api.aleksey-gredyaev-dev.workers.dev
+          redirect=$(curl -s -o /dev/null -w '%{redirect_url}' "$host/api/v1/health")
           echo "$redirect" | grep -q 'cloudflareaccess.com' \
             || { echo "::error::expected Access login redirect, got: ${redirect:-<none>}"; exit 1; }
+          # MCP surface (ADR-0006 auth matrix): metadata public, /mcp 401
+          # from the worker, authorize still behind Access.
+          curl -sf "$host/.well-known/oauth-protected-resource" \
+            | grep -q '"authorization_servers"' \
+            || { echo "::error::PRM metadata not public — Access bypass missing"; exit 1; }
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$host/mcp" -d '{}')
+          [ "$code" = "401" ] \
+            || { echo "::error::/mcp without bearer returned $code, want 401"; exit 1; }
+          auth_redirect=$(curl -s -o /dev/null -w '%{redirect_url}' "$host/oauth/authorize")
+          echo "$auth_redirect" | grep -q 'cloudflareaccess.com' \
+            || { echo "::error::/oauth/authorize is not Access-gated"; exit 1; }
 
       # 9: release metadata (11 §4.9)
       - name: record release metadata

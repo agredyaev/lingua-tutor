@@ -30,6 +30,7 @@
       "name": "lingua-tutor-api",
       "vars": {
         "AUTH_ENFORCED": "true",
+        "MCP_ENABLED": "true", // requires the Terraform Access-bypass apps
         "ACCESS_TEAM_DOMAIN": "absent-twin.cloudflareaccess.com",
         "ACCESS_AUD": "ef3a0e549f57c25821692fe4adcf596ca53da43e6f95cbbec54099aaf4f11657",
         "OWNER_EMAIL": "aleksey.gredyaev.dev@gmail.com"
