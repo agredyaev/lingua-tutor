@@ -30,11 +30,35 @@ pub enum AuthOutcome {
 ///
 /// Propagates Worker/JWKS fetch failures as 500s at the call site.
 pub async fn enforce(req: &Request, env: &Env) -> Result<AuthOutcome> {
+    match verify_owner(req, env).await? {
+        OwnerCheck::Owner => Ok(AuthOutcome::Allow),
+        OwnerCheck::Unauthenticated(reason) => deny(401, &reason),
+        OwnerCheck::NotOwner => deny(403, "not the owner"),
+    }
+}
+
+/// Result of verifying the caller against the Access owner identity.
+pub enum OwnerCheck {
+    /// Verified owner (or enforcement off in local dev).
+    Owner,
+    /// No/invalid Access token; reason for the 401.
+    Unauthenticated(String),
+    /// Valid Access token, but not the owner's email.
+    NotOwner,
+}
+
+/// Verify the `Cf-Access-Jwt-Assertion` header against the team JWKS and the
+/// owner email. Shared by the global gate and `/oauth/authorize` (ADR-0006).
+///
+/// # Errors
+///
+/// Propagates Worker/JWKS fetch failures as 500s at the call site.
+pub async fn verify_owner(req: &Request, env: &Env) -> Result<OwnerCheck> {
     if !enforced(env) {
-        return Ok(AuthOutcome::Allow);
+        return Ok(OwnerCheck::Owner);
     }
     let Some(token) = req.headers().get("Cf-Access-Jwt-Assertion")? else {
-        return deny(401, "missing Access token");
+        return Ok(OwnerCheck::Unauthenticated("missing Access token".into()));
     };
     let team = env.var("ACCESS_TEAM_DOMAIN")?.to_string();
     let aud = env.var("ACCESS_AUD")?.to_string();
@@ -42,12 +66,12 @@ pub async fn enforce(req: &Request, env: &Env) -> Result<AuthOutcome> {
 
     let claims = match verify(&token, &team, &aud).await {
         Ok(claims) => claims,
-        Err(reason) => return deny(401, &reason),
+        Err(reason) => return Ok(OwnerCheck::Unauthenticated(reason)),
     };
     if claims.email.as_deref() != Some(owner.as_str()) {
-        return deny(403, "not the owner");
+        return Ok(OwnerCheck::NotOwner);
     }
-    Ok(AuthOutcome::Allow)
+    Ok(OwnerCheck::Owner)
 }
 
 /// True when Access enforcement is on (`AUTH_ENFORCED=true`); off = local dev

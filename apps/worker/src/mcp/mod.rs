@@ -64,7 +64,10 @@ pub async fn route(path: McpPath, req: Request, env: &Env) -> Result<Response> {
         }
         (McpPath::AuthServerMetadata, Method::Get) => oauth::serve_auth_server_metadata(&req),
         (McpPath::Register, Method::Post) => oauth::register(req, env).await,
-        // Remaining endpoints land in subsequent tasks (authorize/token/mcp).
+        (McpPath::Authorize, Method::Get) => oauth::authorize_form(req, env).await,
+        (McpPath::Authorize, Method::Post) => oauth::authorize_approve(req, env).await,
+        (McpPath::Token, Method::Post) => oauth::token(req, env).await,
+        // `/mcp` transport lands in the next task.
         (McpPath::NotMcp, _) => Response::error("not found", 404),
         _ => Response::error("method not allowed", 405),
     }
