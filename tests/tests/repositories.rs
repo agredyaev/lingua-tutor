@@ -6,7 +6,7 @@
 
 use integration_tests::{migrated_connection, seed_profile_and_pack};
 use rusqlite::params;
-use worker_api::repositories::{lessons, oauth, packs, profiles, records, review};
+use worker_api::repositories::{cards, lessons, oauth, packs, profiles, records, review};
 
 const NOW: &str = "2026-07-12T10:00:00Z";
 
@@ -626,6 +626,150 @@ fn retention_query_excludes_undo_lineage_both_ways() {
         .map(Result::unwrap)
         .collect();
     assert_eq!(grades, vec![3], "only the effective event survives");
+}
+
+#[test]
+fn count_new_cards_introduced_today_counts_first_grade_not_creation() {
+    // `COUNT_NEW_CARDS_INTRODUCED_TODAY` is the session admission budget: it
+    // must count by first-grade date, not by card creation date — a card
+    // minted `new` today but never yet shown must NOT count as "already
+    // introduced", or it can never enter its own introducing session.
+    let conn = migrated_connection();
+    seed_profile_and_pack(&conn);
+    conn.execute_batch(
+        "INSERT INTO cards (id, learner_language_profile_id, language_pack_id,
+             language_pack_version, intent, status, prompt, prompt_language, answer,
+             answer_language, accepted_answers_json, answer_evaluation_mode,
+             creation_reason, created_by, created_at, updated_at, content_hash,
+             content_version)
+         VALUES
+           ('crd-old-graded-today', 'llp-1', 'test-pack', '0.1.0', 'production',
+            'learning', 'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+            '2020-01-01T00:00:00Z', '2020-01-01T00:00:00Z', 'h1', 1),
+           ('crd-new-ungraded', 'llp-1', 'test-pack', '0.1.0', 'production',
+            'new', 'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+            '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z', 'h2', 1),
+           ('crd-reviewed-again', 'llp-1', 'test-pack', '0.1.0', 'production',
+            'review', 'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+            '2020-01-01T00:00:00Z', '2020-01-01T00:00:00Z', 'h3', 1);
+         INSERT INTO review_sessions (id, learner_language_profile_id, started_at,
+             source, created_at)
+         VALUES ('rs-1', 'llp-1', '2026-07-12T00:00:00Z', 'online',
+                 '2026-07-12T00:00:00Z');",
+    )
+    .unwrap();
+
+    // Graded for the very first time today, despite being minted years ago.
+    conn.execute(
+        review::UPSERT_SCHEDULE_STATE,
+        params![
+            "crd-old-graded-today",
+            "fsrs",
+            "v1",
+            Option::<String>::None,
+            Option::<f64>::None,
+            Option::<f64>::None,
+            Option::<String>::None,
+            Option::<String>::None,
+            Option::<i64>::None,
+            0_i64,
+            1_i64,
+            1_i64,
+            "hash-a",
+            "2026-07-12T01:00:00Z",
+        ],
+    )
+    .unwrap();
+    // Its second-ever grade lands today too — must not double count.
+    conn.execute(
+        review::UPSERT_SCHEDULE_STATE,
+        params![
+            "crd-reviewed-again",
+            "fsrs",
+            "v1",
+            Option::<String>::None,
+            Option::<f64>::None,
+            Option::<f64>::None,
+            Option::<String>::None,
+            Option::<String>::None,
+            Option::<i64>::None,
+            0_i64,
+            2_i64,
+            1_i64,
+            "hash-b",
+            "2026-07-12T01:00:00Z",
+        ],
+    )
+    .unwrap();
+    let insert_event = |id: &str, card_id: &str, result_hash: &str| {
+        conn.execute(
+            "INSERT INTO review_events (id, card_id, review_session_id,
+                 client_operation_id, presented_at, answered_at, grade,
+                 response_millis, answer_revealed, prior_state_hash,
+                 result_state_hash, algorithm_version, source, compensates_event_id,
+                 created_at)
+             VALUES (?1, ?2, 'rs-1', ?1, '2026-07-12T01:00:00Z',
+                     '2026-07-12T01:00:00Z', 3, 1000, 1, 'x', ?3, 'v1', 'online',
+                     NULL, '2026-07-12T01:00:00Z')",
+            rusqlite::params![id, card_id, result_hash],
+        )
+        .unwrap();
+    };
+    insert_event("ev-1", "crd-old-graded-today", "hash-a");
+    insert_event("ev-2", "crd-reviewed-again", "hash-b");
+    // `crd-new-ungraded` has no schedule-state row at all — never shown yet.
+
+    let n: i64 = conn
+        .query_row(
+            review::COUNT_NEW_CARDS_INTRODUCED_TODAY,
+            params!["llp-1", "2026-07-12T00:00:00Z"],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        n, 1,
+        "only the card graded for the very first time today counts"
+    );
+}
+
+#[test]
+fn oldest_candidates_selected_first_and_bounded() {
+    // A card that misses the daily mint budget lands as `candidate` with no
+    // other path back to `new` — `SELECT_OLDEST_CANDIDATES` is what lets
+    // `promote_candidates` give the longest-waiting ones first claim on the
+    // next day's budget.
+    let conn = migrated_connection();
+    seed_profile_and_pack(&conn);
+    conn.execute_batch(
+        "INSERT INTO cards (id, learner_language_profile_id, language_pack_id,
+             language_pack_version, intent, status, prompt, prompt_language, answer,
+             answer_language, accepted_answers_json, answer_evaluation_mode,
+             creation_reason, created_by, created_at, updated_at, content_hash,
+             content_version)
+         VALUES
+           ('crd-a', 'llp-1', 'test-pack', '0.1.0', 'production', 'candidate',
+            'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+            '2026-07-10T00:00:00Z', '2026-07-10T00:00:00Z', 'h1', 1),
+           ('crd-b', 'llp-1', 'test-pack', '0.1.0', 'production', 'candidate',
+            'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+            '2026-07-11T00:00:00Z', '2026-07-11T00:00:00Z', 'h2', 1),
+           ('crd-c', 'llp-1', 'test-pack', '0.1.0', 'production', 'new',
+            'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+            '2026-07-09T00:00:00Z', '2026-07-09T00:00:00Z', 'h3', 1);",
+    )
+    .unwrap();
+    let ids: Vec<String> = conn
+        .prepare(cards::SELECT_OLDEST_CANDIDATES)
+        .unwrap()
+        .query_map(params!["llp-1", 1_i64], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        ids,
+        vec!["crd-a"],
+        "oldest candidate first, non-candidate excluded, bounded by limit"
+    );
 }
 
 #[test]

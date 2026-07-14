@@ -2,8 +2,9 @@
 //! with the redesign loop (WBS 8).
 
 use crate::api::{db, error_response, new_id, now, query_param};
-use crate::repositories::{cards, enum_str, to_rfc3339};
+use crate::repositories::{cards, enum_str, review, to_rfc3339};
 use learning_core::{Card, CardStatus};
+use review_engine::ReviewScheduler as _;
 use worker::{Env, Request, Response, Result};
 
 /// `GET /api/v1/cards?language_profile_id={id}&status=…&intent=…`.
@@ -123,7 +124,11 @@ pub async fn patch(mut req: Request, env: &Env, card_id: &str) -> Result<Respons
         ])?,
     ];
     if body.edit_class == "semantic" {
-        // Semantic edit: answer column update + schedule reset (due now).
+        // Semantic edit: answer column update + schedule reset to a fresh
+        // initial state (due now) — never just delete the schedule row:
+        // grading requires one to exist (handlers::review::submit_event
+        // rejects a card with none), so a bare delete would strand the
+        // card, gradable never again.
         statements.push(
             database
                 .prepare("UPDATE cards SET answer = ?2, updated_at = ?3 WHERE id = ?1")
@@ -133,10 +138,34 @@ pub async fn patch(mut req: Request, env: &Env, card_id: &str) -> Result<Respons
                     at.clone().into(),
                 ])?,
         );
+        let scheduler = review_engine::FsrsScheduler::new()
+            .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let state = scheduler
+            .initial_state(review_engine::InitialReviewInput {
+                now: review_engine::Timestamp(now().0),
+            })
+            .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let state_row = review::ScheduleStateRow::from_state(card_id, &state);
         statements.push(
-            database
-                .prepare("DELETE FROM card_schedule_state WHERE card_id = ?1")
-                .bind(&[card_id.into()])?,
+            database.prepare(review::UPSERT_SCHEDULE_STATE).bind(&[
+                state_row.card_id.clone().into(),
+                state_row.algorithm.clone().into(),
+                state_row.algorithm_version.clone().into(),
+                worker::wasm_bindgen::JsValue::NULL,
+                worker::wasm_bindgen::JsValue::NULL,
+                worker::wasm_bindgen::JsValue::NULL,
+                worker::wasm_bindgen::JsValue::NULL,
+                state_row
+                    .due_at
+                    .clone()
+                    .map_or(worker::wasm_bindgen::JsValue::NULL, Into::into),
+                worker::wasm_bindgen::JsValue::NULL,
+                0.into(),
+                0.into(),
+                state_row.state_version.into(),
+                state_row.state_hash.clone().into(),
+                at.clone().into(),
+            ])?,
         );
     }
     database.batch(statements).await?;

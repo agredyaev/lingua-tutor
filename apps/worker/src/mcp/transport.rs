@@ -155,14 +155,28 @@ pub async fn handle(mut req: Request, env: &Env) -> Result<Response> {
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({}));
-            let outcome = tools::call(tool, &arguments, env).await?;
-            rpc_result(
-                &rpc.id,
-                serde_json::json!({
-                    "content": [{ "type": "text", "text": outcome.body }],
-                    "isError": outcome.is_error,
-                }),
-            )
+            // A D1/runtime failure must never escape as a bare `?` here: an
+            // `Err` out of the top-level `#[event(fetch)]` handler becomes an
+            // uncaught Worker exception, which Cloudflare reports to the
+            // client as an opaque 502 (no JSON body, no diagnostic). Catch it
+            // and answer with a normal JSON-RPC error instead.
+            match tools::call(tool, &arguments, env).await {
+                Ok(outcome) => rpc_result(
+                    &rpc.id,
+                    serde_json::json!({
+                        "content": [{ "type": "text", "text": outcome.body }],
+                        "isError": outcome.is_error,
+                    }),
+                ),
+                Err(e) => {
+                    worker::console_error!("tools/call '{}' failed: {e}", tool.name);
+                    rpc_error(
+                        &rpc.id,
+                        -32603,
+                        &format!("internal_error: tool '{}' failed", tool.name),
+                    )
+                }
+            }
         }
         other => rpc_error(&rpc.id, -32601, &format!("method '{other}' not found")),
     }

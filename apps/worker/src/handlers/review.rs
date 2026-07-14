@@ -2,7 +2,7 @@
 //! (08-http-api.md §6; 05-review-engine.md §7; WBS 5.4, 5.6–5.8).
 
 use crate::api::{db, error_response, new_id, now, query_param};
-use crate::repositories::{cards, review, to_rfc3339};
+use crate::repositories::{cards, enum_str, review, to_rfc3339};
 use application::{QueueCandidate, build_queue, next_card_status};
 use learning_core::{CardId, CardStatus, Timestamp};
 use review_engine::{
@@ -113,6 +113,12 @@ pub async fn queue(env: &Env, session_id: &str) -> Result<Response> {
     let profile_id = session.learner_language_profile_id;
     let at = now();
 
+    // Deferred (`candidate`) cards get first claim on today's mint budget
+    // before the queue is assembled, so a card that once missed the daily
+    // budget doesn't stay stuck forever (see `promote_candidates`).
+    let mint_budget = effective_budget(&database, &profile_id, at).await?;
+    promote_candidates(&database, &profile_id, at, mint_budget).await?;
+
     let rows: Vec<CandidateRow> = database
         .prepare(review::SELECT_QUEUE_CANDIDATES)
         .bind(&[profile_id.clone().into()])?
@@ -144,9 +150,14 @@ pub async fn queue(env: &Env, session_id: &str) -> Result<Response> {
         });
     }
 
-    let budget = effective_budget(&database, &profile_id, at).await?;
+    // Session admission cap: how many `New` cards may enter *this* fetch.
+    // Deliberately not `mint_budget` — that counts by creation date, and a
+    // card minted `New` today would already read as "budget spent" before
+    // ever being shown, locking it out of the very session meant to
+    // introduce it (see `session_new_card_budget`).
+    let session_budget = session_new_card_budget(&database, &profile_id, at).await?;
     let settings = SchedulerSettings::default();
-    let ordered = build_queue(&candidates, at, budget, settings.max_review_batch);
+    let ordered = build_queue(&candidates, at, session_budget, settings.max_review_batch);
 
     // Card fronts come from the same join — no per-card queries; a 50-card
     // batch must stay far under D1's 50-queries-per-invocation free-tier cap
@@ -178,16 +189,45 @@ pub async fn queue(env: &Env, session_id: &str) -> Result<Response> {
     }
     Response::from_json(&serde_json::json!({
         "session_id": session_id,
-        "new_card_budget": budget,
+        "new_card_budget": session_budget,
         "queue": items,
     }))
 }
 
-/// Backlog-protected new-card budget (05 §9) from live signals.
+/// Backlog-protected new-card *mint* budget (05 §9) from live signals: how
+/// many more cards may become `New` (via creation or promotion) today.
 pub(crate) async fn effective_budget(
     database: &D1Database,
     profile_id: &str,
     at: Timestamp,
+) -> Result<u8> {
+    budget_from(database, profile_id, at, cards::COUNT_ACTIVATED_TODAY).await
+}
+
+/// New-card *session* admission budget: how many `New` cards may enter a
+/// single queue fetch today. Unlike [`effective_budget`], consumption is
+/// counted by first-grade date (`COUNT_NEW_CARDS_INTRODUCED_TODAY`), not by
+/// creation date — see that query's doc comment for why reusing the mint
+/// count here would strand same-day cards out of their own introduction.
+async fn session_new_card_budget(
+    database: &D1Database,
+    profile_id: &str,
+    at: Timestamp,
+) -> Result<u8> {
+    budget_from(
+        database,
+        profile_id,
+        at,
+        review::COUNT_NEW_CARDS_INTRODUCED_TODAY,
+    )
+    .await
+}
+
+async fn budget_from(
+    database: &D1Database,
+    profile_id: &str,
+    at: Timestamp,
+    consumed_today_query: &str,
 ) -> Result<u8> {
     #[derive(serde::Deserialize)]
     struct OneCount {
@@ -199,8 +239,8 @@ pub(crate) async fn effective_budget(
         .first::<OneCount>(None)
         .await?
         .map_or(0, |c| c.n);
-    let activated_today = database
-        .prepare(cards::COUNT_ACTIVATED_TODAY)
+    let consumed_today = database
+        .prepare(consumed_today_query)
         .bind(&[
             profile_id.into(),
             to_rfc3339(Timestamp(at.0 - at.0 % 86_400)).into(),
@@ -213,7 +253,56 @@ pub(crate) async fn effective_budget(
     // restore rules apply from day one.
     let budget = adaptation::new_card_budget(base, base, overdue, None);
     #[allow(clippy::cast_possible_truncation)] // clamped by budget ≤ 255
-    Ok(budget.saturating_sub(activated_today.min(255) as u8))
+    Ok(budget.saturating_sub(consumed_today.min(255) as u8))
+}
+
+/// Promotes up to `budget` of the profile's oldest `candidate` cards to
+/// `New`, giving each a fresh initial FSRS schedule state — the only way a
+/// card that once missed the daily mint budget can ever become reviewable
+/// again (nothing else revisits `candidate` cards; see
+/// `cards::SELECT_OLDEST_CANDIDATES`).
+async fn promote_candidates(
+    database: &D1Database,
+    profile_id: &str,
+    at: Timestamp,
+    budget: u8,
+) -> Result<()> {
+    if budget == 0 {
+        return Ok(());
+    }
+    #[derive(serde::Deserialize)]
+    struct CandidateId {
+        id: String,
+    }
+    let rows: Vec<CandidateId> = database
+        .prepare(cards::SELECT_OLDEST_CANDIDATES)
+        .bind(&[profile_id.into(), u32::from(budget).into()])?
+        .all()
+        .await?
+        .results()?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let scheduler = FsrsScheduler::new().map_err(|e| worker::Error::RustError(e.to_string()))?;
+    let at_str = to_rfc3339(at);
+    let mut statements = Vec::with_capacity(rows.len() * 2);
+    for row in rows {
+        statements.push(database.prepare(cards::UPDATE_CARD_STATUS).bind(&[
+            row.id.clone().into(),
+            enum_str(&CardStatus::New).into(),
+            worker::wasm_bindgen::JsValue::NULL,
+            at_str.clone().into(),
+        ])?);
+        let state = scheduler
+            .initial_state(review_engine::InitialReviewInput {
+                now: review_engine::Timestamp(at.0),
+            })
+            .map_err(|e| worker::Error::RustError(e.to_string()))?;
+        let state_row = review::ScheduleStateRow::from_state(&row.id, &state);
+        statements.push(bind_state(database, &state_row, &at_str)?);
+    }
+    database.batch(statements).await?;
+    Ok(())
 }
 
 /// `POST /api/v1/review-sessions/{session_id}/events` — grade submission:

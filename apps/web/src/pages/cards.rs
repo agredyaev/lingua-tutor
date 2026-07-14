@@ -154,6 +154,17 @@ pub fn CardDetailPage() -> impl IntoView {
                                                 "Retire"
                                             </button>
                                         </div>
+                                        {move || {
+                                            status_action
+                                                .value()
+                                                .get()
+                                                .and_then(|r| r.err())
+                                                .map(|e| {
+                                                    view! {
+                                                        <p class="error" role="alert">{e.to_string()}</p>
+                                                    }
+                                                })
+                                        }}
                                     </div>
                                 }
                                     .into_any()
