@@ -20,6 +20,16 @@ pub const COMPLETE_LESSON: &str = "UPDATE lessons SET
     tutor_summary = ?4, next_goal = ?5, updated_at = ?2
  WHERE id = ?1 AND status IN ('planned','active')";
 
+/// Correct a completed lesson's record fields (13-roadmap.md §3
+/// `correct_lesson_record`): summary/goal/duration only — evidence and
+/// history stay immutable. NULL argument keeps the stored value.
+pub const CORRECT_LESSON_RECORD: &str = "UPDATE lessons SET
+    tutor_summary = COALESCE(?2, tutor_summary),
+    next_goal = COALESCE(?3, next_goal),
+    duration_seconds = COALESCE(?4, duration_seconds),
+    updated_at = ?5
+ WHERE id = ?1 AND status = 'completed'";
+
 /// Lesson by ID.
 pub const SELECT_LESSON: &str = "SELECT id, learner_language_profile_id,
     language_pack_id, language_pack_version, lesson_number, status, scenario,

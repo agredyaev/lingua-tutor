@@ -194,7 +194,7 @@ pub async fn complete_lesson(mut req: Request, env: &Env, lesson_id: &str) -> Re
     complete_from_result(env, &result).await
 }
 
-fn parse_and_validate(
+pub(crate) fn parse_and_validate(
     text: &str,
 ) -> std::result::Result<(LessonResult, Vec<tutor_contract::ValidationIssue>), Result<Response>> {
     if text.len() > 256 * 1024 {
@@ -249,7 +249,7 @@ fn token_expiry_if_valid(key: &str, token: &str, body: &str) -> Option<i64> {
 }
 
 /// Shared completion path: fetch context, plan, persist atomically.
-async fn complete_from_result(env: &Env, result: &LessonResult) -> Result<Response> {
+pub(crate) async fn complete_from_result(env: &Env, result: &LessonResult) -> Result<Response> {
     let database = db(env)?;
     let Some(profile_row) = fetch_profile(&database, &result.language_profile_id).await? else {
         return error_response(404, "not_found", "unknown profile");
@@ -274,7 +274,7 @@ async fn complete_from_result(env: &Env, result: &LessonResult) -> Result<Respon
             "status": "duplicate", "client_operation_id": result.client_operation_id
         }));
     }
-    let mutation_ctx = build_mutation_context(&database, result, &context).await?;
+    let mutation_ctx = build_mutation_context(&database, &result.card_mutations, &context).await?;
     let mutations = application::plan_card_mutations(&result.card_mutations, &mutation_ctx);
     persist_plan(
         &database,
@@ -403,14 +403,14 @@ async fn build_context(
 
 /// Card-mutation planning context: existing cards for duplicate detection +
 /// target lookups, remaining activation budget (07 §4).
-async fn build_mutation_context(
+pub(crate) async fn build_mutation_context(
     database: &D1Database,
-    result: &LessonResult,
+    mutations: &[tutor_contract::CardMutation],
     ctx: &LessonCompletionContext,
 ) -> Result<application::MutationContext> {
     use crate::repositories::cards as card_repo;
     let mut existing = Vec::new();
-    for mutation in &result.card_mutations {
+    for mutation in mutations {
         if let Some(payload) = &mutation.card {
             let hash = learning_core::Card::content_hash_of(
                 payload.intent,
@@ -632,11 +632,12 @@ async fn persist_plan(
     let card_summary = push_card_mutation_statements(
         database,
         &mut statements,
-        result,
+        &result.card_mutations,
+        &result.language_pack_version,
         ctx,
         mutations,
         mutation_ctx,
-        &lesson_id,
+        Some(&lesson_id),
         &at,
     )?;
 
@@ -703,7 +704,7 @@ fn push_error_statements(
                 worker::wasm_bindgen::JsValue::NULL,
                 at.into(),
             ])?);
-            push_rechecks(database, statements, &target_id, ctx)?;
+            push_rechecks(database, statements, &target_id, ctx.now)?;
         }
         ErrorAction::Register {
             source_index,
@@ -727,20 +728,20 @@ fn push_error_statements(
                 worker::wasm_bindgen::JsValue::NULL,
                 at.into(),
             ])?);
-            push_rechecks(database, statements, &target_id.0, ctx)?;
+            push_rechecks(database, statements, &target_id.0, ctx.now)?;
         }
     }
     Ok(())
 }
 
-fn push_rechecks(
+pub(crate) fn push_rechecks(
     database: &D1Database,
     statements: &mut Vec<worker::D1PreparedStatement>,
     target_id: &str,
-    ctx: &LessonCompletionContext,
+    now_ts: Timestamp,
 ) -> Result<()> {
     for offset in RECHECK_OFFSETS_DAYS {
-        let due = Timestamp(ctx.now.0 + i64::from(offset) * 86_400);
+        let due = Timestamp(now_ts.0 + i64::from(offset) * 86_400);
         statements.push(database.prepare(records::INSERT_ERROR_RECHECK).bind(&[
             new_id("rc").into(),
             target_id.into(),
@@ -760,14 +761,15 @@ fn opt(value: &Option<String>) -> worker::wasm_bindgen::JsValue {
 /// Card mutations → statements: card rows + tags + one audit row per attempt
 /// (07 §3: applied or not). Returns per-mutation outcome for the response.
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-fn push_card_mutation_statements(
+pub(crate) fn push_card_mutation_statements(
     database: &D1Database,
     statements: &mut Vec<worker::D1PreparedStatement>,
-    result: &LessonResult,
+    mutations_src: &[tutor_contract::CardMutation],
+    pack_version: &str,
     ctx: &LessonCompletionContext,
     mutations: &[application::PlannedMutation],
     mutation_ctx: &application::MutationContext,
-    lesson_id: &str,
+    lesson_id: Option<&str>,
     at: &str,
 ) -> Result<Vec<serde_json::Value>> {
     use crate::repositories::cards as card_repo;
@@ -775,7 +777,7 @@ fn push_card_mutation_statements(
 
     let mut summary = Vec::with_capacity(mutations.len());
     for planned in mutations {
-        let source = &result.card_mutations[planned.source_index];
+        let source = &mutations_src[planned.source_index];
         let mut created_card_id: Option<String> = None;
 
         match &planned.effect {
@@ -783,7 +785,7 @@ fn push_card_mutation_statements(
                 source_index,
                 initial_status,
             }) => {
-                let payload = result.card_mutations[*source_index]
+                let payload = mutations_src[*source_index]
                     .card
                     .as_ref()
                     .ok_or_else(|| worker::Error::RustError("create without payload".into()))?;
@@ -799,7 +801,7 @@ fn push_card_mutation_statements(
                         card_id.clone().into(),
                         ctx.profile.id.0.clone().into(),
                         ctx.profile.language_pack_id.0.clone().into(),
-                        result.language_pack_version.clone().into(),
+                        pack_version.to_owned().into(),
                         enum_str(&payload.intent).into(),
                         enum_str(initial_status).into(),
                         payload.prompt.clone().into(),
@@ -818,7 +820,7 @@ fn push_card_mutation_statements(
                         worker::wasm_bindgen::JsValue::NULL,
                         opt(&payload.source_learning_item_id),
                         opt(&payload.source_error_target_id),
-                        lesson_id.into(),
+                        lesson_id.map_or(worker::wasm_bindgen::JsValue::NULL, Into::into),
                         payload.creation_reason.clone().into(),
                         payload
                             .priority_score
@@ -885,7 +887,7 @@ fn push_card_mutation_statements(
                 card_id,
                 source_index,
             }) => {
-                let payload = result.card_mutations[*source_index]
+                let payload = mutations_src[*source_index]
                     .card
                     .as_ref()
                     .ok_or_else(|| worker::Error::RustError("update without payload".into()))?;
@@ -980,7 +982,7 @@ fn push_card_mutation_statements(
                     .as_ref()
                     .and_then(|c| serde_json::to_string(c).ok())
                     .map_or(worker::wasm_bindgen::JsValue::NULL, Into::into),
-                lesson_id.into(),
+                lesson_id.map_or(worker::wasm_bindgen::JsValue::NULL, Into::into),
                 "tutor".into(),
                 planned
                     .note
@@ -989,7 +991,7 @@ fn push_card_mutation_statements(
                     .unwrap_or_else(|| "lesson result".to_owned())
                     .into(),
                 ctx.profile.language_pack_id.0.clone().into(),
-                result.language_pack_version.clone().into(),
+                pack_version.to_owned().into(),
                 match planned.verdict {
                     application::Verdict::Applied => "applied",
                     application::Verdict::Rejected => "rejected",
