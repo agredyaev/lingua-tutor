@@ -52,8 +52,8 @@ fn is_comparison_punctuation(c: char) -> bool {
                 | '》'
                 | '…'
                 | '·'
-                | '"'
-                | '"'
+                | '\u{201C}'
+                | '\u{201D}'
                 | '\u{2018}'
                 | '\u{2019}'
         )
