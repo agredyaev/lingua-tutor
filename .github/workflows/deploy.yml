@@ -15,6 +15,15 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
+      # 0: fail fast if the token is unusable from this runner (expired,
+      # IP-filtered, wrong scopes) — before the expensive Rust gates run
+      - name: verify Cloudflare token
+        run: |
+          curl -sf -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify" \
+            | grep -q '"status":"active"' \
+            || { echo "::error::CLOUDFLARE_API_TOKEN rejected — check expiry/IP filter/scopes"; exit 1; }
+
       - uses: actions/checkout@v4
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
