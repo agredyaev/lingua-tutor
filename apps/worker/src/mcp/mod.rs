@@ -3,6 +3,8 @@
 //! owns its authentication per the auth matrix in ADR-0006.
 
 pub mod oauth;
+pub mod tools;
+pub mod transport;
 
 use worker::{Env, Method, Request, Response, Result};
 
@@ -67,7 +69,7 @@ pub async fn route(path: McpPath, req: Request, env: &Env) -> Result<Response> {
         (McpPath::Authorize, Method::Get) => oauth::authorize_form(req, env).await,
         (McpPath::Authorize, Method::Post) => oauth::authorize_approve(req, env).await,
         (McpPath::Token, Method::Post) => oauth::token(req, env).await,
-        // `/mcp` transport lands in the next task.
+        (McpPath::Mcp, Method::Post) => transport::handle(req, env).await,
         (McpPath::NotMcp, _) => Response::error("not found", 404),
         _ => Response::error("method not allowed", 405),
     }
