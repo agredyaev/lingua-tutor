@@ -36,12 +36,40 @@ fn all_tables_from_04_database_exist() {
         "lesson_metrics",
         "lessons",
         "listening_attempts",
+        "oauth_clients",
+        "oauth_codes",
+        "oauth_tokens",
         "recommendations",
         "review_events",
         "review_sessions",
         "scheduler_parameter_sets",
     ];
     assert_eq!(names(&conn, "table"), expected);
+}
+
+#[test]
+fn oauth_tables_enforce_checks() {
+    let conn = migrated_connection();
+    conn.execute(
+        "INSERT INTO oauth_clients (client_id, client_name, redirect_uris_json, created_at)
+         VALUES ('c1', 'ChatGPT', '[\"https://chatgpt.com/connector_platform_oauth_redirect\"]', '2026-07-14T00:00:00Z')",
+        [],
+    )
+    .unwrap();
+    // kind restricted to access/refresh
+    let bad_kind = conn.execute(
+        "INSERT INTO oauth_tokens (token_hash, kind, client_id, scope, expires_at, created_at)
+         VALUES ('h1', 'bogus', 'c1', 'learning.read', '2026-07-14T01:00:00Z', '2026-07-14T00:00:00Z')",
+        [],
+    );
+    assert!(bad_kind.is_err(), "CHECK must reject unknown token kind");
+    // codes reference a registered client
+    let orphan = conn.execute(
+        "INSERT INTO oauth_codes (code_hash, client_id, redirect_uri, scope, code_challenge, expires_at)
+         VALUES ('ch1', 'ghost', 'https://chatgpt.com/x', 'learning.read', 'chal', '2026-07-14T01:00:00Z')",
+        [],
+    );
+    assert!(orphan.is_err(), "FK must reject unknown client");
 }
 
 #[test]

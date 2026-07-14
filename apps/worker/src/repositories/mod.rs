@@ -5,6 +5,7 @@
 
 pub mod cards;
 pub mod lessons;
+pub mod oauth;
 pub mod packs;
 pub mod profiles;
 pub mod recommendations;
