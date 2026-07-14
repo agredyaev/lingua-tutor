@@ -383,3 +383,26 @@ Commits: 7c140e1 (pack), 49fc716 (composition proof), cf6f45c (quote-escape fix)
   zh-CN registers via test composition until the owner opts in.
 
 Drift: none. M7 validated.
+
+## Iteration 12.3 — personalization (M8)
+
+Commits: be14789 (retention endpoint + stats page), 65539ee (fsrs-optimize).
+
+- `GET /api/v1/review/retention`: observed retention (grade > Again) in
+  weekly buckets from effective events; undo lineage excluded both ways in
+  SQL (`SELECT_EVENTS_FOR_RETENTION`, rusqlite-tested). `/stats` page renders
+  retention weeks + 7-day due forecast as text bars — no chart JS
+  (09-frontend.md).
+- `crates/fsrs-optimize`: native-only bin (never a worker dep — training is
+  not wasm work). Reads `export/full` JSON, rebuilds effective per-card
+  review prefixes (undo-aware, delta_t in days, first review 0), trains via
+  `fsrs::compute_parameters`, prints the parameter set + apply pointer.
+  **Data gate: refuses under 400 effective events** (05 §11 — defaults beat
+  an overfit). Verified end-to-end on a 480-event synthetic fixture → 21
+  parameters.
+- M8 skips (declined-until-needed): signed pack distribution — single-owner
+  build-time packs make signing pointless today; Anki export adapter — the
+  in-app FSRS review subsystem IS the built-in replacement (ADR-0001, owner
+  confirmed); JSON/CSV exports remain the substrate if ever needed.
+
+Drift: none. M8 delivered to its "optional, not required for core" scope.
