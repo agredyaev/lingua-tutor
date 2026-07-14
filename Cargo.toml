@@ -6,6 +6,7 @@ members = [
     "apps/web",
     "apps/worker",
     "crates/adaptation",
+    "crates/fsrs-optimize",
     "crates/application",
     "crates/language-pack-api",
     "crates/language-pack-registry",

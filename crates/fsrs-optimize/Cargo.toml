@@ -1,0 +1,20 @@
+[package]
+name = "fsrs-optimize"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Offline FSRS parameter optimizer over export/full JSON (05-review-engine.md §11; M8). Native-only — never a worker dependency."
+
+[[bin]]
+name = "fsrs-optimize"
+path = "src/main.rs"
+
+[dependencies]
+fsrs = "6.6.1"
+serde_json = { workspace = true }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

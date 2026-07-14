@@ -554,6 +554,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fsrs-optimize"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "fsrs",
+ "serde_json",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
