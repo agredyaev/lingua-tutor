@@ -2,7 +2,9 @@
 //! ADR-0006). Routed from `fetch` BEFORE the Access gate; every path here
 //! owns its authentication per the auth matrix in ADR-0006.
 
-use worker::{Env, Request, Response, Result};
+pub mod oauth;
+
+use worker::{Env, Method, Request, Response, Result};
 
 /// Exact-path classification for the MCP/OAuth surface. Anything not listed
 /// falls through to the normal Access-gated app — no prefix or substring
@@ -56,9 +58,16 @@ pub async fn route(path: McpPath, req: Request, env: &Env) -> Result<Response> {
         // Feature off: indistinguishable from a route that never existed.
         return Response::error("not found", 404);
     }
-    let _ = (path, req);
-    // Endpoints land in subsequent tasks (oauth.rs, transport.rs, tools.rs).
-    Response::error("not found", 404)
+    match (path, req.method()) {
+        (McpPath::ProtectedResourceMetadata, Method::Get) => {
+            oauth::serve_protected_resource_metadata(&req)
+        }
+        (McpPath::AuthServerMetadata, Method::Get) => oauth::serve_auth_server_metadata(&req),
+        (McpPath::Register, Method::Post) => oauth::register(req, env).await,
+        // Remaining endpoints land in subsequent tasks (authorize/token/mcp).
+        (McpPath::NotMcp, _) => Response::error("not found", 404),
+        _ => Response::error("method not allowed", 405),
+    }
 }
 
 #[cfg(test)]

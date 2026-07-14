@@ -30,11 +30,7 @@ pub enum AuthOutcome {
 ///
 /// Propagates Worker/JWKS fetch failures as 500s at the call site.
 pub async fn enforce(req: &Request, env: &Env) -> Result<AuthOutcome> {
-    let enforced = env
-        .var("AUTH_ENFORCED")
-        .map(|v| v.to_string() == "true")
-        .unwrap_or(false);
-    if !enforced {
+    if !enforced(env) {
         return Ok(AuthOutcome::Allow);
     }
     let Some(token) = req.headers().get("Cf-Access-Jwt-Assertion")? else {
@@ -52,6 +48,15 @@ pub async fn enforce(req: &Request, env: &Env) -> Result<AuthOutcome> {
         return deny(403, "not the owner");
     }
     Ok(AuthOutcome::Allow)
+}
+
+/// True when Access enforcement is on (`AUTH_ENFORCED=true`); off = local dev
+/// (ADR-0003). Shared with the MCP OAuth surface (ADR-0006).
+#[must_use]
+pub fn enforced(env: &Env) -> bool {
+    env.var("AUTH_ENFORCED")
+        .map(|v| v.to_string() == "true")
+        .unwrap_or(false)
 }
 
 fn deny(status: u16, message: &str) -> Result<AuthOutcome> {
