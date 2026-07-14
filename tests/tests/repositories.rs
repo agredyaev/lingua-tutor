@@ -627,3 +627,21 @@ fn retention_query_excludes_undo_lineage_both_ways() {
         .collect();
     assert_eq!(grades, vec![3], "only the effective event survives");
 }
+
+#[test]
+fn oauth_client_count_reflects_registrations() {
+    let conn = migrated_connection();
+    let count = || -> i64 {
+        conn.query_row(oauth::COUNT_CLIENTS, [], |r| r.get(0))
+            .unwrap()
+    };
+    assert_eq!(count(), 0);
+    seed_oauth_client(&conn);
+    assert_eq!(count(), 1);
+    conn.execute(
+        oauth::INSERT_CLIENT,
+        params!["cli-2", "second", r#"["https://chatgpt.com/cb2"]"#, NOW],
+    )
+    .unwrap();
+    assert_eq!(count(), 2);
+}

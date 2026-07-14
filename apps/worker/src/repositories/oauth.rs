@@ -16,6 +16,11 @@ pub const INSERT_CLIENT: &str = "INSERT INTO oauth_clients
 pub const SELECT_CLIENT: &str = "SELECT client_id, client_name, redirect_uris_json
  FROM oauth_clients WHERE client_id = ?1";
 
+/// Registered-client count, for the DCR cap (ADR-0006: max 2 — CI needs
+/// none here, this is only the ChatGPT connector slot plus one spare for
+/// re-registration during rotation).
+pub const COUNT_CLIENTS: &str = "SELECT COUNT(*) AS n FROM oauth_clients";
+
 /// Store an authorization code (hashed), bound to client + redirect + PKCE.
 pub const INSERT_CODE: &str = "INSERT INTO oauth_codes
     (code_hash, client_id, redirect_uri, scope, code_challenge, expires_at)

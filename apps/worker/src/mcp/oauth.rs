@@ -104,6 +104,13 @@ struct RegistrationRequest {
     redirect_uris: Vec<String>,
 }
 
+/// Registered-client cap: this is a single-owner deployment (one ChatGPT
+/// connector, no other integrations) — DCR is a public endpoint by spec, so
+/// the cap is what stops the table (and the attack surface) from growing
+/// unbounded. Two, not one: room to re-register during a connector reset
+/// without deleting the live client first.
+const MAX_CLIENTS: i64 = 2;
+
 /// `POST /oauth/register` — dynamic client registration (public client,
 /// PKCE-only; no secret issued).
 pub async fn register(mut req: Request, env: &Env) -> Result<Response> {
@@ -125,12 +132,28 @@ pub async fn register(mut req: Request, env: &Env) -> Result<Response> {
     {
         return error_response(400, "invalid_redirect_uri", "redirect host not allowed");
     }
+    let database = crate::api::db(env)?;
+    #[derive(serde::Deserialize)]
+    struct Count {
+        n: i64,
+    }
+    let registered = database
+        .prepare(repo::COUNT_CLIENTS)
+        .first::<Count>(None)
+        .await?
+        .map_or(0, |c| c.n);
+    if registered >= MAX_CLIENTS {
+        return error_response(
+            429,
+            "registration_limit_reached",
+            "client cap reached — delete an old client before registering another",
+        );
+    }
     let client_id = uuid::Uuid::new_v4().to_string();
     let client_name = body.client_name.unwrap_or_else(|| "unnamed".to_owned());
     let client_name: String = client_name.chars().take(120).collect();
     let uris_json = serde_json::to_string(&body.redirect_uris)
         .map_err(|e| worker::Error::RustError(e.to_string()))?;
-    let database = crate::api::db(env)?;
     database
         .prepare(repo::INSERT_CLIENT)
         .bind(&[

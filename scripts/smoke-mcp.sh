@@ -36,6 +36,16 @@ CLIENT_ID=$(curl -sf -X POST "$BASE/oauth/register" -H 'Content-Type: applicatio
 [ -n "$CLIENT_ID" ] || { echo "FAIL DCR" >&2; exit 1; }
 echo "3 DCR OK ($CLIENT_ID)"
 
+# 3b: registration cap (MAX_CLIENTS=2) — second registration fills the cap,
+# a third must 429.
+curl -sf -X POST "$BASE/oauth/register" -H 'Content-Type: application/json' \
+  -d '{"client_name":"smoke2","redirect_uris":["http://localhost:9998/cb"]}' >/dev/null
+CAP_CODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/oauth/register" \
+  -H 'Content-Type: application/json' \
+  -d '{"client_name":"smoke3","redirect_uris":["http://localhost:9997/cb"]}')
+[ "$CAP_CODE" = "429" ] || { echo "FAIL: registration cap not enforced ($CAP_CODE)" >&2; exit 1; }
+echo "3b registration cap (429 at 3rd client) OK"
+
 # 4: PKCE pair + authorize (dev: unenforced auth = owner) → code
 VERIFIER="dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
 CHALLENGE="E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
