@@ -4,6 +4,7 @@
 pub mod api;
 pub mod auth;
 pub mod handlers;
+pub mod mcp;
 pub mod repositories;
 
 use api::error_response;
@@ -41,6 +42,13 @@ mod tests {
 /// Routes every incoming request through the `/api/v1` router.
 #[event(fetch)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
+    // MCP/OAuth surface owns its own auth per path (ADR-0006 auth matrix);
+    // everything else goes through the Access gate below. `/oauth/authorize`
+    // is still Access-protected at the edge and re-verifies inside `mcp`.
+    let mcp_path = mcp::classify(&req.path());
+    if mcp_path != mcp::McpPath::NotMcp {
+        return mcp::route(mcp_path, req, &env).await;
+    }
     // Access gate first (10-security.md): enforced in production only.
     match auth::enforce(&req, &env).await? {
         auth::AuthOutcome::Allow => {}
