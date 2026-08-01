@@ -4,7 +4,7 @@ name: backup
 # the private repo (access-controlled), retention 90 days. No R2/S3 needed.
 on:
   schedule:
-    - cron: "30 3 * * *"
+    - cron: "0 4 * * 1" 
   workflow_dispatch:
 
 jobs:
