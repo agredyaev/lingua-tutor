@@ -1,8 +1,9 @@
-// Playwright e2e: native localhost server, fresh SQLite per run.
+// Playwright e2e: native localhost server, fresh directory-local SQLite per run.
 import { defineConfig } from "@playwright/test";
 
 const port = Number(process.env.E2E_PORT ?? 18788);
-const db = `target/e2e-${process.pid}/lingua.sqlite3`;
+const root = process.cwd();
+const workspace = `${root}/target/e2e-${process.pid}`;
 
 export default defineConfig({
   testDir: "tests/e2e",
@@ -16,8 +17,8 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: `cargo run -p lingua-tutor-local -- serve --db ${db} --port ${port}`,
-    url: `http://127.0.0.1:${port}/api/v1/health`,
+    command: `mkdir -p "${workspace}" && cd "${workspace}" && "${root}/target/debug/lingua-tutor" run --no-tunnel --port ${port}`,
+    url: `http://127.0.0.1:${port}/`,
     reuseExistingServer: false,
     timeout: 600_000,
   },

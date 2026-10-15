@@ -42,9 +42,22 @@ test("create profile, import lesson, review the card", async ({ page }) => {
   await page.getByRole("button", { name: /Start Spanish/ }).click();
   await expect(page.getByRole("button", { name: /es-ES/ })).toBeVisible();
 
-  // Profile id from the API (UI stores it in context).
-  const profiles = await page.request.get("/api/v1/language-profiles");
-  const profileId = (await profiles.json())[0].id as string;
+  // Profile id through the same JSON-RPC transport used by the PWA.
+  const profilesResponse = await page.request.post("/rpc", {
+    data: {
+      jsonrpc: "2.0",
+      id: "e2e-list-profiles",
+      method: "list_language_profiles",
+      params: {},
+    },
+  });
+  expect(profilesResponse.ok()).toBeTruthy();
+  const profilesPayload = (await profilesResponse.json()) as {
+    result: Array<{ id: string }>;
+    error?: unknown;
+  };
+  expect(profilesPayload.error).toBeUndefined();
+  const profileId = profilesPayload.result[0].id;
 
   // Import: paste → validate → preview → apply
   await page.goto("/import");
