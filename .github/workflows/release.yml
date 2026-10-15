@@ -1,0 +1,183 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: [e2e]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Main commit to release; defaults to current main
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch'
+          || (github.event.workflow_run.conclusion == 'success'
+              && github.event.workflow_run.head_branch == 'main') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Resolve release commit and version
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+
+          main_sha="$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)"
+          sha="${WORKFLOW_SHA:-${INPUT_SHA:-$main_sha}}"
+
+          if [[ "$sha" != "$main_sha" ]]; then
+            echo "Current main moved from $sha to $main_sha; skipping stale release candidate."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          cargo_toml="$(gh api "repos/$GH_REPO/contents/apps/local/Cargo.toml?ref=$sha" --jq .content | tr -d '\n' | base64 --decode)"
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' <<< "$cargo_toml" | head -n1)"
+          test -n "$version"
+          tag="v$version"
+
+          if gh api "repos/$GH_REPO/git/ref/tags/$tag" >/dev/null 2>&1; then
+            tag_sha="$(gh api "repos/$GH_REPO/git/ref/tags/$tag" --jq .object.sha)"
+            if [[ "$tag_sha" != "$sha" ]]; then
+              echo "::error::Tag $tag already exists at $tag_sha, expected $sha."
+              exit 1
+            fi
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve successful CI run
+        if: steps.release.outputs.skip != 'true'
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ steps.release.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          run_id=""
+          for _ in {1..90}; do
+            runs="$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=20")"
+            run_id="$(jq -r '
+              .workflow_runs
+              | sort_by(.created_at)
+              | reverse
+              | .[0].id // empty
+            ' <<< "$runs")"
+
+            if [[ -n "$run_id" ]]; then
+              status="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .status' <<< "$runs")"
+              conclusion="$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .conclusion // empty' <<< "$runs")"
+              if [[ "$status" == "completed" ]]; then
+                if [[ "$conclusion" != "success" ]]; then
+                  echo "::error::CI run $run_id completed with $conclusion."
+                  exit 1
+                fi
+                break
+              fi
+            fi
+            sleep 10
+          done
+
+          if [[ -z "$run_id" ]]; then
+            echo "::error::No CI run found for $SHA."
+            exit 1
+          fi
+
+          final="$(gh api "repos/$GH_REPO/actions/runs/$run_id")"
+          if [[ "$(jq -r .status <<< "$final")" != "completed" || "$(jq -r .conclusion <<< "$final")" != "success" ]]; then
+            echo "::error::CI did not complete successfully for $SHA."
+            exit 1
+          fi
+
+          artifact="$(gh api "repos/$GH_REPO/actions/runs/$run_id/artifacts" --jq '.artifacts[] | select(.name == "lingua-tutor-release-assets" and .expired == false) | .id' | head -n1)"
+          if [[ -z "$artifact" ]]; then
+            echo "::error::CI run $run_id has no lingua-tutor-release-assets artifact."
+            exit 1
+          fi
+
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download tested release assets
+        if: steps.release.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_ID: ${{ steps.ci.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh run download "$RUN_ID" --repo "$GH_REPO" --name lingua-tutor-release-assets --dir dist
+
+      - name: Verify and publish release
+        if: steps.release.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ steps.release.outputs.sha }}
+          VERSION: ${{ steps.release.outputs.version }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          expected=(
+            "lingua-tutor-v$VERSION-linux-x64.zip"
+            "lingua-tutor-v$VERSION-linux-aarch64.zip"
+            "lingua-tutor-v$VERSION-darwin-arm64.zip"
+            SHA256SUMS
+          )
+
+          expected_list="$(printf '%s\n' "${expected[@]}" | sort)"
+          actual_list="$(find dist -maxdepth 1 -type f -exec basename {} \; | sort)"
+          if [[ "$actual_list" != "$expected_list" ]]; then
+            echo "::error::Unexpected release artifact set."
+            printf 'Expected:\n%s\nActual:\n%s\n' "$expected_list" "$actual_list"
+            exit 1
+          fi
+
+          (cd dist && sha256sum -c SHA256SUMS)
+
+          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            published="$(gh release view "$TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' | sort)"
+            if [[ "$published" != "$expected_list" ]]; then
+              echo "::error::Existing release $TAG has an unexpected asset set."
+              exit 1
+            fi
+          else
+            gh release create "$TAG" \
+              --repo "$GH_REPO" \
+              --target "$SHA" \
+              --title "$TAG" \
+              --generate-notes \
+              dist/lingua-tutor-*.zip \
+              dist/SHA256SUMS
+          fi
+
+          tag_sha="$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .object.sha)"
+          test "$tag_sha" = "$SHA"
+
+          published="$(gh release view "$TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' | sort)"
+          test "$published" = "$expected_list"
+
+          latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)"
+          test "$latest" = "$TAG"
