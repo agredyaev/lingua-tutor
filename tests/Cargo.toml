@@ -17,9 +17,9 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 review-engine = { workspace = true }
 adaptation = { workspace = true }
 learning-core = { workspace = true }
-worker-api = { path = "../apps/worker" }
+lingua-tutor-local = { path = "../apps/local" }
 language-pack-es-es = { workspace = true }
-language-pack-zh-cn = { workspace = true }
+synthetic-test-pack = { workspace = true }
 language-pack-registry = { workspace = true }
 language-pack-api = { workspace = true }
 chrono = { version = "0.4", default-features = false, features = ["std"] }

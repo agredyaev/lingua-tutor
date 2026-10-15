@@ -15,7 +15,11 @@ pub fn LessonsPage() -> impl IntoView {
             let Some(id) = id else {
                 return Ok::<Vec<LessonDto>, ApiError>(Vec::new());
             };
-            api_client::get::<Vec<LessonDto>>(&format!("/lessons?language_profile_id={id}")).await
+            api_client::call::<_, Vec<LessonDto>>(
+                "list_lessons",
+                &serde_json::json!({ "language_profile_id": id }),
+            )
+            .await
         }
     });
     view! {

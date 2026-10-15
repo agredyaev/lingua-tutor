@@ -6,8 +6,8 @@
     <title>Lingua Tutor</title>
     
 <script type="module">
-import init, * as bindings from '/web-37bd813d340bd5b1.js';
-const wasm = await init({ module_or_path: '/web-37bd813d340bd5b1_bg.wasm' });
+import init, * as bindings from '/web-6d7085299ad2d3d1.js';
+const wasm = await init({ module_or_path: '/web-6d7085299ad2d3d1_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -31,6 +31,6 @@ dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
         window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js"));
       }
     </script>
-  <link rel="modulepreload" href="/web-37bd813d340bd5b1.js" crossorigin="anonymous" integrity="sha384-bVnT1U5/5pRQogsV4JenhLg5BsmDtcW2H59+kylyo/2w8iOlK2Wkz7KSVrdMDyvy"><link rel="preload" href="/web-37bd813d340bd5b1_bg.wasm" crossorigin="anonymous" integrity="sha384-XgQYimN91NUD39nqwO42IlDjnsDDcr1lQyi8LrPqH6i24dN6C5ErQftbM8a8fpuy" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="/web-6d7085299ad2d3d1.js" crossorigin="anonymous" integrity="sha384-csqdV35Vxw3rpBCAqLNYaPlPJQUaUpynrIHeqi8B+3qWRX7J0azux9TLTap63qW9"><link rel="preload" href="/web-6d7085299ad2d3d1_bg.wasm" crossorigin="anonymous" integrity="sha384-vrjEl7GRXo29iwZfdD4+QxcikEQIXBCwPBh7royauny9s0QwWASyMBLEBqx4t88v" as="fetch" type="application/wasm"></head>
   <body></body>
 </html>

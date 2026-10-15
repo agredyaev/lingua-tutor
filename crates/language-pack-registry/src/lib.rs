@@ -1,6 +1,6 @@
 //! Build-time pack registration: ID lookup + contract-version compatibility
 //! (06-language-packs.md §4). Owns no pack behavior. The production pack list
-//! lives in the composition root (`apps/worker`), keeping this crate free of
+//! lives in the composition root (`apps/local`), keeping this crate free of
 //! concrete-pack dependencies (02-workspace.md §3).
 
 use language_pack_api::{CONTRACT_VERSION, LanguagePack, LanguagePackManifest};

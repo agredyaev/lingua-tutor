@@ -1,100 +1,71 @@
-//! One typed client over `shared-schema` DTOs (09-frontend.md §1).
-//! No handwritten JSON in components; every failure is a typed [`ApiError`].
+//! One browser transport: JSON-RPC 2.0 over POST /rpc.
+//! Components name application operations instead of encoding them as URL paths.
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use shared_schema::{ApiError, ApiErrorBody};
 
-const BASE: &str = "/api/v1";
-
-async fn decode<T: DeserializeOwned>(response: gloo_net::http::Response) -> Result<T, ApiError> {
-    let status = response.status();
-    let text = response
-        .text()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?;
-    if (200..300).contains(&status) {
-        serde_json::from_str(&text).map_err(|e| ApiError::Decode(e.to_string()))
-    } else {
-        let (code, message) = serde_json::from_str::<ApiErrorBody>(&text).map_or_else(
-            |_| ("http_error".to_owned(), text.clone()),
-            |body| (body.error.code, body.error.message),
-        );
-        Err(ApiError::Api {
-            status,
-            code,
-            message,
-        })
-    }
-}
-
-/// GET returning a DTO.
-///
-/// # Errors
-///
-/// [`ApiError`] on network failure, API error body, or decode mismatch.
-pub async fn get<T: DeserializeOwned>(path: &str) -> Result<T, ApiError> {
-    let response = gloo_net::http::Request::get(&format!("{BASE}{path}"))
-        .send()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?;
-    decode(response).await
-}
-
-/// GET returning the raw body text (tutor-context copy flow).
-///
-/// # Errors
-///
-/// [`ApiError`] on network failure or non-2xx status.
-pub async fn get_text(path: &str) -> Result<String, ApiError> {
-    let response = gloo_net::http::Request::get(&format!("{BASE}{path}"))
-        .send()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?;
-    let status = response.status();
-    let text = response
-        .text()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?;
-    if (200..300).contains(&status) {
-        Ok(text)
-    } else {
-        Err(ApiError::Api {
-            status,
-            code: "http_error".to_owned(),
-            message: text,
-        })
-    }
-}
-
-/// POST with a JSON body, returning a DTO.
-///
-/// # Errors
-///
-/// [`ApiError`] on network failure, API error body, or decode mismatch.
-pub async fn post<B: Serialize, T: DeserializeOwned>(path: &str, body: &B) -> Result<T, ApiError> {
-    let request = gloo_net::http::Request::post(&format!("{BASE}{path}"))
-        .json(body)
-        .map_err(|e| ApiError::Network(e.to_string()))?;
+pub async fn call<P: Serialize, T: DeserializeOwned>(
+    method: &str,
+    params: &P,
+) -> Result<T, ApiError> {
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params,
+    });
+    let request = gloo_net::http::Request::post("/rpc")
+        .json(&payload)
+        .map_err(|error| ApiError::Network(error.to_string()))?;
     let response = request
         .send()
         .await
-        .map_err(|e| ApiError::Network(e.to_string()))?;
-    decode(response).await
-}
-
-/// POST with a raw text body (pasted lesson result), returning a DTO.
-///
-/// # Errors
-///
-/// [`ApiError`] on network failure, API error body, or decode mismatch.
-pub async fn post_text<T: DeserializeOwned>(path: &str, body: String) -> Result<T, ApiError> {
-    let response = gloo_net::http::Request::post(&format!("{BASE}{path}"))
-        .header("content-type", "application/json")
-        .body(body)
-        .map_err(|e| ApiError::Network(e.to_string()))?
-        .send()
+        .map_err(|error| ApiError::Network(error.to_string()))?;
+    let text = response
+        .text()
         .await
-        .map_err(|e| ApiError::Network(e.to_string()))?;
-    decode(response).await
+        .map_err(|error| ApiError::Network(error.to_string()))?;
+    let envelope: serde_json::Value =
+        serde_json::from_str(&text).map_err(|error| ApiError::Decode(error.to_string()))?;
+
+    if let Some(error) = envelope.get("error") {
+        let status = error
+            .pointer("/data/status")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .unwrap_or(500);
+        let body = error.pointer("/data/body");
+        let detail =
+            body.and_then(|value| serde_json::from_value::<ApiErrorBody>(value.clone()).ok());
+        let code = detail
+            .as_ref()
+            .map(|body| body.error.code.clone())
+            .unwrap_or_else(|| {
+                error
+                    .get("code")
+                    .map(serde_json::Value::to_string)
+                    .unwrap_or_else(|| "rpc_error".to_owned())
+            });
+        let message = detail
+            .map(|body| body.error.message)
+            .or_else(|| {
+                error
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| "RPC operation failed".to_owned());
+        return Err(ApiError::Api {
+            status,
+            code,
+            message,
+        });
+    }
+
+    let result = envelope
+        .get("result")
+        .cloned()
+        .ok_or_else(|| ApiError::Decode("JSON-RPC response missing result".to_owned()))?;
+    serde_json::from_value(result).map_err(|error| ApiError::Decode(error.to_string()))
 }

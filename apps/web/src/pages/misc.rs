@@ -15,9 +15,12 @@ pub fn LearnPage() -> impl IntoView {
             let Some(id) = id else {
                 return Ok::<Option<serde_json::Value>, ApiError>(None);
             };
-            api_client::get::<serde_json::Value>(&format!("/next-lesson?language_profile_id={id}"))
-                .await
-                .map(Some)
+            api_client::call::<_, serde_json::Value>(
+                "get_next_lesson",
+                &serde_json::json!({ "language_profile_id": id }),
+            )
+            .await
+            .map(Some)
         }
     });
     view! {
@@ -71,10 +74,9 @@ pub fn SettingsPage() -> impl IntoView {
 /// `/system`: health check.
 #[component]
 pub fn SystemPage() -> impl IntoView {
-    let health =
-        LocalResource::new(
-            move || async move { api_client::get::<HealthResponse>("/health").await },
-        );
+    let health = LocalResource::new(move || async move {
+        api_client::call::<_, HealthResponse>("health", &serde_json::json!({})).await
+    });
     view! {
         <Page>
             <h1>"System"</h1>

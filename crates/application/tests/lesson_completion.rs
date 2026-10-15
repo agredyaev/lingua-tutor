@@ -44,7 +44,8 @@ fn base_result_json() -> serde_json::Value {
         { "item_type": "phrase", "target_text": "Buenos días" }
       ],
       "evidence": [
-        { "learning_item_id": "li-known", "kind": "spontaneous_production", "success": true }
+        { "learning_item_id": "li-known", "kind": "spontaneous_production",
+          "success": true, "assistance_level": 0, "context": "pharmacy:request" }
       ],
       "error_occurrences": [
         { "error_target_id": "et-1", "core_category": "grammar",
@@ -99,7 +100,10 @@ fn spontaneous(item: &str, lesson: &str) -> LearningItemEvidence {
         kind: EvidenceKind::SpontaneousProduction,
         success: true,
         detail: None,
-        pack_metadata: None,
+        pack_metadata: Some(serde_json::json!({
+            "context_key": "baseline",
+            "assistance_level": 0
+        })),
         recorded_at: NOW,
     }
 }
@@ -290,5 +294,84 @@ fn referenced_lesson_must_exist() {
     assert_eq!(
         plan_lesson_completion(&result, &ctx()),
         Err(PlanError::UnknownLesson("les-ghost".to_owned()))
+    );
+}
+
+#[test]
+fn same_lesson_evidence_resolves_new_item_key() {
+    let mut json = base_result_json();
+    json["new_learning_items"][0]["client_item_key"] = serde_json::json!("new-cough");
+    json["evidence"] = serde_json::json!([
+        {
+            "client_item_key": "new-cough",
+            "kind": "spontaneous_production",
+            "success": true,
+            "context": "pharmacy:ask-for-remedy"
+        }
+    ]);
+    json["mastery_changes"] = serde_json::json!([]);
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    let plan = plan_lesson_completion(&result, &ctx()).unwrap();
+    assert_eq!(plan.evidence.len(), 1);
+    assert_eq!(plan.evidence[0].item, ItemRef::New(0));
+}
+
+#[test]
+fn current_lesson_evidence_can_complete_context_mastery() {
+    let mut context = ctx();
+    context.evidence_for_mastery = vec![(
+        LearningItemId("li-known".to_owned()),
+        vec![
+            LearningItemEvidence {
+                id: EvidenceId("ev-old-1".to_owned()),
+                learning_item_id: LearningItemId("li-known".to_owned()),
+                lesson_id: Some(LessonId("l-old-1".to_owned())),
+                kind: EvidenceKind::Transfer,
+                success: true,
+                detail: None,
+                pack_metadata: Some(serde_json::json!({
+                    "context_key": "bus:route1",
+                    "context_family": "transport.ask_stop",
+                    "assistance_level": 0
+                })),
+                recorded_at: NOW,
+            },
+            LearningItemEvidence {
+                id: EvidenceId("ev-old-2".to_owned()),
+                learning_item_id: LearningItemId("li-known".to_owned()),
+                lesson_id: Some(LessonId("l-old-2".to_owned())),
+                kind: EvidenceKind::Transfer,
+                success: true,
+                detail: None,
+                pack_metadata: Some(serde_json::json!({
+                    "context_key": "bakery:item",
+                    "context_family": "commerce.request_item",
+                    "assistance_level": 0
+                })),
+                recorded_at: NOW,
+            },
+        ],
+    )];
+    let mut json = base_result_json();
+    json["evidence"] = serde_json::json!([
+        {
+            "learning_item_id": "li-known",
+            "kind": "transfer",
+            "success": true,
+            "context": "pharmacy:help",
+            "context_family": "service.ask_help",
+            "assistance_level": 0,
+            "probe_phase": "transfer"
+        }
+    ]);
+    json["mastery_changes"][0]["new_status"] = serde_json::json!("mastered");
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    let plan = plan_lesson_completion(&result, &context).unwrap();
+    assert_eq!(
+        plan.item_status_changes,
+        vec![(
+            LearningItemId("li-known".to_owned()),
+            LearningItemStatus::Mastered
+        )]
     );
 }

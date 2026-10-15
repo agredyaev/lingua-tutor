@@ -31,7 +31,7 @@ Core CI runs the suite against `synthetic-test-pack` — proves core independenc
 
 ## 6. Migrations
 
-Apply all migrations to scratch SQLite/D1 in CI; schema matches [04-database.md](04-database.md); foreign keys + unique constraints verified.
+Apply all migrations to scratch SQLite in CI; schema matches [04-database.md](04-database.md); foreign keys + unique constraints verified.
 
 ## 7. End-to-end (Playwright)
 
@@ -54,10 +54,9 @@ Lesson-result import creates cards; MCP-equivalent lesson completion (service-la
 cargo fmt --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace
-trunk build --release          # apps/web, wasm-release profile
-# worker build (per workers-rs toolchain)
-terraform fmt -check
-terraform validate
+cd apps/web && trunk build --release --cargo-profile wasm-release
+cd ../..
+cargo build -p lingua-tutor-local --bin lingua-tutor --release
 ```
 
 ## 10. Architecture acceptance checks

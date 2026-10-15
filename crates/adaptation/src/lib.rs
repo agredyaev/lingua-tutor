@@ -2,12 +2,30 @@
 //! interpreted rule language): backlog protection + new-card budget
 //! throttling (05-review-engine.md §9) and the 07 §7 recommendation table.
 
+mod calibration;
+mod capability;
+mod focus;
+mod planner;
+mod queue;
 mod rules;
+mod tasks;
 
+pub use calibration::{CalibrationSnapshot, InterventionEffect, summarize_intervention_effects};
+pub use capability::{
+    CapabilityEstimate, CapabilityKind, EvidenceObservation, ItemCapabilityState,
+    project_item_capabilities,
+};
+pub use focus::{TutorFocusThread, build_tutor_focus_threads};
+pub use planner::{
+    AdaptiveLessonPlan, LessonPlannerInput, PlanPriority, PlannerPreferences,
+    RecentLearningSignals, plan_next_lesson,
+};
+pub use queue::{TutorTask, build_tutor_task_queue};
 pub use rules::{
     CardSignals, GRADE_WINDOW, Recommendation, error_escalation, evaluate_card_rules,
     recheck_failed,
 };
+pub use tasks::{TaskCandidate, score_task_candidates};
 
 /// One study day's signals, most recent first.
 #[derive(Debug, Clone, Copy, PartialEq)]

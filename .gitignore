@@ -1,11 +1,11 @@
 /target
-/dist
+/apps/web/dist
+/fuzz/target
 node_modules/
-.wrangler/
-package-lock.json.bak
 *.wasm.map
 /test-results
 /playwright-report
-infra/terraform/.terraform/
-infra/terraform/*.tfstate*
-infra/terraform/tf.plan
+/.local-preview/
+.DS_Store
+/.local-dev/
+**/.lingua-tutor/

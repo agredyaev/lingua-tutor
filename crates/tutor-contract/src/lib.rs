@@ -144,6 +144,9 @@ pub struct MetricsBlock {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NewLearningItem {
+    /// Lesson-local key used by evidence/listening entries before a persistent ID exists.
+    #[serde(default)]
+    pub client_item_key: Option<String>,
     /// Item kind.
     pub item_type: LearningItemType,
     /// Target-language text.
@@ -156,16 +159,49 @@ pub struct NewLearningItem {
     pub prompt_language: Option<String>,
 }
 
+/// Phase of a tutor probe. It describes when/why the evidence was produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProbePhase {
+    /// Initial probe before teaching or hinting.
+    Diagnostic,
+    /// Guided practice during initial acquisition or repair.
+    Practice,
+    /// Retrieval after an intervening task or delay.
+    DelayedRetrieval,
+    /// Use in a meaningfully different communicative context.
+    Transfer,
+}
+
 /// One evidence observation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceEntry {
-    /// Existing learning item.
-    pub learning_item_id: String,
+    /// Existing learning item. Exactly one of this or client_item_key is required.
+    #[serde(default)]
+    pub learning_item_id: Option<String>,
+    /// Lesson-local key of a new_learning_items entry.
+    #[serde(default)]
+    pub client_item_key: Option<String>,
+    /// Concrete communicative context. Defaults to the lesson scenario when omitted.
+    #[serde(default)]
+    pub context: Option<String>,
+    /// Stable semantic transfer family, e.g. "transport.ask_stop".
+    #[serde(default)]
+    pub context_family: Option<String>,
     /// Evidence kind.
     pub kind: EvidenceKind,
     /// Outcome.
     pub success: bool,
+    /// Assistance level: 0 = unaided, 1 = generic cue, 2 = targeted cue, 3 = model/reveal.
+    #[serde(default)]
+    pub assistance_level: Option<u8>,
+    /// Observed response latency in milliseconds.
+    #[serde(default)]
+    pub response_millis: Option<u32>,
+    /// Where this probe occurred in the learning cycle.
+    #[serde(default)]
+    pub probe_phase: Option<ProbePhase>,
     /// Free-form detail.
     #[serde(default)]
     pub detail: Option<String>,
@@ -196,9 +232,12 @@ pub struct ErrorOccurrenceEntry {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ListeningAttemptEntry {
-    /// Item listened to, when known.
+    /// Existing item listened to, when known.
     #[serde(default)]
     pub learning_item_id: Option<String>,
+    /// Lesson-local key of a newly introduced item.
+    #[serde(default)]
+    pub client_item_key: Option<String>,
     /// Outcome.
     pub success: bool,
     /// Reference into lesson material.

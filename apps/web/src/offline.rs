@@ -133,8 +133,8 @@ pub async fn replay() -> ReplayReport {
     let mut report = ReplayReport::default();
     let mut queue = pending_events();
     while let Some(event) = queue.first().cloned() {
-        let path = format!("/review-sessions/{}/events", event.session_id);
         let body = serde_json::json!({
+            "session_id": event.session_id,
             "client_operation_id": event.client_operation_id,
             "card_id": event.card_id,
             "grade": event.grade,
@@ -145,7 +145,7 @@ pub async fn replay() -> ReplayReport {
             "prior_state_hash": event.prior_state_hash,
             "source": "offline",
         });
-        match crate::api_client::post::<_, serde_json::Value>(&path, &body).await {
+        match crate::api_client::call::<_, serde_json::Value>("review_card", &body).await {
             Ok(_) => {
                 queue.remove(0);
                 report.synced += 1;

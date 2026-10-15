@@ -18,9 +18,9 @@ pub fn ImportPage() -> impl IntoView {
         async move {
             error.set(None);
             applied.set(None);
-            match api_client::post_text::<ValidateResponseDto>(
-                "/import/lesson-result/validate",
-                body,
+            match api_client::call::<_, ValidateResponseDto>(
+                "validate_lesson_result",
+                &serde_json::json!({ "text": body }),
             )
             .await
             {
@@ -41,9 +41,9 @@ pub fn ImportPage() -> impl IntoView {
             .unwrap_or_default();
         async move {
             error.set(None);
-            match api_client::post_text::<ApplyResponseDto>(
-                &format!("/import/lesson-result/apply?validation_token={token}"),
-                body,
+            match api_client::call::<_, ApplyResponseDto>(
+                "apply_lesson_result",
+                &serde_json::json!({ "text": body, "validation_token": token }),
             )
             .await
             {
@@ -168,10 +168,17 @@ pub fn ExportPage() -> impl IntoView {
         let id = active.id();
         async move {
             let Some(id) = id else { return };
-            match api_client::get_text(&format!("/export/tutor-context?language_profile_id={id}"))
-                .await
+            match api_client::call::<_, serde_json::Value>(
+                "get_tutor_context",
+                &serde_json::json!({ "language_profile_id": id }),
+            )
+            .await
             {
-                Ok(text) => context_text.set(Some(text)),
+                Ok(value) => {
+                    let text =
+                        serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
+                    context_text.set(Some(text));
+                }
                 Err(e) => context_text.set(Some(format!("error: {e}"))),
             }
         }

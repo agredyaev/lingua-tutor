@@ -50,8 +50,8 @@ pub fn ReviewPage() -> impl IntoView {
                 offline_mode.set(true);
                 return Ok(Some(cached));
             }
-            let created: serde_json::Value = match api_client::post(
-                "/review-sessions",
+            let created: serde_json::Value = match api_client::call(
+                "create_review_session",
                 &serde_json::json!({ "language_profile_id": id }),
             )
             .await
@@ -69,8 +69,11 @@ pub fn ReviewPage() -> impl IntoView {
                 Err(e) => return Err(e),
             };
             let session_id = created["id"].as_str().unwrap_or_default().to_owned();
-            let queue: QueueDto =
-                api_client::get(&format!("/review-sessions/{session_id}/queue")).await?;
+            let queue: QueueDto = api_client::call(
+                "get_review_queue",
+                &serde_json::json!({ "session_id": session_id }),
+            )
+            .await?;
             crate::offline::cache_queue(&queue);
             Ok::<Option<QueueDto>, ApiError>(Some(queue))
         }
@@ -108,12 +111,9 @@ pub fn ReviewPage() -> impl IntoView {
                 "answer_revealed": true,
                 "prior_state_hash": prior_hash.clone().unwrap_or_default(),
             });
-            match api_client::post::<_, EventResultDto>(
-                &format!("/review-sessions/{session_id}/events"),
-                &body,
-            )
-            .await
-            {
+            let mut params = body;
+            params["session_id"] = serde_json::Value::String(session_id.clone());
+            match api_client::call::<_, EventResultDto>("review_card", &params).await {
                 Ok(result) => {
                     position.update(|p| *p += 1);
                     revealed.set(false);
@@ -154,8 +154,11 @@ pub fn ReviewPage() -> impl IntoView {
     let undo: UndoAction = Action::new_local(move |(): &()| {
         let session_id = session_id.get_untracked();
         async move {
-            let result: serde_json::Value =
-                api_client::post(&format!("/review-sessions/{session_id}/undo-last"), &()).await?;
+            let result: serde_json::Value = api_client::call(
+                "undo_review",
+                &serde_json::json!({ "session_id": session_id }),
+            )
+            .await?;
             position.update(|p| *p = p.saturating_sub(1));
             revealed.set(false);
             Ok(result)
@@ -345,9 +348,12 @@ pub fn SummaryPage() -> impl IntoView {
         let id = active.id();
         async move {
             let Some(id) = id else { return Ok(None) };
-            api_client::get::<SummaryDto>(&format!("/review/summary?language_profile_id={id}"))
-                .await
-                .map(Some)
+            api_client::call::<_, SummaryDto>(
+                "get_review_summary",
+                &serde_json::json!({ "language_profile_id": id }),
+            )
+            .await
+            .map(Some)
         }
     });
     view! {
@@ -396,13 +402,15 @@ pub fn StatsPage() -> impl IntoView {
         let id = active.id();
         async move {
             let Some(id) = id else { return Ok(None) };
-            let retention = api_client::get::<serde_json::Value>(&format!(
-                "/review/retention?language_profile_id={id}&days=28"
-            ))
+            let retention = api_client::call::<_, serde_json::Value>(
+                "get_review_retention",
+                &serde_json::json!({ "language_profile_id": id, "days": 28 }),
+            )
             .await?;
-            let forecast = api_client::get::<serde_json::Value>(&format!(
-                "/review/forecast?language_profile_id={id}&days=7"
-            ))
+            let forecast = api_client::call::<_, serde_json::Value>(
+                "get_review_forecast",
+                &serde_json::json!({ "language_profile_id": id, "days": 7 }),
+            )
             .await?;
             Ok(Some((retention, forecast)))
         }

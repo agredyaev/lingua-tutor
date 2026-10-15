@@ -1,0 +1,39 @@
+[package]
+name = "lingua-tutor-local"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+autobins = false
+
+[[bin]]
+name = "lingua-tutor"
+path = "src/main.rs"
+
+[dependencies]
+adaptation = { workspace = true }
+application = { workspace = true }
+language-pack-api = { workspace = true }
+language-pack-es-es = { workspace = true }
+language-pack-registry = { workspace = true }
+learning-core = { workspace = true }
+review-engine = { workspace = true }
+shared-schema = { workspace = true }
+tutor-contract = { workspace = true }
+axum = { version = "0.8", features = ["macros"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+hex = "0.4"
+hmac = "0.12"
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+serde = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
+semver = "1"
+sha2 = "0.10"
+thiserror = { workspace = true }
+tokio = { version = "1", features = ["rt", "macros", "net", "io-std", "io-util", "sync", "time"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[lints]
+workspace = true

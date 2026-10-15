@@ -34,7 +34,11 @@ impl ActiveProfile {
 #[component]
 pub fn App() -> impl IntoView {
     let profiles = LocalResource::new(move || async move {
-        crate::api_client::get::<Vec<LanguageProfileDto>>("/language-profiles").await
+        crate::api_client::call::<_, Vec<LanguageProfileDto>>(
+            "list_language_profiles",
+            &serde_json::json!({}),
+        )
+        .await
     });
     let default_from_server = Signal::derive(move || {
         profiles.get().and_then(|result| {

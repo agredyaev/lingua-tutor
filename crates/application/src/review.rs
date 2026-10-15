@@ -8,7 +8,7 @@ use review_engine::Grade;
 /// priority 2). Design decision: 2 days past due.
 pub const SIGNIFICANT_OVERDUE_SECONDS: i64 = 2 * 86_400;
 
-/// Queue candidate assembled by the worker from `cards` + `card_schedule_state`.
+/// Queue candidate assembled by the local runtime from `cards` + `card_schedule_state`.
 #[derive(Debug, Clone)]
 pub struct QueueCandidate {
     /// Card ID.

@@ -2,7 +2,7 @@
 //! deterministic, unit-tested. Rules emit recommendations — they never
 //! mutate content (05-review-engine.md §10 actions are proposals).
 
-/// Bounded per-card signal window assembled by the worker (newest first).
+/// Bounded per-card signal window assembled by the local runtime (newest first).
 #[derive(Debug, Clone, Default)]
 pub struct CardSignals {
     /// Card under evaluation.
@@ -38,7 +38,7 @@ pub struct Recommendation {
     pub detail: String,
 }
 
-/// Window size the worker must respect when building [`CardSignals`].
+/// Window size the local runtime must respect when building [`CardSignals`].
 pub const GRADE_WINDOW: usize = 10;
 /// `Again` count in the window that marks a redesign candidate (05 §10).
 pub const REDESIGN_AGAIN_THRESHOLD: usize = 3;

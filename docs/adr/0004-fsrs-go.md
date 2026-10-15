@@ -24,4 +24,3 @@ GO: pin `fsrs = "6.6.1"`, FSRS-6 `DEFAULT_PARAMETERS`, adapter `FsrsScheduler` b
 
 - Golden vectors recorded in `crates/review-engine/tests/golden.rs`; crate bump changing them = conscious algorithm migration, not routine update.
 - Runtime RNG never used on the scheduling path; `wasm_js` backend is satisfied by WebCrypto in both Workers and browsers.
-- Optimizer API available later for M8 personalization without new deps.

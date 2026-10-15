@@ -1,9 +1,10 @@
-name: ci
+name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -11,30 +12,223 @@ env:
 jobs:
   checks:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-
-      # Toolchain pinned by rust-toolchain.toml (WBS 1.1)
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-
       - uses: taiki-e/install-action@v2
         with:
           tool: trunk@0.21.14,cargo-deny@0.20.2
 
-      - name: fmt
-        run: cargo fmt --check
+      - name: Format
+        run: cargo fmt --all -- --check
 
-      - name: clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Clippy
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
-      - name: test
-        run: cargo test --workspace
+      - name: Test
+        run: cargo test --locked --workspace
 
-      - name: worker build (wasm32)
-        run: cargo build -p worker-api --target wasm32-unknown-unknown --release
+      - name: Build web
+        working-directory: apps/web
+        run: trunk build --release --cargo-profile wasm-release
 
-      - name: web build + size budget
-        run: bash scripts/wasm-size-report.sh
+      - name: Cargo deny
+        run: cargo deny --locked check
 
-      - name: cargo-deny
-        run: cargo deny check
+  build:
+    needs: checks
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk@0.21.14
+
+      - name: Build embedded web assets
+        working-directory: apps/web
+        run: trunk build --release --cargo-profile wasm-release
+
+      - name: Build native release binary
+        run: cargo build --locked --release -p lingua-tutor-local --bin lingua-tutor
+
+      - name: Smoke native binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          target/release/lingua-tutor --help
+
+          workspace="$(mktemp -d)"
+          log="$workspace/runtime.log"
+          (
+            cd "$workspace"
+            "$GITHUB_WORKSPACE/target/release/lingua-tutor" run --no-tunnel --port 18787 >"$log" 2>&1 &
+            pid=$!
+            trap 'kill "$pid" 2>/dev/null || true' EXIT
+
+            ready=0
+            for _ in {1..30}; do
+              if curl -fsS http://127.0.0.1:18787/ >/dev/null; then
+                ready=1
+                break
+              fi
+              sleep 1
+            done
+            if [[ "$ready" != 1 ]]; then
+              cat "$log"
+              exit 1
+            fi
+
+            test -s .lingua-tutor/web/index.html
+            response="$(curl -fsS               -H 'Content-Type: application/json'               -d '{"jsonrpc":"2.0","id":1,"method":"health","params":{}}'               http://127.0.0.1:18787/rpc)"
+            grep -Fq '"result"' <<< "$response"
+          )
+
+      - if: runner.os == 'macOS'
+        name: Build macOS arm64 binary
+        run: |
+          rustup target add aarch64-apple-darwin
+          cargo build --locked --release -p lingua-tutor-local --bin lingua-tutor --target aarch64-apple-darwin
+          file target/aarch64-apple-darwin/release/lingua-tutor | grep -Eq 'Mach-O 64-bit executable arm64'
+
+      - if: runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lingua-tutor-macos-target
+          path: target/aarch64-apple-darwin/release/lingua-tutor
+          if-no-files-found: error
+
+  cross:
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          targets: wasm32-unknown-unknown,x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk@0.21.14
+
+      - name: Build embedded web assets
+        working-directory: apps/web
+        run: trunk build --release --cargo-profile wasm-release
+
+      - name: Install cross toolchain
+        run: python3 -m pip install cargo-zigbuild==0.23.4 ziglang==0.17.0
+
+      - name: Build Linux release binaries
+        run: |
+          export PATH="$(python3 -c 'import pathlib, ziglang; print(pathlib.Path(ziglang.__file__).parent)'):$PATH"
+          test "$(zig version)" = "0.17.0"
+          cargo zigbuild --locked --release -p lingua-tutor-local --bin lingua-tutor \
+            --target x86_64-unknown-linux-gnu \
+            --target aarch64-unknown-linux-gnu
+
+      - name: Verify Linux binaries
+        run: |
+          file target/x86_64-unknown-linux-gnu/release/lingua-tutor | grep -Eq 'ELF 64-bit.*x86-64'
+          file target/aarch64-unknown-linux-gnu/release/lingua-tutor | grep -Eq 'ELF 64-bit.*ARM aarch64'
+          target/x86_64-unknown-linux-gnu/release/lingua-tutor --help
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lingua-tutor-cross-targets
+          path: |
+            target/x86_64-unknown-linux-gnu/release/lingua-tutor
+            target/aarch64-unknown-linux-gnu/release/lingua-tutor
+          if-no-files-found: error
+
+  release-artifacts:
+    needs: [build, cross]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: lingua-tutor-cross-targets
+          path: staged/cross
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: lingua-tutor-macos-target
+          path: staged/macos
+
+      - name: Package tested release assets
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' apps/local/Cargo.toml | head -n1)"
+          test -n "$version"
+          mkdir -p dist
+
+          package() {
+            binary="$1"
+            asset="$2"
+            package_dir="$(mktemp -d)"
+            mkdir -p "$package_dir/bin"
+            cp "$binary" "$package_dir/bin/lingua-tutor"
+            chmod +x "$package_dir/bin/lingua-tutor"
+            cp LICENSE "$package_dir/LICENSE"
+            (cd "$package_dir" && zip -qr "$GITHUB_WORKSPACE/dist/$asset" .)
+            rm -rf "$package_dir"
+
+            entries="$(unzip -Z1 "dist/$asset")"
+            files="$(printf '%s\n' "$entries" | sed '/\/$/d')"
+            expected="$(printf '%s\n' LICENSE bin/lingua-tutor | sort)"
+            test "$(printf '%s\n' "$files" | sort)" = "$expected"
+          }
+
+          package staged/cross/x86_64-unknown-linux-gnu/release/lingua-tutor \
+            "lingua-tutor-v$version-linux-x64.zip"
+          package staged/cross/aarch64-unknown-linux-gnu/release/lingua-tutor \
+            "lingua-tutor-v$version-linux-aarch64.zip"
+          package staged/macos/lingua-tutor \
+            "lingua-tutor-v$version-darwin-arm64.zip"
+
+          (cd dist && sha256sum lingua-tutor-*.zip > SHA256SUMS)
+          (cd dist && sha256sum -c SHA256SUMS)
+
+          expected="$(printf '%s\n' SHA256SUMS \
+            "lingua-tutor-v$version-darwin-arm64.zip" \
+            "lingua-tutor-v$version-linux-aarch64.zip" \
+            "lingua-tutor-v$version-linux-x64.zip" | sort)"
+          actual="$(find dist -maxdepth 1 -type f -exec basename {} \; | sort)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::Unexpected release artifact set."
+            printf 'Expected:\n%s\nActual:\n%s\n' "$expected" "$actual"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lingua-tutor-release-assets
+          path: |
+            dist/lingua-tutor-*.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30

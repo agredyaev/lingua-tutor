@@ -5,7 +5,7 @@
 use learning_core::{Card, CardId, CardStatus, Timestamp};
 use tutor_contract::{CardMutation, MutationOperation};
 
-/// Context the worker fetches before planning mutations.
+/// Context the local runtime fetches before planning mutations.
 #[derive(Debug, Clone)]
 pub struct MutationContext {
     /// Existing non-retired cards in the profile (for duplicates + lookups).

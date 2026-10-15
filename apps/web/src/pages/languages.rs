@@ -12,10 +12,17 @@ pub fn LanguagesPage() -> impl IntoView {
     let refresh = RwSignal::new(0_u32);
     let profiles = LocalResource::new(move || {
         refresh.track();
-        async move { api_client::get::<Vec<LanguageProfileDto>>("/language-profiles").await }
+        async move {
+            api_client::call::<_, Vec<LanguageProfileDto>>(
+                "list_language_profiles",
+                &serde_json::json!({}),
+            )
+            .await
+        }
     });
     let packs = LocalResource::new(move || async move {
-        api_client::get::<Vec<LanguagePackDto>>("/language-packs").await
+        api_client::call::<_, Vec<LanguagePackDto>>("list_language_packs", &serde_json::json!({}))
+            .await
     });
     let error = RwSignal::new(Option::<String>::None);
 
@@ -24,8 +31,8 @@ pub fn LanguagesPage() -> impl IntoView {
         let source = pack.default_source_language.clone();
         async move {
             error.set(None);
-            let result: Result<serde_json::Value, ApiError> = api_client::post(
-                "/language-profiles",
+            let result: Result<serde_json::Value, ApiError> = api_client::call(
+                "create_language_profile",
                 &serde_json::json!({ "language_pack_id": pack_id, "source_language": source }),
             )
             .await;

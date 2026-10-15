@@ -1,11 +1,11 @@
 # 08 — HTTP API
 
-Scope: all `/api/v1` endpoints served by `apps/worker`. Shared DTOs live in `shared-schema`.
+Scope: all `/api/v1` endpoints served by `apps/local`. Shared DTOs live in `shared-schema`.
 Depends on: [04-database.md](04-database.md) (names), [05-review-engine.md](05-review-engine.md), [07-tutor-contract.md](07-tutor-contract.md).
 
 ## 1. Conventions
 
-- Base path `/api/v1`. JSON bodies. Auth: Cloudflare Access ([10-security.md](10-security.md)).
+- Base path `/api/v1`. JSON bodies. Runtime binds to loopback and validates host/origin ([10-security.md](10-security.md)).
 - Error shape, all endpoints:
 
 ```json
@@ -112,7 +112,7 @@ POST /api/v1/import/full/apply
 ```
 
 - `export/full`: complete versioned learning data (JSON, schema-versioned).
-- `export/tutor-context`: compact context for pasting into ChatGPT — active pack metadata, next lesson target, due errors, review summary, redesign evidence. Versioned.
+- `export/tutor-context`: compact adaptive context for ChatGPT — active pack metadata, learner preferences, ranked adaptive lesson plan, recent learning signals, due errors/rechecks, review summary, redesign evidence, curriculum candidates, and the lesson-result contract. Versioned.
 - Validate → `{ "validation_token": "vt_…", "expires_at": "…", "preview": { …diff… }, "warnings": [] }`. Apply requires unexpired `validation_token` from the matching validate call; mismatch/expired → `409`.
 - Additional exports via `export/full` sections: cards, review history, error history, lesson history, Markdown summary.
 
@@ -134,4 +134,4 @@ GET  /api/v1/listening-attempts?language_profile_id={id}
 GET /api/v1/health
 ```
 
-Reports: worker status, D1 connectivity, schema version, scheduler algorithm/version, current parameter set, latest migration, deployment version ([11-infrastructure.md](11-infrastructure.md) §6).
+Reports: local runtime status, SQLite connectivity, schema version, scheduler algorithm/version, current parameter set, latest migration, application version ([11-infrastructure.md](11-infrastructure.md) §6).

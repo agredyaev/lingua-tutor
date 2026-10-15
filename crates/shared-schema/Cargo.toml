@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "DTOs shared between web and worker, mirroring /api/v1"
+description = "DTOs shared between the web UI and local runtime, mirroring /api/v1"
 
 [dependencies]
 serde = { workspace = true }

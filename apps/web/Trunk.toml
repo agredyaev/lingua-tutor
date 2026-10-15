@@ -2,7 +2,3 @@
 # Profile defined in workspace Cargo.toml (09-frontend.md §9). 3 MB compressed budget.
 [build]
 target = "index.html"
-
-# Local dev: trunk serve proxies /api to wrangler dev (ADR-0003 local-first).
-[[proxy]]
-backend = "http://localhost:8787/api/"

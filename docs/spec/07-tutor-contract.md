@@ -28,10 +28,13 @@ Versioned block returned by tutor (paste-import or MCP). Applied atomically with
   "metrics": { "speaking_seconds": 540, "unaided_recall_count": 6,
                "aided_recall_count": 3, "listening_score": 0.7,
                "avg_answer_millis": 2100, "long_pause_count": 2, "confidence": 0.6 },
-  "new_learning_items": [ { "item_type": "phrase", "target_text": "…",
-                            "prompt_text": "…", "prompt_language": "ru" } ],
-  "evidence": [ { "learning_item_id": "phr_01J...", "kind": "spontaneous_production",
-                  "success": true, "detail": null } ],
+  "new_learning_items": [ { "client_item_key": "new-1", "item_type": "phrase",
+                            "target_text": "…", "prompt_text": "…", "prompt_language": "ru" } ],
+  "evidence": [ { "client_item_key": "new-1", "kind": "spontaneous_production",
+                  "success": true, "context": "pharmacy:ask-for-remedy",
+                  "context_family": "service.ask_help",
+                  "assistance_level": 0, "response_millis": 1800,
+                  "probe_phase": "delayed_retrieval", "detail": null } ],
   "error_occurrences": [ { "error_target_id": null,
                            "core_category": "verb_form", "pack_error_code": "es.verb.ser_estar",
                            "original_production": "…", "corrected_production": "…",
@@ -43,7 +46,7 @@ Versioned block returned by tutor (paste-import or MCP). Applied atomically with
 }
 ```
 
-Validation server-side, schema- and size-bounded. Import flow: validate → preview → apply ([08-http-api.md](08-http-api.md) §7).
+Validation server-side, schema- and size-bounded. Existing items are referenced by `learning_item_id`; an item introduced in the same result may define `client_item_key`. Productive evidence carries a concrete `context`; transfer evidence also requires a stable semantic `context_family`. `assistance_level=0` means explicitly unaided; missing assistance is unknown and cannot prove mastery. Assisted success is `prompted_production`, never `spontaneous_production` or `transfer`. Capture `response_millis` and `probe_phase` when reliable. Import flow: validate → preview → apply ([08-http-api.md](08-http-api.md) §7).
 
 ## 3. Card mutations
 
@@ -143,7 +146,100 @@ Explicit Rust in `adaptation`, unit-tested, table-driven. No interpreted rule la
 | Repeated prompted success + spontaneous failure | create transfer target |
 | Error occurrences = 3 | activate mini-target; contrast card when appropriate |
 | Unresolved error occurrences = 5 | require method change |
-| Success in 3 distinct contexts | eligible for provisional mastery |
+| Explicitly unaided transfer in 3 distinct semantic `context_family` values | eligible for full mastery |
 | Failed 1/3/7-day recheck | target back to active practice |
 | Persistent `Hard` | redesign before frequency increase |
 | High review success + low real-life utility | consider retiring card |
+
+## 8. Adaptive lesson planner
+
+Before each lesson the runtime derives a language-neutral plan from persisted evidence rather than copying the previous tutor goal.
+
+Inputs:
+- review pressure: due items, significantly overdue mature reviews, effective new-card budget;
+- unresolved errors, due 1/3/7-day rechecks, and method-change targets;
+- recent lesson metrics over a bounded window: speaking ratio, unaided-vs-aided recall, listening score, answer latency, confidence;
+- open adaptive recommendations;
+- learner preferences.
+
+The deterministic priority order is: required method change → due error rechecks → prompt dependence → listening weakness → slow retrieval → low confidence → insufficient learner speaking → recurring errors → significant review backlog → open evidence-based recommendations → due retrieval → new high-utility material.
+
+The planner returns:
+- primary objective;
+- supported/balanced/stretch difficulty;
+- maximum new items for this lesson;
+- ranked actions with evidence-based rationales;
+- diagnostic probes;
+- success criteria;
+- recent signal summary;
+- priority scenarios.
+
+The new-item count is a ceiling, never a quota. A significant backlog or required method change sets it to zero. The tutor may deviate from the plan when live evidence contradicts it, but the deviation must be reflected in lesson evidence and summary.
+
+Recognized optional profile preferences:
+- `max_new_items_per_lesson`: integer cap;
+- `preferred_difficulty`: `supported`, `balanced`, or `stretch`;
+- `priority_scenarios`: ordered list of scenario IDs.
+
+`estimated_level` is context only, not the planning authority. Actual production/listening/transfer evidence wins.
+
+
+## 9. Item capability projection and concrete task selection
+
+The runtime derives an item-level learner model from immutable evidence. It is a projection, not a persisted second source of truth.
+
+For each learning item it maintains separate estimates for:
+- recognition;
+- listening;
+- prompted production;
+- spontaneous production;
+- transfer.
+
+Each estimate uses a bounded per-item history and calendar-time decay. It tracks weighted success, explicitly unaided success, latency, evidence strength, qualified-success streak, concrete contexts, and semantic context families. Old evidence loses strength automatically; unknown assistance never counts as independence. `listening_attempts` is the canonical listening signal to prevent double counting.
+
+The planner then ranks concrete `TaskCandidate` actions such as:
+- `diagnostic_spontaneous`;
+- `fade_prompts`;
+- `spontaneous_retrieval`;
+- `listening_probe`;
+- `transfer_practice`;
+- `automaticity_drill`.
+
+`TaskCandidate` and tutor-focus state are internal planner inputs. They are merged into one bounded tutor-facing `tutor_tasks` queue containing action, capability, priority, due/stage, context policy, rationale, and success criterion. The tutor follows this single queue; no embeddings, opaque model score, or reinforcement-learning policy is required.
+
+## 10. Spaced tutor-focus threads
+
+Problematic capabilities remain in a derived tutor-focus queue until consolidated. The queue applies Anki-like spacing to live tutoring without duplicating the card scheduler.
+
+Spacing stages use consecutive **qualified** successes after the last failure. Productive success qualifies only when assistance is explicitly appropriate; transfer additionally requires a semantic `context_family`:
+
+| Stage | Next tutor probe |
+|---|---:|
+| 0 | immediate / current lesson |
+| 1 | +1 day |
+| 2 | +3 days |
+| 3 | +7 days |
+| 4 | +14 days |
+
+A failure or unqualified latest attempt resets the capability to stage 0. `candidate` learning items never enter tutor focus. The thread remains active until evidence is strong enough for the capability:
+- listening: strong repeated comprehension;
+- spontaneous production: strong explicitly unaided production;
+- transfer: strong explicitly unaided production in at least three distinct semantic context families.
+
+Internal focus threads expose successful contexts/families and a next-context policy. They are merged with candidate scoring into `tutor_tasks`; `due_now=true` tasks are retrieval obligations before optional new material, subject to error-method-change priorities.
+
+## 11. Planner history and calibration
+
+At actual lesson start, the runtime persists one `planner_decisions` snapshot containing:
+- planner version;
+- planner input signals;
+- adaptive plan;
+- item capability projection;
+- ranked task candidates;
+- tutor-focus threads.
+
+Reading tutor context alone has no side effects. On lesson completion the same row receives the observed outcome: lesson metrics, evidence, errors, mastery proposals, scenario, and next goal.
+
+The next tutor receives a compact bounded `planner_history`, plus `intervention_effectiveness`. The latter compares consecutive planner snapshots only after a minimum delay and only when newer evidence exists for the targeted item. It reports samples/newly-observed/improved/stable/declined and mean success delta by action/capability. It does not auto-tune thresholds; it provides deterministic evidence for future tuning and method changes.
+
+The calibration chain is: `decision before lesson → intervention → delayed observable learner-state change`.

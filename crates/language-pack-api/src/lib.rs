@@ -1,7 +1,7 @@
 //! `LanguagePack` trait and every boundary type of the plugin contract
 //! (06-language-packs.md §2). Core owns all request/response types; packs
 //! never expose implementation types across this boundary. Packs must not
-//! touch D1, network, secrets, scheduling state, or review events.
+//! touch persistence, network, secrets, scheduling state, or review events.
 
 use serde::{Deserialize, Deserializer, Serialize};
 

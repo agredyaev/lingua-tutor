@@ -115,5 +115,4 @@ Recommended actions (emitted as recommendations, never auto-applied): clarify pr
 ## 11. Parameter sets
 
 - v1 ships reviewed defaults in `scheduler_parameter_sets` (`origin='default'`).
-- Personal optimization: deferred ([13-roadmap.md](13-roadmap.md) M8). Data required for it (immutable events, parameter-set versioning) is captured from day one.
 - Constraints when implemented: documented minimum sample threshold; ignore invalid/corrected events; run off request path; retain previous set; dry-run comparison; no mass rescheduling by default; rollback supported.

@@ -12,7 +12,7 @@ use tutor_contract::LessonResult;
 /// Recheck schedule offsets in days (03-domain-model.md §7).
 pub const RECHECK_OFFSETS_DAYS: [u32; 3] = [1, 3, 7];
 
-/// Everything the planner needs, fetched by the worker beforehand.
+/// Everything the planner needs, fetched by the local runtime beforehand.
 #[derive(Debug, Clone)]
 pub struct LessonCompletionContext {
     /// Target profile (already resolved from `language_profile_id`).
@@ -26,7 +26,7 @@ pub struct LessonCompletionContext {
     /// Items whose `normalized_target_text` matches any proposed new item.
     pub items_by_normalized: Vec<LearningItem>,
     /// Pack-normalized canonical text per `new_learning_items` entry,
-    /// same order (worker calls the active pack).
+    /// same order (local runtime calls the active pack).
     pub normalized_new_items: Vec<String>,
     /// IDs of items that exist in this profile (for reference checks).
     pub known_item_ids: Vec<LearningItemId>,
@@ -109,7 +109,7 @@ pub enum LessonOutcome {
     },
 }
 
-/// Deterministic apply plan; persisting it is one D1 batch.
+/// Deterministic apply plan; persisting it is one atomic database batch.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LessonCompletionPlan {
     /// Lesson row action.
@@ -142,10 +142,13 @@ pub enum PlanError {
     /// Referenced item does not exist in this profile.
     #[error("unknown learning_item_id '{0}'")]
     UnknownLearningItem(String),
+    /// Lesson-local item key does not exist in new_learning_items.
+    #[error("unknown client_item_key '{0}'")]
+    UnknownClientItemKey(String),
     /// Referenced lesson does not exist.
     #[error("unknown lesson_id '{0}'")]
     UnknownLesson(String),
-    /// Context arrays are inconsistent (worker bug, not user input).
+    /// Context arrays are inconsistent (runtime bug, not user input).
     #[error("invalid context: {0}")]
     InvalidContext(String),
 }
@@ -181,8 +184,8 @@ pub fn plan_lesson_completion(
 
     let mut warnings = Vec::new();
     let (new_items, reused_items) = split_new_items(result, ctx);
-    let evidence = resolve_evidence(result, ctx)?;
-    let listening = resolve_listening(result, ctx)?;
+    let evidence = resolve_evidence(result, ctx, &new_items, &reused_items)?;
+    let listening = resolve_listening(result, ctx, &new_items, &reused_items)?;
     let error_actions = plan_error_actions(result, ctx);
     let item_status_changes = recheck_mastery(result, ctx, &mut warnings)?;
 
@@ -248,16 +251,66 @@ fn split_new_items(
     (new_items, reused)
 }
 
-fn resolve_item_ref(raw_id: &str, ctx: &LessonCompletionContext) -> Result<ItemRef, PlanError> {
+fn resolve_item_id(raw_id: &str, ctx: &LessonCompletionContext) -> Result<ItemRef, PlanError> {
     if ctx.known_item_ids.iter().any(|id| id.0 == raw_id) {
         return Ok(ItemRef::Existing(LearningItemId(raw_id.to_owned())));
     }
     Err(PlanError::UnknownLearningItem(raw_id.to_owned()))
 }
 
+fn resolve_client_item_key(
+    key: &str,
+    result: &LessonResult,
+    new_items: &[PlannedItem],
+    reused_items: &[(usize, LearningItemId)],
+) -> Result<ItemRef, PlanError> {
+    let Some(source_index) = result
+        .new_learning_items
+        .iter()
+        .position(|item| item.client_item_key.as_deref() == Some(key))
+    else {
+        return Err(PlanError::UnknownClientItemKey(key.to_owned()));
+    };
+    if let Some((_, id)) = reused_items
+        .iter()
+        .find(|(index, _)| *index == source_index)
+    {
+        return Ok(ItemRef::Existing(id.clone()));
+    }
+    if let Some(plan_index) = new_items
+        .iter()
+        .position(|planned| planned.source_index == source_index)
+    {
+        return Ok(ItemRef::New(plan_index));
+    }
+    Err(PlanError::InvalidContext(format!(
+        "client_item_key '{key}' did not resolve to a new or reused item"
+    )))
+}
+
+fn resolve_reference(
+    learning_item_id: Option<&str>,
+    client_item_key: Option<&str>,
+    result: &LessonResult,
+    ctx: &LessonCompletionContext,
+    new_items: &[PlannedItem],
+    reused_items: &[(usize, LearningItemId)],
+) -> Result<ItemRef, PlanError> {
+    match (learning_item_id, client_item_key) {
+        (Some(id), None) => resolve_item_id(id, ctx),
+        (None, Some(key)) => resolve_client_item_key(key, result, new_items, reused_items),
+        _ => Err(PlanError::InvalidContext(
+            "item reference must contain exactly one of learning_item_id or client_item_key"
+                .to_owned(),
+        )),
+    }
+}
+
 fn resolve_evidence(
     result: &LessonResult,
     ctx: &LessonCompletionContext,
+    new_items: &[PlannedItem],
+    reused_items: &[(usize, LearningItemId)],
 ) -> Result<Vec<PlannedEvidence>, PlanError> {
     result
         .evidence
@@ -266,7 +319,14 @@ fn resolve_evidence(
         .map(|(i, e)| {
             Ok(PlannedEvidence {
                 source_index: i,
-                item: resolve_item_ref(&e.learning_item_id, ctx)?,
+                item: resolve_reference(
+                    e.learning_item_id.as_deref(),
+                    e.client_item_key.as_deref(),
+                    result,
+                    ctx,
+                    new_items,
+                    reused_items,
+                )?,
             })
         })
         .collect()
@@ -275,17 +335,26 @@ fn resolve_evidence(
 fn resolve_listening(
     result: &LessonResult,
     ctx: &LessonCompletionContext,
+    new_items: &[PlannedItem],
+    reused_items: &[(usize, LearningItemId)],
 ) -> Result<Vec<PlannedListening>, PlanError> {
     result
         .listening_attempts
         .iter()
         .enumerate()
         .map(|(i, a)| {
-            let item = a
-                .learning_item_id
-                .as_deref()
-                .map(|id| resolve_item_ref(id, ctx))
-                .transpose()?;
+            let item = if a.learning_item_id.is_none() && a.client_item_key.is_none() {
+                None
+            } else {
+                Some(resolve_reference(
+                    a.learning_item_id.as_deref(),
+                    a.client_item_key.as_deref(),
+                    result,
+                    ctx,
+                    new_items,
+                    reused_items,
+                )?)
+            };
             Ok(PlannedListening {
                 source_index: i,
                 item,
@@ -330,17 +399,41 @@ fn recheck_mastery(
 ) -> Result<Vec<(LearningItemId, LearningItemStatus)>, PlanError> {
     let mut changes = Vec::new();
     for proposal in &result.mastery_changes {
-        let item_ref = resolve_item_ref(&proposal.learning_item_id, ctx)?;
+        let item_ref = resolve_item_id(&proposal.learning_item_id, ctx)?;
         let ItemRef::Existing(item_id) = item_ref else {
             continue;
         };
-        let trail = ctx
+        let mut trail = ctx
             .evidence_for_mastery
             .iter()
             .find(|(id, _)| id == &item_id)
-            .map(|(_, trail)| trail.as_slice())
+            .map(|(_, trail)| trail.clone())
             .unwrap_or_default();
-        let assessed = assess_mastery(trail);
+        for evidence in result
+            .evidence
+            .iter()
+            .filter(|e| e.learning_item_id.as_deref() == Some(item_id.0.as_str()))
+        {
+            trail.push(LearningItemEvidence {
+                id: learning_core::EvidenceId("pending-current-lesson".to_owned()),
+                learning_item_id: item_id.clone(),
+                lesson_id: ctx.existing_lesson.as_ref().map(|lesson| lesson.id.clone()),
+                kind: evidence.kind,
+                success: evidence.success,
+                detail: evidence.detail.clone(),
+                pack_metadata: Some(serde_json::json!({
+                    "context_key": evidence
+                        .context
+                        .as_deref()
+                        .unwrap_or(result.lesson.scenario.as_str()),
+                    "context_family": evidence.context_family,
+                    "assistance_level": evidence.assistance_level,
+                    "probe_phase": evidence.probe_phase,
+                })),
+                recorded_at: ctx.now,
+            });
+        }
+        let assessed = assess_mastery(&trail);
         let accepted = match proposal.new_status {
             LearningItemStatus::ProvisionallyMastered => assessed != MasteryAssessment::NotMastered,
             LearningItemStatus::Mastered => assessed == MasteryAssessment::Full,

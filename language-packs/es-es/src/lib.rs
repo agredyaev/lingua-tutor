@@ -222,7 +222,7 @@ impl LanguagePack for EsEsPack {
     }
 
     fn tutor_instructions(&self, learner: &LearnerLanguageProfile) -> TutorInstructionBundle {
-        let level = learner.estimated_level.as_deref().unwrap_or("A1");
+        let level = learner.estimated_level.as_deref().unwrap_or("не определён");
         TutorInstructionBundle {
             instructions: format!(
                 "{INSTRUCTIONS_RU}\nУровень ученика: {level}. Язык объяснений: {}.",

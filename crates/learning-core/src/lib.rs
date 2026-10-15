@@ -1,6 +1,6 @@
 //! Language-neutral domain types and rules (03-domain-model.md). No IO, no
 //! language-specific logic, no dependency on any concrete pack. Persistence
-//! column mapping lives in `apps/worker` repositories.
+//! column mapping lives in `apps/local` repositories.
 
 mod card;
 mod ids;

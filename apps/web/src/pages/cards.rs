@@ -19,11 +19,14 @@ pub fn CardsPage() -> impl IntoView {
             let Some(id) = id else {
                 return Ok::<Vec<CardDto>, ApiError>(Vec::new());
             };
-            let mut path = format!("/cards?language_profile_id={id}");
-            if !status.is_empty() {
-                path.push_str(&format!("&status={status}"));
-            }
-            api_client::get::<Vec<CardDto>>(&path).await
+            api_client::call::<_, Vec<CardDto>>(
+                "list_cards",
+                &serde_json::json!({
+                    "language_profile_id": id,
+                    "status": (!status.is_empty()).then_some(status),
+                }),
+            )
+            .await
         }
     });
 
@@ -91,15 +94,26 @@ pub fn CardDetailPage() -> impl IntoView {
     let card = LocalResource::new(move || {
         let id = card_id.get();
         refresh.track();
-        async move { api_client::get::<CardDto>(&format!("/cards/{id}")).await }
+        async move {
+            api_client::call::<_, CardDto>("get_card", &serde_json::json!({ "card_id": id })).await
+        }
     });
 
     let status_action = Action::new_local(move |verb: &&'static str| {
         let id = card_id.get_untracked();
         let verb = *verb;
         async move {
-            let result: Result<serde_json::Value, ApiError> =
-                api_client::post(&format!("/cards/{id}/{verb}"), &serde_json::json!({})).await;
+            let status = match verb {
+                "suspend" => "suspended",
+                "restore" => "review",
+                "retire" => "retired",
+                _ => verb,
+            };
+            let result: Result<serde_json::Value, ApiError> = api_client::call(
+                "set_card_status",
+                &serde_json::json!({ "card_id": id, "status": status }),
+            )
+            .await;
             refresh.update(|r| *r += 1);
             result
         }

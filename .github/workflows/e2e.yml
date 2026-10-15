@@ -19,10 +19,9 @@ jobs:
       - name: build web
         working-directory: apps/web
         run: trunk build --release --cargo-profile wasm-release
-      - name: prebuild worker (warms cargo cache for wrangler dev)
-        working-directory: apps/worker
-        run: cargo install -q worker-build && worker-build --release
-      - run: npm ci || npm install
+      - name: build native server
+        run: cargo build -p lingua-tutor-local --bin lingua-tutor
+      - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
       - uses: actions/upload-artifact@v4

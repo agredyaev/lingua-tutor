@@ -1,17 +1,17 @@
 # 04 — Database
 
-Scope: full D1 (SQLite) schema, indexes, constraints, migration policy. Canonical source for table and column names.
+Scope: full SQLite schema, indexes, constraints, migration policy. Canonical source for table and column names.
 Depends on: [03-domain-model.md](03-domain-model.md).
 
 ## 1. Rules
 
 - IDs: TEXT, opaque, UUIDv7/ULID. Timestamps: TEXT, UTC RFC 3339. Booleans: INTEGER 0/1.
-- `PRAGMA foreign_keys = ON` per connection (D1 supports it; enable in repository layer).
-- Migrations: forward-only in production, applied via `wrangler d1 migrations apply`. Numbered `migrations/NNNN_name.sql`.
+- `PRAGMA foreign_keys = ON` per connection; enable it in the repository/runtime layer.
+- Migrations are numbered `migrations/NNNN_name.sql` and applied by the local runtime.
 - No destructive cascades over learning history. `ON DELETE RESTRICT` default.
 - All `*_json` columns validated at service boundary before write.
 - Review events immutable: no UPDATE/DELETE; corrections = compensating rows.
-- `card_schedule_state` update + `review_events` insert: one transaction (D1 batch).
+- `card_schedule_state` update + `review_events` insert: one SQLite transaction.
 - Every language-specific row carries `language_pack_id`; historical rows keep the pack version that created or last semantically changed them.
 
 ## 2. DDL
@@ -321,6 +321,26 @@ CREATE TABLE recommendations (
 );
 CREATE INDEX ix_recommendations_open
     ON recommendations(learner_language_profile_id, status);
+
+-- Added by 0002_planner_history.sql.
+CREATE TABLE planner_decisions (
+    id                          TEXT PRIMARY KEY,
+    learner_language_profile_id TEXT NOT NULL REFERENCES learner_language_profiles(id),
+    lesson_id                   TEXT REFERENCES lessons(id),
+    planner_version             TEXT NOT NULL,
+    input_json                  TEXT NOT NULL,
+    plan_json                   TEXT NOT NULL,
+    task_candidates_json        TEXT NOT NULL,
+    capability_state_json       TEXT NOT NULL,
+    focus_threads_json          TEXT NOT NULL,
+    outcome_json                TEXT,
+    created_at                  TEXT NOT NULL,
+    updated_at                  TEXT NOT NULL
+);
+CREATE UNIQUE INDEX ux_planner_decision_lesson
+    ON planner_decisions(lesson_id) WHERE lesson_id IS NOT NULL;
+CREATE INDEX ix_planner_decisions_profile_created
+    ON planner_decisions(learner_language_profile_id, created_at DESC);
 ```
 
 ## 3. Ownership
@@ -328,9 +348,12 @@ CREATE INDEX ix_recommendations_open
 - `card_schedule_state`, `review_events`: written only by review-engine via `application`. Language packs never write them.
 - `card_mutations`: append-only audit; one row per attempted mutation, applied or not.
 - `review_events.compensates_event_id`: undo and corrections reference the compensated event; original rows never change.
+- Item × capability state and tutor-focus spacing are derived projections over immutable evidence; they are not stored as a second source of truth.
+- `planner_decisions` stores the pre-lesson planner input/decision snapshot and the eventual lesson outcome. It exists for continuity and calibration: the exact decision made before a lesson cannot be reconstructed reliably after new evidence arrives.
 
 ## 4. Migration policy
 
-- `migrations/0001_init.sql` creates the full schema above.
+- `migrations/0001_init.sql` creates the v1 learning/review schema.
+- `migrations/0002_planner_history.sql` adds planner decision/outcome history. The local runtime automatically upgrades an existing v1 database to v2.
 - Production: forward-only; no down migrations. Destructive change requires prior backup ([11-infrastructure.md](11-infrastructure.md) §5).
-- Migration tests run in CI against a scratch D1/SQLite ([12-testing.md](12-testing.md)).
+- Migration tests run in CI against a scratch SQLite ([12-testing.md](12-testing.md)).

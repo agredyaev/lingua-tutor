@@ -1,14 +1,13 @@
-//! DTOs shared between `apps/web` and `apps/worker`: serde types mirroring
+//! DTOs shared between `apps/web` and `apps/local`: serde types mirroring
 //! the `/api/v1` contract (08-http-api.md). No domain logic, no IO.
-//! Field names must match worker JSON exactly — round-trip tests enforce it.
+//! Field names must match API JSON exactly — round-trip tests enforce it.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// Response body of `GET /api/v1/health`.
 ///
-/// Stub shape for M0; extended with D1 connectivity, schema version,
-/// scheduler version, migration and deployment metadata at WBS 10.5.
+/// The API also includes SQLite, scheduler, and migration metadata.
 ///
 /// # Examples
 ///
@@ -18,7 +17,7 @@ use std::collections::BTreeMap;
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HealthResponse {
-    /// `"ok"` when the Worker is serving requests.
+    /// `"ok"` when the local server is serving requests.
     pub status: String,
     /// Deployment version (crate version at build time).
     pub version: String,
@@ -398,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_card_parses_worker_shape() {
+    fn queue_card_parses_api_shape() {
         let dto: QueueCardDto = serde_json::from_str(
             r#"{"accepted_answers":[],"answer":"a","answer_evaluation_mode":"exact",
                 "card_id":"crd_1","explanation":null,"intent":"production",

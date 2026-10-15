@@ -12,7 +12,7 @@ Own `review-engine` crate behind app-owned `ReviewScheduler` trait. FSRS-compati
 
 ## Consequences
 
-- App owns cards, review events, schedule state in D1 — single source of truth, immutable history, tutor feedback loop possible.
+- App owns cards, review events, schedule state in SQLite — single source of truth, immutable history, tutor feedback loop possible.
 - No sync bridge, no desktop dependency, works on iPhone PWA.
 - Cost: we maintain scheduler correctness ourselves → golden + property tests (12-testing.md §2), versioned algorithm + parameter sets.
 - Spec: docs/spec/01-architecture.md AD-4, 05-review-engine.md, spec.md §6.5.

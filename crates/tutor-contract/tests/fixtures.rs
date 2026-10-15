@@ -158,3 +158,62 @@ fn garbage_inputs_error_not_panic() {
         let _ = parse_lesson_result(garbage); // must return Err, never panic
     }
 }
+
+#[test]
+fn same_lesson_client_item_reference_validates() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    result.new_learning_items[0].client_item_key = Some("new-cough".to_owned());
+    result.evidence[0].learning_item_id = None;
+    result.evidence[0].client_item_key = Some("new-cough".to_owned());
+    result.evidence[0].context = Some("pharmacy:ask-for-remedy".to_owned());
+    let issues = validate(&result);
+    assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+}
+
+#[test]
+fn unknown_same_lesson_client_item_reference_is_rejected() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    result.new_learning_items[0].client_item_key = Some("new-cough".to_owned());
+    result.evidence[0].learning_item_id = None;
+    result.evidence[0].client_item_key = Some("missing".to_owned());
+    let issues = validate(&result);
+    assert!(issues.iter().any(
+        |issue| issue.code == "unknown_reference" && issue.path == "evidence/0/client_item_key"
+    ));
+}
+
+#[test]
+fn transfer_requires_context_family() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["evidence"][0]["kind"] = serde_json::json!("transfer");
+    json["evidence"][0]["assistance_level"] = serde_json::json!(0);
+    json["evidence"][0]["context"] = serde_json::json!("pharmacy:ask-help");
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.code == "missing_field" && issue.path == "evidence/0/context_family"
+    }));
+}
+
+#[test]
+fn assisted_spontaneous_production_is_rejected() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["evidence"][0]["assistance_level"] = serde_json::json!(2);
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.code == "inconsistent_evidence" && issue.path == "evidence/0/assistance_level"
+    }));
+}
+
+#[test]
+fn prompted_production_cannot_be_marked_unaided() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["evidence"][0]["kind"] = serde_json::json!("prompted_production");
+    json["evidence"][0]["assistance_level"] = serde_json::json!(0);
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.code == "inconsistent_evidence" && issue.path == "evidence/0/assistance_level"
+    }));
+}

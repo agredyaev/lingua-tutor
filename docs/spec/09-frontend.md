@@ -88,4 +88,4 @@ lto = true
 codegen-units = 1
 ```
 
-Trunk release builds use this profile. Avoid size-heavy deps (`regex`, full ICU) in `apps/web`. WASM served compressed (Cloudflare handles). Binary size measured in CI ([12-testing.md](12-testing.md)).
+Trunk release builds use this profile. Avoid size-heavy deps (`regex`, full ICU) in `apps/web`. WASM is served by the local runtime; release size is measured in CI. Binary size measured in CI ([12-testing.md](12-testing.md)).

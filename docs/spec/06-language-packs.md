@@ -9,7 +9,7 @@ Depends on: [01-architecture.md](01-architecture.md) AD-9, [02-workspace.md](02-
 |---|---|
 | Profiles, lesson lifecycle, tutor-context assembly, tutor result validation, item/evidence/error history, card mutation workflow, review orchestration, scheduling persistence, analytics, offline reconciliation, auth, import/export/API/MCP boundaries | BCP 47 locale metadata; supported source languages; text normalization + canonical comparison; punctuation/capitalization/diacritic/contraction policies; accepted-answer matching; tokenization/morphology helpers; language error taxonomy + mapping to core categories; phrase/collocation/frame seeds; card-generation templates; tutor prompt fragments + correction conventions; pronunciation/transcription conventions; scenarios + cultural notes; CEFR descriptors; locale content labels (not app chrome) |
 
-Core never decides language-specific correctness, naturalness, morphology, punctuation tolerance, or error classification. Pack never: accesses D1; performs network calls; reads secrets; bypasses core validation; owns scheduling state; writes review events; defines executable workflows.
+Core never decides language-specific correctness, naturalness, morphology, punctuation tolerance, or error classification. Pack never: accesses SQLite; performs network calls; reads secrets; bypasses core validation; owns scheduling state; writes review events; defines executable workflows.
 
 ## 2. Contract
 

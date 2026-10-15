@@ -29,6 +29,7 @@ pub fn validate(result: &LessonResult) -> Vec<ValidationIssue> {
     header(result, &mut issues);
     collections(result, &mut issues);
     texts(result, &mut issues);
+    item_references(result, &mut issues);
     mutations(&result.card_mutations, &mut issues);
     metrics(result, &mut issues);
     issues
@@ -170,6 +171,175 @@ fn short(issues: &mut Vec<ValidationIssue>, path: String, text: &str) {
             path,
             format!("over {} chars", bounds::MAX_SHORT_TEXT),
         );
+    }
+}
+
+fn item_references(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
+    let mut keys: Vec<&str> = Vec::new();
+    for (i, item) in r.new_learning_items.iter().enumerate() {
+        if let Some(key) = item.client_item_key.as_deref() {
+            let key = key.trim();
+            if key.is_empty() || key.len() > bounds::MAX_ID {
+                issue(
+                    issues,
+                    "invalid_field",
+                    format!("new_learning_items/{i}/client_item_key"),
+                    "must be non-empty and bounded".to_owned(),
+                );
+            } else if keys.contains(&key) {
+                issue(
+                    issues,
+                    "duplicate_reference",
+                    format!("new_learning_items/{i}/client_item_key"),
+                    format!("duplicate client_item_key '{key}'"),
+                );
+            } else {
+                keys.push(key);
+            }
+        }
+    }
+
+    for (i, evidence) in r.evidence.iter().enumerate() {
+        let id = evidence
+            .learning_item_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty());
+        let key = evidence
+            .client_item_key
+            .as_deref()
+            .filter(|value| !value.trim().is_empty());
+        if id.is_some() == key.is_some() {
+            issue(
+                issues,
+                "invalid_reference",
+                format!("evidence/{i}"),
+                "exactly one of learning_item_id or client_item_key is required".to_owned(),
+            );
+        }
+        if let Some(id) = id
+            && id.len() > bounds::MAX_ID
+        {
+            issue(
+                issues,
+                "too_long",
+                format!("evidence/{i}/learning_item_id"),
+                format!("over {} chars", bounds::MAX_ID),
+            );
+        }
+        if let Some(key) = key {
+            if key.len() > bounds::MAX_ID {
+                issue(
+                    issues,
+                    "too_long",
+                    format!("evidence/{i}/client_item_key"),
+                    format!("over {} chars", bounds::MAX_ID),
+                );
+            } else if !keys.contains(&key) {
+                issue(
+                    issues,
+                    "unknown_reference",
+                    format!("evidence/{i}/client_item_key"),
+                    format!("unknown client_item_key '{key}'"),
+                );
+            }
+        }
+        if let Some(context) = evidence.context.as_deref() {
+            short(issues, format!("evidence/{i}/context"), context);
+        }
+        if let Some(family) = evidence.context_family.as_deref() {
+            if family.trim().is_empty() {
+                issue(
+                    issues,
+                    "invalid_field",
+                    format!("evidence/{i}/context_family"),
+                    "must be non-empty when provided".to_owned(),
+                );
+            }
+            short(issues, format!("evidence/{i}/context_family"), family);
+        }
+        if matches!(evidence.kind, crate::EvidenceKind::Transfer)
+            && evidence
+                .context_family
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+        {
+            issue(
+                issues,
+                "missing_field",
+                format!("evidence/{i}/context_family"),
+                "transfer evidence requires a semantic context_family".to_owned(),
+            );
+        }
+        if matches!(
+            evidence.kind,
+            crate::EvidenceKind::SpontaneousProduction | crate::EvidenceKind::Transfer
+        ) && evidence.assistance_level.is_some_and(|level| level > 0)
+        {
+            issue(
+                issues,
+                "inconsistent_evidence",
+                format!("evidence/{i}/assistance_level"),
+                "spontaneous/transfer evidence cannot use assisted production".to_owned(),
+            );
+        }
+        if matches!(evidence.kind, crate::EvidenceKind::PromptedProduction)
+            && evidence.assistance_level == Some(0)
+        {
+            issue(
+                issues,
+                "inconsistent_evidence",
+                format!("evidence/{i}/assistance_level"),
+                "prompted_production must not be marked unaided".to_owned(),
+            );
+        }
+        if evidence.assistance_level.is_some_and(|level| level > 3) {
+            issue(
+                issues,
+                "invalid_field",
+                format!("evidence/{i}/assistance_level"),
+                "must be 0..=3".to_owned(),
+            );
+        }
+        if evidence
+            .response_millis
+            .is_some_and(|value| value > 10 * 60 * 1000)
+        {
+            issue(
+                issues,
+                "invalid_field",
+                format!("evidence/{i}/response_millis"),
+                "must be <= 600000 ms".to_owned(),
+            );
+        }
+    }
+
+    for (i, attempt) in r.listening_attempts.iter().enumerate() {
+        let id = attempt
+            .learning_item_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty());
+        let key = attempt
+            .client_item_key
+            .as_deref()
+            .filter(|value| !value.trim().is_empty());
+        if id.is_some() && key.is_some() {
+            issue(
+                issues,
+                "invalid_reference",
+                format!("listening_attempts/{i}"),
+                "use learning_item_id or client_item_key, not both".to_owned(),
+            );
+        }
+        if let Some(key) = key
+            && !keys.contains(&key)
+        {
+            issue(
+                issues,
+                "unknown_reference",
+                format!("listening_attempts/{i}/client_item_key"),
+                format!("unknown client_item_key '{key}'"),
+            );
+        }
     }
 }
 

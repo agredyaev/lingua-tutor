@@ -1,6 +1,6 @@
 //! Use-case services (02-workspace.md §2). Pure decision logic: handlers in
-//! `apps/worker` fetch state via repositories, call these functions, then
-//! persist the returned plan in one D1 batch. No IO, no HTTP types here —
+//! `apps/local` fetch state via repositories, call these functions, then
+//! persist the returned plan in one SQLite transaction. No IO, no HTTP types here —
 //! that split keeps services deterministic and testable against real data
 //! structures instead of mocks (16-rust-guidelines.md §6).
 

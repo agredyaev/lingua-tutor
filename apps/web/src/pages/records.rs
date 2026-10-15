@@ -16,9 +16,10 @@ pub fn ItemsPage() -> impl IntoView {
             let Some(id) = id else {
                 return Ok::<Option<serde_json::Value>, ApiError>(None);
             };
-            api_client::get::<serde_json::Value>(&format!(
-                "/learning-state?language_profile_id={id}"
-            ))
+            api_client::call::<_, serde_json::Value>(
+                "get_learning_state",
+                &serde_json::json!({ "language_profile_id": id }),
+            )
             .await
             .map(Some)
         }
@@ -71,9 +72,10 @@ pub fn ErrorsPage() -> impl IntoView {
             let Some(id) = id else {
                 return Ok::<Vec<ErrorTargetDto>, ApiError>(Vec::new());
             };
-            api_client::get::<Vec<ErrorTargetDto>>(&format!(
-                "/error-targets?language_profile_id={id}"
-            ))
+            api_client::call::<_, Vec<ErrorTargetDto>>(
+                "list_error_targets",
+                &serde_json::json!({ "language_profile_id": id }),
+            )
             .await
         }
     });

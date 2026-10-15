@@ -128,7 +128,7 @@ pub struct LearningItemEvidence {
 
 - Card review success alone never yields mastery.
 - Provisional mastery: unaided production (`SpontaneousProduction` success).
-- Full mastery: correct use in ≥ 3 distinct contexts (or equivalent configured rule).
+- Full mastery: successful `Transfer` evidence with explicit `assistance_level = 0` in ≥ 3 distinct semantic `context_family` values. Missing assistance is unknown and cannot prove independence; concrete `context_key` variants inside the same family count once.
 - Failed 1/3/7-day recheck returns target to active practice.
 
 ## 7. Errors

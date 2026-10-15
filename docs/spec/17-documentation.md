@@ -42,7 +42,7 @@ Full NPR document set collapsed to what a Class-E solo project actually needs; e
 | NPR 7150.2D artifact | This project |
 |---|---|
 | Software Development/Management Plan | [15-wbs.md](15-wbs.md) + [11-infrastructure.md](11-infrastructure.md) |
-| Software Requirements Specification | docs/spec.md v2.0 + files 00–13 |
+| Software Requirements Specification | files 00–17 in `docs/spec/` |
 | Software Design Description | 01–09 component files |
 | Software Test Plan / Procedures | [12-testing.md](12-testing.md) |
 | Version Description Document | release metadata recorded per deploy ([11-infrastructure.md](11-infrastructure.md) §4.9) |
@@ -53,7 +53,7 @@ Full NPR document set collapsed to what a Class-E solo project actually needs; e
 Binding practices retained from NPR:
 
 - **Traceability:** every PR description names the spec file + section it implements. Untraceable change = scope creep, rejected ([15-wbs.md](15-wbs.md) rules).
-- **Versioned docs:** spec files change only via PR; `docs/spec.md` v2.0 stays immutable baseline.
+- **Versioned docs:** active spec files change with the code they describe; no obsolete baseline is kept as a second source of truth.
 - **ADRs:** every deviation from spec or major decision → ADR (started WBS 1.8). One page max.
 - **Records over memory:** decisions, spikes (FSRS GO/NO-GO), release metadata — written, not remembered.
 

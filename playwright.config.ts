@@ -1,6 +1,8 @@
-// Playwright e2e (12-testing.md §7): runs against wrangler dev --local
-// serving the built PWA + API on one origin. Separate CI job, not a PR gate.
+// Playwright e2e: native localhost server, fresh SQLite per run.
 import { defineConfig } from "@playwright/test";
+
+const port = Number(process.env.E2E_PORT ?? 18788);
+const db = `target/e2e-${process.pid}/lingua.sqlite3`;
 
 export default defineConfig({
   testDir: "tests/e2e",
@@ -8,15 +10,15 @@ export default defineConfig({
   retries: 0, // flaky test = bug (16-rust-guidelines.md §6)
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
-    baseURL: "http://localhost:8787",
+    baseURL: `http://127.0.0.1:${port}`,
+    channel: process.env.E2E_CHANNEL || undefined,
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
   webServer: {
-    command:
-      "sh -c 'cd apps/worker && rm -rf .wrangler/state && npx wrangler d1 migrations apply DB --local && npx wrangler dev --local --port 8787'",
-    url: "http://localhost:8787/api/v1/health",
+    command: `cargo run -p lingua-tutor-local -- serve --db ${db} --port ${port}`,
+    url: `http://127.0.0.1:${port}/api/v1/health`,
     reuseExistingServer: false,
-    timeout: 600_000, // CI cold worker-build
+    timeout: 600_000,
   },
 });

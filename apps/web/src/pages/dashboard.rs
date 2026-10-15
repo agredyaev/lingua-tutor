@@ -13,11 +13,12 @@ pub fn DashboardPage() -> impl IntoView {
         let id = active.id();
         async move {
             match id {
-                Some(id) => {
-                    api_client::get::<DashboardDto>(&format!("/dashboard?language_profile_id={id}"))
-                        .await
-                        .map(Some)
-                }
+                Some(id) => api_client::call::<_, DashboardDto>(
+                    "get_dashboard",
+                    &serde_json::json!({ "language_profile_id": id }),
+                )
+                .await
+                .map(Some),
                 None => Ok(None),
             }
         }

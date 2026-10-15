@@ -176,7 +176,7 @@ pub enum ScheduleError {
 }
 
 /// Application-owned scheduling contract (05-review-engine.md §1).
-pub trait ReviewScheduler {
+pub trait ReviewScheduler: Send {
     /// State for a freshly introduced card; due immediately.
     ///
     /// # Errors

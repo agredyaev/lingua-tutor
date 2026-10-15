@@ -25,7 +25,7 @@ Decision: expected failure → `Result`; normal absence → `Option`; bug/invari
 | Layer | Strategy |
 |---|---|
 | Library crates (`learning-core`, `review-engine`, `language-pack-api`, …) | `thiserror` enums, precise variants, `#[from]` preserves source. No `anyhow`. |
-| `apps/worker` handlers | Map crate errors → API error shape ([08-http-api.md](08-http-api.md) §1) with stable `code`. |
+| `apps/local` handlers | Map crate errors → API error shape ([08-http-api.md](08-http-api.md) §1) with stable `code`. |
 | `apps/web` | Typed error enum from `shared-schema`; rendered via `<ErrorBoundary>` ([09-frontend.md](09-frontend.md) §2). |
 
 Rules:
@@ -45,9 +45,9 @@ Rules:
 - Closed sets = enums, never stringly-typed. Strings only at serde/DB boundary, converted once.
 - `std::sync::OnceLock` over `lazy_static!`. No `unsafe` anywhere in this workspace; a need for `unsafe` = design error.
 
-## 4. Database (D1 repositories)
+## 4. Database (SQLite repositories)
 
-- Repository layer (`apps/worker/src/repositories/`) strictly separated from domain logic; SQL lives only there.
+- Repository layer (`apps/local/src/repositories/`) strictly separated from domain logic; SQL lives only there.
 - Transaction boundary = domain invariant: review event + schedule state one batch; lesson completion one batch ([01-architecture.md](01-architecture.md) §4). Short transactions; no network calls inside.
 - No N+1: queue fetch joins card + schedule state in one query.
 - Additive migrations preferred; destructive → backup first + phased ([04-database.md](04-database.md) §4, [11-infrastructure.md](11-infrastructure.md) §5).
@@ -59,7 +59,7 @@ Order of leverage: algorithm > data structure > allocations > micro. Work down, 
 
 - Profile before optimizing; optimize only measured hot paths against [12-testing.md](12-testing.md) §8 targets. Complex code for < 20% gain rejected — readability wins.
 - Pre-allocate known sizes: `Vec::with_capacity` for queue batches, export buffers.
-- Batch D1 operations — one `batch()` call, not per-row round trips (extends §4 no-N+1).
+- Batch SQLite writes in one transaction; do not add per-row query loops when a set operation works.
 - No string concatenation in loops; build with capacity or `format!` once.
 - Small fixed sets: `Vec` + linear search or enum-indexed array, not `HashMap` — hash overhead exceeds scan for card grades, evidence kinds, pack lookups.
 - Not applicable here, do not import: rayon/thread pools, false-sharing padding, NUMA, jemalloc, object pools — Workers/WASM is single-threaded per request. Their appearance in a PR = overengineering flag.
@@ -67,9 +67,9 @@ Order of leverage: algorithm > data structure > allocations > micro. Work down, 
 
 ## 6. Testing
 
-- Unit tests: logic. Integration tests: contracts (repositories vs scratch D1, pack conformance). Property tests: invariants (scheduler intervals).
+- Unit tests: logic. Integration tests: contracts (repositories vs scratch SQLite, pack conformance). Property tests: invariants (scheduler intervals).
 - Deterministic: no sleeps, no wall-clock — inject `Timestamp`; fixed seeds. Flaky test = bug, fix root cause.
-- No over-mocking: repositories tested against real scratch SQLite/D1, not mocked SQL.
+- No over-mocking: repositories tested against real scratch SQLite, not mocked SQL.
 - Both paths: every feature tests success + failure ([00-overview.md](00-overview.md) §6).
 - Slow suites (Playwright, migration tests) out of default `cargo test` path; separate CI jobs.
 
@@ -95,5 +95,5 @@ CI: `cargo clippy --workspace --all-targets --all-features -- -D warnings` (gate
 - [ ] Transaction boundaries match domain invariants
 - [ ] Success + failure tested; deterministic
 - [ ] Function ≤ 50 lines; no `pub` invariant fields
-- [ ] No unprofiled optimization; no server-class perf machinery (threads/pools/padding); D1 ops batched
+- [ ] No unprofiled optimization; no server-class perf machinery (threads/pools/padding); SQLite writes transactional
 - [ ] Core stays language-neutral ([12-testing.md](12-testing.md) §10)
