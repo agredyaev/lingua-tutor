@@ -4,15 +4,15 @@ Date: 2026-07-12. Status: accepted.
 
 ## Context
 
-Spaced repetition needed. Options: Anki as external engine (AnkiConnect/sync bridge) vs own review subsystem inside app.
+Spaced repetition is required. Options were Anki as an external engine (AnkiConnect/sync bridge) or an owned review subsystem inside the application.
 
 ## Decision
 
-Own `review-engine` crate behind app-owned `ReviewScheduler` trait. FSRS-compatible pinned crate if wasm32/size spike passes (WBS 3.2); deterministic fallback scheduler ships regardless. Anki forbidden as runtime dependency.
+Own `review-engine` behind the application-owned `ReviewScheduler` trait. Use the pinned FSRS-compatible implementation after the compatibility/determinism spike recorded in ADR-0004; ship the deterministic fallback scheduler regardless. Anki is forbidden as a runtime dependency.
 
 ## Consequences
 
-- App owns cards, review events, schedule state in SQLite — single source of truth, immutable history, tutor feedback loop possible.
-- No sync bridge, no desktop dependency, works on iPhone PWA.
-- Cost: we maintain scheduler correctness ourselves → golden + property tests (12-testing.md §2), versioned algorithm + parameter sets.
-- Spec: docs/spec/01-architecture.md AD-4, 05-review-engine.md, spec.md §6.5.
+- The app owns cards, review events, and schedule state in SQLite: one system of record, immutable history, and a direct tutor feedback loop.
+- No sync bridge or desktop dependency is required.
+- Scheduler correctness is owned here: golden/property tests and persisted algorithm/version are mandatory.
+- The scheduler runs in the native runtime under ADR-0006; browser WASM does not depend on `review-engine`.

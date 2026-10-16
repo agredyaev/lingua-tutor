@@ -25,7 +25,7 @@ Decision: expected failure → `Result`; normal absence → `Option`; bug/invari
 | Layer | Strategy |
 |---|---|
 | Library crates (`learning-core`, `review-engine`, `language-pack-api`, …) | `thiserror` enums, precise variants, `#[from]` preserves source. No `anyhow`. |
-| `apps/local` handlers | Map crate errors → API error shape ([08-http-api.md](08-http-api.md) §1) with stable `code`. |
+| `apps/local` handlers | Map crate errors → stable operation error codes at the transport boundary ([08-local-rpc.md](08-local-rpc.md) §1). |
 | `apps/web` | Typed error enum from `shared-schema`; rendered via `<ErrorBoundary>` ([09-frontend.md](09-frontend.md) §2). |
 
 Rules:
@@ -34,7 +34,7 @@ Rules:
 - No `Box<dyn Error>` in public APIs — loses type info; use `thiserror` variants.
 - Keep error enums small; merge variants nobody matches on separately (over-designed taxonomy = anti-pattern).
 - Propagate with `?`; add context at boundaries, not every hop.
-- `ScheduleError` invariant violations (non-finite interval) → error, never panic — Worker must not crash mid-request.
+- `ScheduleError` invariant violations (non-finite interval) → error, never panic — the native runtime must not crash during an operation.
 
 ## 3. Ownership and data
 
@@ -62,7 +62,7 @@ Order of leverage: algorithm > data structure > allocations > micro. Work down, 
 - Batch SQLite writes in one transaction; do not add per-row query loops when a set operation works.
 - No string concatenation in loops; build with capacity or `format!` once.
 - Small fixed sets: `Vec` + linear search or enum-indexed array, not `HashMap` — hash overhead exceeds scan for card grades, evidence kinds, pack lookups.
-- Not applicable here, do not import: rayon/thread pools, false-sharing padding, NUMA, jemalloc, object pools — Workers/WASM is single-threaded per request. Their appearance in a PR = overengineering flag.
+- Not applicable here, do not import: rayon/thread pools, false-sharing padding, NUMA, jemalloc, object pools — the one-user local runtime does not justify server-class machinery. Their appearance in a PR = overengineering flag.
 - WASM size is the binding perf budget ([09-frontend.md](09-frontend.md) §9); dependency weight reviewed before any `cargo add` to `apps/web`.
 
 ## 6. Testing

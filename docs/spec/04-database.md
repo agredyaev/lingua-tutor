@@ -7,7 +7,7 @@ Depends on: [03-domain-model.md](03-domain-model.md).
 
 - IDs: TEXT, opaque, UUIDv7/ULID. Timestamps: TEXT, UTC RFC 3339. Booleans: INTEGER 0/1.
 - `PRAGMA foreign_keys = ON` per connection; enable it in the repository/runtime layer.
-- Migrations are numbered `migrations/NNNN_name.sql` and applied by the local runtime.
+- Migrations are numbered `apps/local/migrations/NNNN_name.sql` and applied by the local runtime.
 - No destructive cascades over learning history. `ON DELETE RESTRICT` default.
 - All `*_json` columns validated at service boundary before write.
 - Review events immutable: no UPDATE/DELETE; corrections = compensating rows.
@@ -353,7 +353,7 @@ CREATE INDEX ix_planner_decisions_profile_created
 
 ## 4. Migration policy
 
-- `migrations/0001_init.sql` creates the v1 learning/review schema.
-- `migrations/0002_planner_history.sql` adds planner decision/outcome history. The local runtime automatically upgrades an existing v1 database to v2.
+- `apps/local/migrations/0001_init.sql` creates the v1 learning/review schema.
+- `apps/local/migrations/0002_planner_history.sql` adds planner decision/outcome history. The local runtime automatically upgrades an existing v1 database to v2.
 - Production: forward-only; no down migrations. Destructive change requires prior backup ([11-infrastructure.md](11-infrastructure.md) §5).
 - Migration tests run in CI against a scratch SQLite ([12-testing.md](12-testing.md)).

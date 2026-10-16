@@ -1,11 +1,11 @@
 //! DTOs shared between `apps/web` and `apps/local`: serde types mirroring
-//! the `/api/v1` contract (08-http-api.md). No domain logic, no IO.
+//! browser/MCP-facing application shapes (08-local-rpc.md). No domain logic, no IO.
 //! Field names must match API JSON exactly — round-trip tests enforce it.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Response body of `GET /api/v1/health`.
+/// Result of the `health` operation.
 ///
 /// The API also includes SQLite, scheduler, and migration metadata.
 ///
@@ -34,7 +34,7 @@ impl HealthResponse {
     }
 }
 
-/// Standard API error body (08-http-api.md §1).
+/// Standard API error body (08-local-rpc.md §1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiErrorBody {
     /// Error envelope.
@@ -116,7 +116,7 @@ pub struct LanguageProfileDto {
     pub is_default: bool,
 }
 
-/// `GET /api/v1/dashboard` payload (08-http-api.md §3). Exceptions first.
+/// `get_dashboard` operation result (08-local-rpc.md §2). Exceptions first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DashboardDto {
     /// Actionable exceptions, ordered by urgency.
@@ -144,7 +144,7 @@ pub struct DashboardDto {
     pub open_recommendations: Vec<String>,
 }
 
-/// One card as served by `/api/v1/cards` (mirrors `learning-core::Card`).
+/// One card exposed to the UI (mirrors `learning-core::Card`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CardDto {
     /// Card ID.
@@ -171,7 +171,7 @@ pub struct CardDto {
     pub suspended_reason: Option<String>,
 }
 
-/// One lesson as served by `/api/v1/lessons`.
+/// One lesson exposed to the UI.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LessonDto {
     /// Lesson ID.
@@ -239,7 +239,7 @@ pub struct EventResultDto {
     pub duplicate: bool,
 }
 
-/// Import validate response (08-http-api.md §7).
+/// Import validate response (08-local-rpc.md §7).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ValidateResponseDto {
     /// Token required by apply.
@@ -343,7 +343,7 @@ pub struct EvaluationDto {
     pub feedback: Option<String>,
 }
 
-/// Error target as served by `/api/v1/error-targets`.
+/// Error target exposed to the UI.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ErrorTargetDto {
     /// Target ID.

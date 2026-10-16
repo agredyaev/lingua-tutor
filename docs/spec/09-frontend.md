@@ -1,7 +1,7 @@
 # 09 — Frontend
 
 Scope: `apps/web` Leptos CSR PWA. Routes, UX requirements, offline, binding Leptos practices (source: https://book.leptos.dev/).
-Depends on: [08-http-api.md](08-http-api.md), [05-review-engine.md](05-review-engine.md).
+Depends on: [08-local-rpc.md](08-local-rpc.md), [05-review-engine.md](05-review-engine.md).
 
 ## 1. App structure
 
@@ -61,13 +61,13 @@ List shows: due status, intent, source, creation reason, recent grade history, r
 
 ## 6. Dashboard
 
-Content = `GET /dashboard` payload ([08-http-api.md](08-http-api.md) §3). Actionable exceptions first (backlog, method-change targets, rechecks due).
+Content = `get_dashboard` RPC result ([08-local-rpc.md](08-local-rpc.md) §2). Actionable exceptions first (backlog, method-change targets, rechecks due).
 
 ## 7. Offline (bounded)
 
-- Service worker caches static assets + latest dashboard summary.
+- Service worker caches static assets only. Dynamic application data is not intercepted; bounded review state is handled explicitly in `offline.rs`.
 - Prefetch bounded due-review batch (≤ `max_review_batch`).
-- Offline review events → IndexedDB queue with `client_operation_id` + `prior_state_hash`.
+- Offline review events → bounded `localStorage` queue with `client_operation_id` + `prior_state_hash` (ADR-0005).
 - On reconnect: replay in order, idempotent; `409 conflict_stale_state` → drop local schedule copy, refetch, keep event for audit resolution.
 - Offline semantic card edits rejected client-side.
 - Stale scheduling state detected via state hash; reconcile safely, never guess.

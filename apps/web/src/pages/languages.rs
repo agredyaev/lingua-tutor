@@ -1,4 +1,4 @@
-//! Language profiles page: list, select active, create (08-http-api.md §2).
+//! Language profiles page: list, select active, create (08-local-rpc.md §2).
 
 use crate::api_client;
 use crate::app::{Page, use_active_profile};

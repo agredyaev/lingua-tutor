@@ -1,6 +1,6 @@
-//! Lesson-completion planning (07-tutor-contract.md §2, 08-http-api.md §4):
+//! Lesson-completion planning (07-tutor-contract.md §2, 08-local-rpc.md §4):
 //! validated lesson result + current state → deterministic apply plan.
-//! Worker persists the plan atomically; this module never touches IO.
+//! The local runtime persists the plan atomically; this module never touches IO.
 
 use learning_core::{
     ErrorTarget, ErrorTargetId, ErrorTargetStatus, LearnerLanguageProfile, LearningItem,

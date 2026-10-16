@@ -46,7 +46,7 @@ Versioned block returned by tutor (paste-import or MCP). Applied atomically with
 }
 ```
 
-Validation server-side, schema- and size-bounded. Existing items are referenced by `learning_item_id`; an item introduced in the same result may define `client_item_key`. Productive evidence carries a concrete `context`; transfer evidence also requires a stable semantic `context_family`. `assistance_level=0` means explicitly unaided; missing assistance is unknown and cannot prove mastery. Assisted success is `prompted_production`, never `spontaneous_production` or `transfer`. Capture `response_millis` and `probe_phase` when reliable. Import flow: validate → preview → apply ([08-http-api.md](08-http-api.md) §7).
+Validation server-side, schema- and size-bounded. Existing items are referenced by `learning_item_id`; an item introduced in the same result may define `client_item_key`. Productive evidence carries a concrete `context`; transfer evidence also requires a stable semantic `context_family`. `assistance_level=0` means explicitly unaided; missing assistance is unknown and cannot prove mastery. Assisted success is `prompted_production`, never `spontaneous_production` or `transfer`. Capture `response_millis` and `probe_phase` when reliable. Import flow: validate → preview → apply ([08-local-rpc.md](08-local-rpc.md) §2).
 
 ## 3. Card mutations
 

@@ -11,7 +11,7 @@ This file maps active architectural requirements to their canonical documentatio
 | Review scheduling | 05-review-engine.md |
 | Language-pack contract | 06-language-packs.md |
 | Tutor import/export contract | 07-tutor-contract.md |
-| Local HTTP API | 08-http-api.md |
+| Local browser RPC/download boundary | 08-local-rpc.md |
 | PWA behavior | 09-frontend.md |
 | Security/privacy | 10-security.md |
 | Local operations/backup/CI | 11-infrastructure.md |

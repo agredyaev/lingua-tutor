@@ -66,7 +66,7 @@ Binding where mapped; Rust makes several rules free.
 | 1 | Simple control flow; no goto/setjmp | Free in Rust. Deep nesting → extract ([16-rust-guidelines.md](16-rust-guidelines.md) §1). |
 | 2 | Fixed upper bound on every loop | Binding: all queue/import/replay loops bounded by spec limits (`max_review_batch`, size-bounded imports, bounded offline batches). No `loop` without break bound. |
 | 3 | No recursion | Binding: none of the domain needs it; recursion = review flag. |
-| 4 | No heap after init | Not adopted — Worker/WASM app; bounded allocations via rule 2 instead. |
+| 4 | No heap after init | Not adopted — local application code uses bounded allocations where needed; rule 2 provides the useful bound. |
 | 5 | Function ≤ 60 lines | Already ≤ 50 ([16-rust-guidelines.md](16-rust-guidelines.md) §1). |
 | 6 | Min two assertions per function | Adapted: invariants asserted at boundaries — schema validation, state-hash check, `debug_assert!` for internal invariants (scheduler transitions). Not a per-function quota. |
 | 7 | Minimal scope for data | Rust default; no module-level mutable state, `OnceLock` for true singletons. |

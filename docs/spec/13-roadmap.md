@@ -2,7 +2,7 @@
 
 ## 1. Current architecture baseline
 
-The production target is local-first: Leptos PWA + one native Rust runtime + one SQLite database. HTTP binds to loopback. ChatGPT integration uses one in-process MCP JSON-RPC dispatcher through the built-in OpenAI Secure MCP Tunnel transport.
+The production target is local-first: Leptos PWA + one native Rust runtime + one SQLite database. The browser boundary binds to loopback and uses `POST /rpc`. ChatGPT integration uses one in-process MCP JSON-RPC dispatcher through the built-in OpenAI Secure MCP Tunnel transport.
 
 ## 2. Product milestones
 
@@ -11,7 +11,7 @@ The production target is local-first: Leptos PWA + one native Rust runtime + one
 - Language packs: versioned pack contract, es-ES implementation, conformance suite.
 - Adaptive loop: review evidence, item × capability projections, concrete task scoring, spaced tutor-focus threads, redesign candidates, recurring error targets, lesson planning, and planner decision→outcome calibration.
 - Local hardening: install/update flow, backup/restore, health checks, PWA/e2e validation.
-- MCP: bounded read/write tools over the same application service layer.
+- MCP: bounded read/write tools call the same application handlers as the PWA operation boundary.
 - Synthetic-pack validation continuously proves that core/review logic is language-neutral.
 
 ## 3. MCP contract

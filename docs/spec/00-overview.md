@@ -18,7 +18,7 @@ Help a learner start speaking quickly while preserving durable learner state, re
 
 ## Topology
 
-One local runtime serves the PWA and HTTP API on `127.0.0.1:8787`, dispatches MCP JSON-RPC in-process through the built-in secure tunnel, and accesses the same SQLite database. There is no remote application deployment or secondary database.
+One local runtime serves the PWA and browser JSON-RPC boundary on `127.0.0.1:8787`, dispatches MCP in-process through the built-in secure tunnel, and accesses the same SQLite database. There is no remote application deployment or secondary database.
 
 ## Core invariants
 

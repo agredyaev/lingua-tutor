@@ -6,8 +6,8 @@ The active implementation path is intentionally flat and local.
 
 - Self-contained native `lingua-tutor` binary.
 - Leptos PWA built with Trunk and served on loopback.
-- One SQLite database initialized from `migrations/0001_init.sql`.
-- HTTP/API and in-process MCP dispatch share the same application logic and persistence.
+- One SQLite database initialized from `apps/local/migrations/0001_init.sql`.
+- Browser JSON-RPC and in-process MCP dispatch share the same handlers and persistence.
 - CI builds/tests native runtime, web UI, migrations, smoke and e2e paths.
 
 ## 2. Domain and review
@@ -19,7 +19,7 @@ The active implementation path is intentionally flat and local.
 
 ## 3. Local operations
 
-- install/update script for the single CLI binary.
+- verified release binaries plus direct Cargo installation; no installer wrapper.
 - current directory selects persistent `.lingua-tutor/` workspace state.
 - explicit SQLite backup with bounded retention.
 - health/integrity checks.

@@ -29,7 +29,7 @@ pub trait ReviewScheduler {
 ## 2. Algorithm selection
 
 - Preferred: FSRS-compatible (difficulty, stability, retrievability; adaptive-capable).
-- Gate before adoption (Milestone 0 spike): crate compiles for `wasm32`/Worker target; binary size acceptable; deterministic outputs.
+- Adoption gate is native-runtime correctness: deterministic outputs, stable persisted algorithm/version, and golden/property tests. The historical WASM spike is retained in ADR-0004 as evidence only; `review-engine` is not a browser dependency.
 - Gate fails → `FallbackScheduler`: small deterministic algorithm behind the same trait. Keep trait, preserve immutable review data, defer optimization, do not block the app.
 - Persist per state: `algorithm`, `algorithm_version`, `parameter_set_id`. Never invalid, negative, or non-finite intervals.
 

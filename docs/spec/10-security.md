@@ -13,7 +13,7 @@ Primary risks are malformed/imported content, duplicate or forged local writes, 
 | HTTP exposure | Bind only to `127.0.0.1`; reject non-loopback host/origin patterns. |
 | Writes | Validate typed inputs; preserve idempotency with `client_operation_id`. |
 | MCP | Expose narrow tools only; no raw SQL, arbitrary code, arbitrary URLs, or unbounded reads. |
-| Tunnel | Use the official OpenAI Secure MCP Tunnel; keep its runtime API key in a mode-0600 local file. |
+| Tunnel | Use the OpenAI Secure MCP Tunnel protocol; prompt for tunnel ID/API key with hidden terminal input per run and keep both in process memory only. |
 | Input | Tutor results and pack assets are schema-validated and size-bounded before use. |
 | Markup | Learning content is plain text or sanitized; no executable markup. |
 | Prompt injection | Stored/imported learner content is data, never tool or system instructions. |

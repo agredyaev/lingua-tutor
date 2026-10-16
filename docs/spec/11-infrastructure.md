@@ -2,31 +2,31 @@
 
 ## Runtime layout
 
-- `lingua-tutor run`: materializes embedded UI assets, opens or creates `.lingua-tutor/lingua.sqlite3`, serves loopback UI/API, and connects the in-process MCP service to OpenAI Secure MCP Tunnel.
+- `lingua-tutor run`: materializes embedded UI assets, opens or creates `.lingua-tutor/lingua.sqlite3`, serves loopback static assets + `POST /rpc` + export downloads, and connects the in-process MCP service to OpenAI Secure MCP Tunnel.
 - The current working directory identifies the workspace.
 - Repeated runs in the same directory reuse the same SQLite database.
-- Tunnel ID and Runtime API key are session-only and never persisted.
-- `lingua-tutor run --no-tunnel`: UI/API only.
+- Tunnel ID and Runtime API key are hidden-input, session-only values and are never persisted.
+- `lingua-tutor run --no-tunnel`: browser UI/RPC only.
+- Runtime-owned migrations live under `apps/local/migrations/`.
 
 ## CI gate
 
 1. `cargo fmt --check`
-2. `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-3. `cargo test --workspace`
-4. scheduler golden/property tests
-5. web build + size budget
-6. self-contained CLI build
-7. migration tests
-8. local HTTP/MCP smoke tests
-9. Playwright
-10. dependency-direction checks and cargo-deny
+2. strict workspace clippy
+3. workspace tests
+4. web build + WASM size budget
+5. cargo-deny
+6. native macOS/Linux build and smoke
+7. Linux x64/aarch64 cross-build verification
+8. Playwright e2e
+9. staged release assets + SHA256 verification
 
 ## Installation
 
-Install directly with `cargo install --path apps/local --bin lingua-tutor --locked`. No installer script, service manager, or separate tunnel installer is required.
+Install from source with `cargo install --path apps/local --bin lingua-tutor --locked`, or use a verified release binary. No service manager, installer wrapper, or separate tunnel executable is required.
 
 ## Backup and health
 
 `lingua-tutor backup` uses SQLite online backup. `lingua-tutor check` validates the project database.
 
-`GET /api/v1/health` reports runtime/schema health without private learning content or secrets.
+Runtime health is the `health` JSON-RPC operation. It reports runtime/schema health without private learning content or secrets.

@@ -2,7 +2,7 @@
 
 Local-first adaptive language tutor with one SQLite source of truth.
 
-- UI/API on `127.0.0.1:8787`;
+- PWA + JSON-RPC `/rpc` on `127.0.0.1:8787`;
 - project-local SQLite;
 - 15 MCP tools over the same application logic;
 - built-in OpenAI Secure MCP Tunnel protocol adapted from Rivet;

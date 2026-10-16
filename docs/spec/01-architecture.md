@@ -18,7 +18,7 @@ flowchart LR
     LP[Active Language Pack]
 
     U --> P
-    P -->|HTTP 127.0.0.1:8787| L
+    P -->|POST /rpc + static/download HTTP| L
     L --> D
     L --> CORE
     CORE --> REV
@@ -28,7 +28,7 @@ flowchart LR
     L -->|outbound MCP tunnel| T
 ```
 
-One local application owns the HTTP API, PWA assets, in-process MCP dispatch, secure tunnel transport, and SQLite access. There is no application server, database, authentication service, or deployment environment outside the machine.
+One local application owns the PWA assets, browser JSON-RPC boundary, in-process MCP dispatch, secure tunnel transport, and SQLite access. There is no application server, database, authentication service, or deployment environment outside the machine.
 
 ## 2. Trust boundaries
 
@@ -45,9 +45,10 @@ One local application owns the HTTP API, PWA assets, in-process MCP dispatch, se
 ## 3. Binding decisions
 
 - Frontend: Leptos CSR PWA served by the local runtime.
-- Runtime: native Rust executable, loopback HTTP only.
+- Runtime: native Rust executable; loopback HTTP serves static assets, `POST /rpc`, and explicit file downloads only.
 - Persistence: one SQLite database with WAL and foreign keys enabled.
-- MCP: one in-process JSON-RPC dispatcher shared by the built-in secure tunnel and application logic; no secondary MCP server or stdio transport.
+- PWA operations: JSON-RPC 2.0 over `POST /rpc`; no REST resource layer for application commands/queries.
+- MCP: one in-process tool dispatcher calling the same handlers directly; no secondary MCP server, synthetic HTTP, or stdio transport.
 - Remote reachability: outbound OpenAI Secure MCP Tunnel protocol adapted from Rivet; no public MCP listener, tunnel-client, cloudflared, or child MCP process.
 - Plugins: compile-time registration, runtime selection.
 - Interoperability: versioned JSON/CSV export; no second system of record.

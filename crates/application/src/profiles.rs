@@ -1,4 +1,4 @@
-//! Language-profile creation rules (08-http-api.md §2).
+//! Language-profile creation rules (08-local-rpc.md §2).
 
 use language_pack_api::{CONTRACT_VERSION, LanguagePackManifest};
 

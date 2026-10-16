@@ -26,7 +26,7 @@ Browser
   │ HTTP 127.0.0.1:8787
   ▼
 lingua-tutor
-  ├─ UI/API
+  ├─ UI + /rpc + downloads
   ├─ SQLite: .lingua-tutor/lingua.sqlite3
   └─ in-process MCP
           │

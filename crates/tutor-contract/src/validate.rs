@@ -3,7 +3,7 @@
 
 use crate::{CardMutation, LessonResult, MutationOperation, SCHEMA_VERSION, bounds};
 
-/// One validation problem, addressable in the import preview (08-http-api.md §7).
+/// One validation problem, addressable in the import preview (08-local-rpc.md §7).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ValidationIssue {
     /// Stable machine code, e.g. `too_long`, `missing_field`.

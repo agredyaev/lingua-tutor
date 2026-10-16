@@ -35,12 +35,12 @@ Apply all migrations to scratch SQLite in CI; schema matches [04-database.md](04
 
 ## 7. End-to-end (Playwright)
 
-Lesson-result import creates cards; MCP-equivalent lesson completion (service-layer path); daily review; offline review sync; dashboard update; card suspend + restore; full export + restore.
+Lesson-result import creates cards; MCP-equivalent lesson completion through the shared handler path; daily review; offline review sync; dashboard update; card suspend + restore; full export + restore.
 
 ## 8. Performance targets (one learner)
 
-- Dashboard API < 500 ms normal load.
-- Review event response < 300 ms online.
+- Dashboard operation < 500 ms normal load.
+- Review operation response < 300 ms online.
 - Next-card transition feels immediate (queue prefetched client-side).
 - Offline review independent of server latency.
 - Due-card query uses `ix_schedule_due`.

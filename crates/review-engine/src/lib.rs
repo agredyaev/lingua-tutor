@@ -158,7 +158,7 @@ impl Default for SchedulerSettings {
     }
 }
 
-/// Scheduling failure. Worker maps this to an API error; never a panic
+/// Scheduling failure. The runtime maps this to an operation error; never a panic
 /// (16-rust-guidelines.md §2).
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ScheduleError {
