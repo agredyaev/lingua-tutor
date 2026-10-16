@@ -85,8 +85,9 @@ jobs:
             target="$(jq -r .target_commitish <<< "$release_json")"
 
             if [[ "$draft" != "true" ]]; then
-              echo "::error::Published release $tag already exists."
-              exit 1
+              echo "Published release $tag already exists; skipping release staging."
+              echo "stage=false" >> "$GITHUB_OUTPUT"
+              exit 0
             fi
 
             if [[ "$target" != "$SHA" ]]; then
