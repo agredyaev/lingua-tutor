@@ -10,7 +10,7 @@ const CONCRETE_PACK: &str = "language-pack-es-es";
 const TEST_PACK: &str = "synthetic-test-pack";
 
 fn core_manifests() -> Vec<(String, String)> {
-    let crates_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../crates");
+    let crates_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../crates");
     fs::read_dir(crates_dir)
         .unwrap()
         .map(|e| e.unwrap().path().join("Cargo.toml"))

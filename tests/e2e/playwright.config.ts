@@ -1,12 +1,13 @@
 // Playwright e2e: native localhost server, fresh directory-local SQLite per run.
 import { defineConfig } from "@playwright/test";
+import { resolve } from "node:path";
 
 const port = Number(process.env.E2E_PORT ?? 18788);
-const root = process.cwd();
+const root = resolve(process.cwd(), "../..");
 const workspace = `${root}/target/e2e-${process.pid}`;
 
 export default defineConfig({
-  testDir: "tests/e2e",
+  testDir: "specs",
   timeout: 30_000,
   retries: 0, // flaky test = bug (16-rust-guidelines.md §6)
   reporter: [["list"], ["html", { open: "never" }]],

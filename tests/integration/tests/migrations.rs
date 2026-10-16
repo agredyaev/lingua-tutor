@@ -1,4 +1,4 @@
-//! Migration suite: applies `migrations/*.sql` to scratch SQLite and asserts
+//! Migration suite: applies `apps/local/migrations/*.sql` to scratch SQLite and asserts
 //! the schema matches 04-database.md §2 (12-testing.md migration tests).
 
 // tests exempt from panic-family lints (16-rust-guidelines.md §2)

@@ -22,5 +22,8 @@ jobs:
       - name: build native server
         run: cargo build -p lingua-tutor-local --bin lingua-tutor
       - run: npm ci --ignore-scripts
+        working-directory: tests/e2e
       - run: npx playwright install --with-deps chromium
+        working-directory: tests/e2e
       - run: npx playwright test
+        working-directory: tests/e2e

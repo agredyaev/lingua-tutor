@@ -3,8 +3,8 @@
 /fuzz/target
 node_modules/
 *.wasm.map
-/test-results
-/playwright-report
+/tests/e2e/test-results/
+/tests/e2e/playwright-report/
 /.local-preview/
 .DS_Store
 /.local-dev/

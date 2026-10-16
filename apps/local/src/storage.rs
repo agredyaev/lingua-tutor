@@ -8,8 +8,8 @@ use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-const INIT: &str = include_str!("../../../migrations/0001_init.sql");
-const MIGRATION_2: &str = include_str!("../../../migrations/0002_planner_history.sql");
+const INIT: &str = include_str!("../migrations/0001_init.sql");
+const MIGRATION_2: &str = include_str!("../migrations/0002_planner_history.sql");
 const SCHEMA_VERSION: i64 = 2;
 const SCHEMA_NAME: &str = "0002_planner_history.sql";
 

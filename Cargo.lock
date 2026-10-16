@@ -1926,7 +1926,6 @@ name = "review-engine"
 version = "0.1.0"
 dependencies = [
  "fsrs",
- "getrandom 0.4.3",
  "proptest",
  "thiserror 2.0.18",
 ]

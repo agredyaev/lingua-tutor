@@ -1,5 +1,5 @@
 //! Cross-crate integration tests. Test code only; never ships
-//! (02-workspace.md §1 `tests/`). Suites live in `tests/tests/`.
+//! (02-workspace.md §1 `tests/`). Suites live in `tests/integration/tests/`.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -7,10 +7,10 @@ use rusqlite::Connection;
 use std::fs;
 use std::path::PathBuf;
 
-/// Path of the shared `migrations/` directory.
+/// Path of the native runtime migration directory.
 #[must_use]
 pub fn migrations_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../migrations")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/local/migrations")
 }
 
 /// Fresh in-memory DB with every migration applied in numeric order and
@@ -21,7 +21,7 @@ pub fn migrated_connection() -> Connection {
     conn.pragma_update(None, "foreign_keys", "ON").unwrap();
 
     let mut files: Vec<PathBuf> = fs::read_dir(migrations_dir())
-        .expect("migrations/ directory exists")
+        .expect("apps/local/migrations directory exists")
         .map(|e| e.unwrap().path())
         .filter(|p| p.extension().is_some_and(|ext| ext == "sql"))
         .collect();

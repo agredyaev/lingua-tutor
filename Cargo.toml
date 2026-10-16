@@ -16,7 +16,7 @@ members = [
     "crates/test-support",
     "language-packs/es-es",
     "language-packs/synthetic-test-pack",
-    "tests",
+    "tests/integration",
 ]
 
 [workspace.package]

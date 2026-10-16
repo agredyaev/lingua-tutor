@@ -1,4 +1,0 @@
-# fsrs → rand → getrandom needs an explicit backend on wasm32
-# (docs/adr/0004-fsrs-go.md). Workers and browsers both provide WebCrypto.
-[target.wasm32-unknown-unknown]
-rustflags = ['--cfg', 'getrandom_backend="wasm_js"']

@@ -7,9 +7,6 @@ license.workspace = true
 publish.workspace = true
 description = "Cross-crate integration tests (02-workspace.md §1)"
 
-[lib]
-path = "lib.rs"
-
 [dependencies]
 rusqlite = { version = "0.37", features = ["bundled"] }
 
@@ -17,7 +14,7 @@ rusqlite = { version = "0.37", features = ["bundled"] }
 review-engine = { workspace = true }
 adaptation = { workspace = true }
 learning-core = { workspace = true }
-lingua-tutor-local = { path = "../apps/local" }
+lingua-tutor-local = { path = "../../apps/local" }
 language-pack-es-es = { workspace = true }
 synthetic-test-pack = { workspace = true }
 language-pack-registry = { workspace = true }
