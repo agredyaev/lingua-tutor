@@ -7,7 +7,8 @@ Date: 2026-10-16. Status: accepted.
 The original design assumed a remote Worker-style deployment and exposed most application operations as REST `/api/v1` resources.
 The current runtime uses one native Rust binary, one directory-local SQLite database, one Leptos PWA, and one in-process MCP implementation.
 
-REST-shaped internal calls, Worker/WASM scheduler constraints, credential files, or a second application transport would add a second representation or execution path to the single-process runtime.
+REST-shaped internal calls and a second application transport would add a second operation path.
+Worker/WASM scheduler constraints or credential files would add runtime state that the native process does not require.
 
 ## Decision
 
