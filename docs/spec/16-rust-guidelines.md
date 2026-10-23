@@ -20,7 +20,7 @@ Depends on: [02-workspace.md](02-workspace.md), [12-testing.md](12-testing.md).
 
 ## 2. Error handling
 
-Decision: expected failure → `Result`; normal absence → `Option`; bug/invariant violation → `panic!`/`assert!`.
+Decision: expected failure → `Result`; expected absence → `Option`; bug or invariant violation → `panic!`/`assert!`.
 
 | Layer | Strategy |
 |---|---|
@@ -48,7 +48,10 @@ Rules:
 ## 4. Database (SQLite repositories)
 
 - Repository layer (`apps/local/src/repositories/`) strictly separated from domain logic; SQL lives only there.
-- Transaction boundaries follow domain invariants ([01-architecture.md](01-architecture.md) §4). Review event + schedule state use one transaction. Lesson completion uses one transaction. Network calls do not run inside transactions.
+- Transaction boundaries follow domain invariants ([01-architecture.md](01-architecture.md) §4).
+- Review event + schedule state use one transaction.
+- Lesson completion uses one transaction.
+- Network calls do not run inside transactions.
 - No N+1: queue fetch joins card + schedule state in one query.
 - Additive migrations preferred; destructive → backup first + phased ([04-database.md](04-database.md) §4, [11-infrastructure.md](11-infrastructure.md) §5).
 - Timezone/nullability handled once at repository boundary; domain types never hold raw TEXT timestamps.
