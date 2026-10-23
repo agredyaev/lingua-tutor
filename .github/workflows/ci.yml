@@ -37,6 +37,12 @@ jobs:
       - name: Test
         run: cargo test --locked --workspace
 
+      - name: Representative performance gate
+        run: >-
+          cargo test --locked --release -p lingua-tutor-local
+          representative_single_learner_latency_stays_within_budget
+          -- --ignored --nocapture
+
       - name: Build web
         working-directory: apps/web
         run: trunk build --release --cargo-profile wasm-release
@@ -131,7 +137,7 @@ jobs:
       - name: Build native release binary
         run: cargo build --locked --release -p lingua-tutor-local --bin lingua-tutor
 
-      - name: Smoke native binary
+      - name: Smoke native binary and backup recovery
         shell: bash
         run: |
           set -euo pipefail
@@ -139,28 +145,50 @@ jobs:
 
           workspace="$(mktemp -d)"
           log="$workspace/runtime.log"
+          binary="$GITHUB_WORKSPACE/target/release/lingua-tutor"
           (
             cd "$workspace"
-            "$GITHUB_WORKSPACE/target/release/lingua-tutor" run --no-tunnel --port 18787 >"$log" 2>&1 &
-            pid=$!
-            trap 'kill "$pid" 2>/dev/null || true' EXIT
 
-            ready=0
-            for _ in {1..30}; do
-              if curl -fsS http://127.0.0.1:18787/ >/dev/null; then
-                ready=1
-                break
+            start_runtime() {
+              "$binary" run --no-tunnel --port 18787 >"$log" 2>&1 &
+              pid=$!
+              ready=0
+              for _ in {1..30}; do
+                if curl -fsS http://127.0.0.1:18787/ >/dev/null; then
+                  ready=1
+                  break
+                fi
+                sleep 1
+              done
+              if [[ "$ready" != 1 ]]; then
+                cat "$log"
+                exit 1
               fi
-              sleep 1
-            done
-            if [[ "$ready" != 1 ]]; then
-              cat "$log"
-              exit 1
-            fi
+            }
+
+            start_runtime
+            trap 'kill "$pid" 2>/dev/null || true' EXIT
 
             test -s .lingua-tutor/web/index.html
             response="$(curl -fsS               -H 'Content-Type: application/json'               -d '{"jsonrpc":"2.0","id":1,"method":"health","params":{}}'               http://127.0.0.1:18787/rpc)"
             grep -Fq '"result"' <<< "$response"
+
+            created="$(curl -fsS               -H 'Content-Type: application/json'               -d '{"jsonrpc":"2.0","id":2,"method":"create_language_profile","params":{"language_pack_id":"es-ES","source_language":"ru"}}'               http://127.0.0.1:18787/rpc)"
+            grep -Fq '"result"' <<< "$created"
+
+            backup_path="$("$binary" backup)"
+            test -s "$backup_path"
+
+            kill "$pid"
+            wait "$pid" || true
+            rm .lingua-tutor/lingua.sqlite3
+            cp "$backup_path" .lingua-tutor/lingua.sqlite3
+            "$binary" check
+
+            start_runtime
+            restored="$(curl -fsS               -H 'Content-Type: application/json'               -d '{"jsonrpc":"2.0","id":3,"method":"list_language_profiles","params":{}}'               http://127.0.0.1:18787/rpc)"
+            grep -Fq '"language_pack_id":"es-ES"' <<< "$restored"
+            grep -Fq '"source_language":"ru"' <<< "$restored"
           )
 
       - if: runner.os == 'macOS'
@@ -180,12 +208,14 @@ jobs:
         run: |
           set -euo pipefail
           package_dir="$(mktemp -d)"
-          mkdir -p "$package_dir/bin"
-          cp target/aarch64-apple-darwin/release/lingua-tutor "$package_dir/bin/lingua-tutor"
-          chmod +x "$package_dir/bin/lingua-tutor"
-          cp LICENSE "$package_dir/LICENSE"
+          cp target/aarch64-apple-darwin/release/lingua-tutor "$package_dir/lingua-tutor"
+          chmod +x "$package_dir/lingua-tutor"
           asset="$GITHUB_WORKSPACE/lingua-tutor-v$VERSION-darwin-arm64.zip"
-          (cd "$package_dir" && zip -qr "$asset" .)
+          (cd "$package_dir" && zip -q "$asset" lingua-tutor)
+          test "$(unzip -Z1 "$asset")" = "lingua-tutor"
+          verify_dir="$(mktemp -d)"
+          unzip -q "$asset" -d "$verify_dir"
+          test -x "$verify_dir/lingua-tutor"
           gh release upload "$TAG" "$asset" --repo "$GH_REPO" --clobber
 
   cross:
@@ -238,11 +268,13 @@ jobs:
             binary="$1"
             asset="$2"
             package_dir="$(mktemp -d)"
-            mkdir -p "$package_dir/bin"
-            cp "$binary" "$package_dir/bin/lingua-tutor"
-            chmod +x "$package_dir/bin/lingua-tutor"
-            cp LICENSE "$package_dir/LICENSE"
-            (cd "$package_dir" && zip -qr "$GITHUB_WORKSPACE/$asset" .)
+            cp "$binary" "$package_dir/lingua-tutor"
+            chmod +x "$package_dir/lingua-tutor"
+            (cd "$package_dir" && zip -q "$GITHUB_WORKSPACE/$asset" lingua-tutor)
+            test "$(unzip -Z1 "$GITHUB_WORKSPACE/$asset")" = "lingua-tutor"
+            verify_dir="$(mktemp -d)"
+            unzip -q "$GITHUB_WORKSPACE/$asset" -d "$verify_dir"
+            test -x "$verify_dir/lingua-tutor"
           }
 
           package target/x86_64-unknown-linux-gnu/release/lingua-tutor             "lingua-tutor-v$VERSION-linux-x64.zip"
@@ -272,6 +304,13 @@ jobs:
           expected="$(printf '%s\n'             "lingua-tutor-v$VERSION-darwin-arm64.zip"             "lingua-tutor-v$VERSION-linux-aarch64.zip"             "lingua-tutor-v$VERSION-linux-x64.zip" | sort)"
           actual="$(find dist -maxdepth 1 -type f -exec basename {} \; | sort)"
           test "$actual" = "$expected"
+
+          for archive in dist/lingua-tutor-*.zip; do
+            test "$(unzip -Z1 "$archive")" = "lingua-tutor"
+            verify_dir="$(mktemp -d)"
+            unzip -q "$archive" -d "$verify_dir"
+            test -x "$verify_dir/lingua-tutor"
+          done
 
           (cd dist && sha256sum lingua-tutor-*.zip > SHA256SUMS)
           (cd dist && sha256sum -c SHA256SUMS)
