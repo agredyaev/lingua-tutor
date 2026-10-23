@@ -11,15 +11,16 @@
 
 ## CI gate
 
-1. `cargo fmt --check`
-2. strict workspace clippy
-3. workspace tests
-4. web build + WASM size budget
-5. cargo-deny
-6. native macOS/Linux build and smoke
-7. Linux x64/aarch64 cross-build verification
-8. Playwright e2e
-9. staged release assets + SHA256 verification
+1. user-documentation release contract
+2. `cargo fmt --check`
+3. strict workspace clippy
+4. workspace tests
+5. web build + WASM size budget
+6. cargo-deny
+7. native macOS/Linux build and smoke
+8. Linux x64/aarch64 cross-build verification
+9. Playwright e2e
+10. staged release assets + SHA256 verification
 
 ## Installation and release distribution
 
