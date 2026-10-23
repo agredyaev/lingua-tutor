@@ -5,7 +5,7 @@ Date: 2026-07-12. Status: accepted. The active frontend spec matches this decisi
 ## Context
 
 The offline review queue is bounded by the review batch size.
-It stores an ordered event list and the prefetched queue snapshot.
+The queue stores an ordered event list and the prefetched queue snapshot.
 IndexedDB would add asynchronous schema and version management for this bounded key-value state.
 
 ## Decision
