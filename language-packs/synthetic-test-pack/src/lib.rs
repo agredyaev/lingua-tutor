@@ -1,5 +1,5 @@
-//! Minimal pack with artificial language rules, implementing the full
-//! contract for core CI (06-language-packs.md §6). Never registered in
+//! Test pack with artificial language rules for core CI (06-language-packs.md §6).
+//! Not registered in
 //! production builds; carries no real-language content.
 
 use language_pack_api::{
