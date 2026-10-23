@@ -38,7 +38,7 @@ pub struct LanguagePackManifest {
     pub capabilities: Vec<Capability>,
 }
 
-/// Closed capability set a pack may declare.
+/// Closed capability set declared by a pack.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Capability {
@@ -136,7 +136,7 @@ pub enum CoreErrorCategory {
     Pronunciation,
     /// Spelling, diacritics, punctuation.
     Orthography,
-    /// Anything the pack cannot place more precisely.
+    /// Pack metadata not represented by typed fields.
     Other,
 }
 
@@ -196,7 +196,7 @@ pub struct LearnerLanguageProfile {
 pub struct TutorInstructionBundle {
     /// Prompt fragments injected into tutor context.
     pub instructions: String,
-    /// How the tutor should present corrections.
+    /// Correction presentation rules for the tutor.
     pub correction_conventions: String,
 }
 
