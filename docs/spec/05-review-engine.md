@@ -1,6 +1,8 @@
 # 05 — Review Engine
 
-Scope: `review-engine` crate. Scheduler trait, algorithm selection, states, grades, queue, events, backlog protection. Language-neutral: no knowledge of Spanish, grammar, or vocabulary.
+Scope: `review-engine` crate.
+Covers scheduler selection, state, grades, queue ordering, review events, and backlog rules.
+Contains no language-specific rules.
 Depends on: [03-domain-model.md](03-domain-model.md), [04-database.md](04-database.md).
 
 ## 1. Scheduler trait
@@ -42,7 +44,9 @@ candidate → new → learning → review ⇄ relearning
                         any → retired
 ```
 
-`candidate`: tutor proposal, not introduced (budget, duplication, or quality validation pending). Full transition rules: tutor mutations ([07-tutor-contract.md](07-tutor-contract.md)) + review results.
+`candidate`: card proposal not yet admitted to review.
+A candidate remains pending because of activation budget, duplicate detection, or validation.
+Tutor mutations and review results define state transitions ([07-tutor-contract.md](07-tutor-contract.md)).
 
 ## 4. Grades
 
@@ -87,7 +91,7 @@ Each grade writes the event and `card_schedule_state` in one transaction.
 `client_operation_id` is unique. A duplicate submission returns the original result and writes no row.
 
 `prior_state_hash` and `result_state_hash` are deterministic hashes of `ScheduledState`.
-They support offline conflict detection, reproducibility tests, and audit.
+The hashes support offline conflict detection, reproducibility tests, and audit.
 A stale `prior_state_hash` returns a conflict error; the client refetches state.
 
 Undo: only the immediately previous grade; compensating event with `compensates_event_id` set + recalculated state. Never deletes.
@@ -115,7 +119,14 @@ The due-card query must use `ix_schedule_due`.
 
 ## 10. Ineffective-card detection
 
-A card becomes a redesign candidate when any configured condition matches: repeated `Again` grades in the rolling window; response time above the redesign threshold with repeated `Hard` grades; repeated failure while related cards succeed; learner-reported ambiguous prompt; conflict with another card; or review success with repeated conversational failure.
+A card becomes a redesign candidate when any configured condition matches:
+
+- `Again` count reaches the rolling-window threshold;
+- `Hard` count reaches its threshold and mean response time reaches the latency threshold;
+- the card fails while related cards succeed;
+- the learner reports an ambiguous prompt;
+- the card conflicts with another card;
+- review success coexists with spontaneous-production failure.
 
 The detector emits recommendations; it does not apply mutations.
 Actions: clarify prompt; add context; add accepted answer; split; switch modality; add contrast; suspend; replace with role-play practice.
@@ -123,4 +134,12 @@ Actions: clarify prompt; add context; add accepted answer; split; switch modalit
 ## 11. Parameter sets
 
 - v1 ships reviewed defaults in `scheduler_parameter_sets` (`origin='default'`).
-- Constraints when implemented: documented minimum sample threshold; ignore invalid/corrected events; run off request path; retain previous set; dry-run comparison; no mass rescheduling by default; rollback supported.
+Parameter optimization, when enabled, must:
+
+- define a minimum sample threshold;
+- exclude invalid and corrected events;
+- run outside the request path;
+- retain the previous parameter set;
+- record a dry-run comparison;
+- avoid mass rescheduling unless explicitly requested;
+- support rollback.
