@@ -121,6 +121,13 @@ jobs:
           gh release download "$TAG" --repo "$GH_REPO" --dir dist
           (cd dist && sha256sum -c SHA256SUMS)
 
+          for archive in dist/lingua-tutor-*.zip; do
+            test "$(unzip -Z1 "$archive")" = "lingua-tutor"
+            verify_dir="$(mktemp -d)"
+            unzip -q "$archive" -d "$verify_dir"
+            test -x "$verify_dir/lingua-tutor"
+          done
+
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
 
       - name: Publish verified draft

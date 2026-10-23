@@ -180,12 +180,14 @@ jobs:
         run: |
           set -euo pipefail
           package_dir="$(mktemp -d)"
-          mkdir -p "$package_dir/bin"
-          cp target/aarch64-apple-darwin/release/lingua-tutor "$package_dir/bin/lingua-tutor"
-          chmod +x "$package_dir/bin/lingua-tutor"
-          cp LICENSE "$package_dir/LICENSE"
+          cp target/aarch64-apple-darwin/release/lingua-tutor "$package_dir/lingua-tutor"
+          chmod +x "$package_dir/lingua-tutor"
           asset="$GITHUB_WORKSPACE/lingua-tutor-v$VERSION-darwin-arm64.zip"
-          (cd "$package_dir" && zip -qr "$asset" .)
+          (cd "$package_dir" && zip -q "$asset" lingua-tutor)
+          test "$(unzip -Z1 "$asset")" = "lingua-tutor"
+          verify_dir="$(mktemp -d)"
+          unzip -q "$asset" -d "$verify_dir"
+          test -x "$verify_dir/lingua-tutor"
           gh release upload "$TAG" "$asset" --repo "$GH_REPO" --clobber
 
   cross:
@@ -238,11 +240,13 @@ jobs:
             binary="$1"
             asset="$2"
             package_dir="$(mktemp -d)"
-            mkdir -p "$package_dir/bin"
-            cp "$binary" "$package_dir/bin/lingua-tutor"
-            chmod +x "$package_dir/bin/lingua-tutor"
-            cp LICENSE "$package_dir/LICENSE"
-            (cd "$package_dir" && zip -qr "$GITHUB_WORKSPACE/$asset" .)
+            cp "$binary" "$package_dir/lingua-tutor"
+            chmod +x "$package_dir/lingua-tutor"
+            (cd "$package_dir" && zip -q "$GITHUB_WORKSPACE/$asset" lingua-tutor)
+            test "$(unzip -Z1 "$GITHUB_WORKSPACE/$asset")" = "lingua-tutor"
+            verify_dir="$(mktemp -d)"
+            unzip -q "$GITHUB_WORKSPACE/$asset" -d "$verify_dir"
+            test -x "$verify_dir/lingua-tutor"
           }
 
           package target/x86_64-unknown-linux-gnu/release/lingua-tutor             "lingua-tutor-v$VERSION-linux-x64.zip"
@@ -272,6 +276,13 @@ jobs:
           expected="$(printf '%s\n'             "lingua-tutor-v$VERSION-darwin-arm64.zip"             "lingua-tutor-v$VERSION-linux-aarch64.zip"             "lingua-tutor-v$VERSION-linux-x64.zip" | sort)"
           actual="$(find dist -maxdepth 1 -type f -exec basename {} \; | sort)"
           test "$actual" = "$expected"
+
+          for archive in dist/lingua-tutor-*.zip; do
+            test "$(unzip -Z1 "$archive")" = "lingua-tutor"
+            verify_dir="$(mktemp -d)"
+            unzip -q "$archive" -d "$verify_dir"
+            test -x "$verify_dir/lingua-tutor"
+          done
 
           (cd dist && sha256sum lingua-tutor-*.zip > SHA256SUMS)
           (cd dist && sha256sum -c SHA256SUMS)
