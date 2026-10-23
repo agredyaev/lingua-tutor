@@ -28,6 +28,23 @@ jobs:
         with:
           tool: trunk@0.21.14,cargo-deny@0.20.2
 
+      - name: Documentation contract
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          user_docs=(README.md docs/installation.md docs/local-runtime.md)
+          if grep -nE 'cargo[[:space:]]+install' "${user_docs[@]}"; then
+            echo "End-user documentation must install from release binaries, not Cargo." >&2
+            exit 1
+          fi
+
+          grep -Fq 'lingua-tutor-vX.Y.Z-darwin-arm64.zip' docs/installation.md
+          grep -Fq 'lingua-tutor-vX.Y.Z-linux-x64.zip' docs/installation.md
+          grep -Fq 'lingua-tutor-vX.Y.Z-linux-aarch64.zip' docs/installation.md
+          grep -Fq 'SHA256SUMS' README.md
+          grep -Fq 'SHA256SUMS' docs/installation.md
+
       - name: Format
         run: cargo fmt --all -- --check
 
