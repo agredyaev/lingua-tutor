@@ -214,7 +214,7 @@ pub fn plan_next_lesson(input: &LessonPlannerInput) -> AdaptiveLessonPlan {
         priorities.push(priority(
             "diagnose_and_expand",
             50,
-            "no urgent weakness is detected; probe retained skills, then expand one useful scenario",
+            "no urgent weakness is detected; probe retained skills, then use one scenario from learner priorities",
         ));
     }
 
