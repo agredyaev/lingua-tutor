@@ -13,7 +13,10 @@ Core never decides language-specific correctness, naturalness, morphology, punct
 
 ## 2. Contract
 
-Core owns all request/response types. Pack cannot expose implementation types across the boundary. Types may evolve; the responsibility split may not.
+Core owns all request/response types.
+A pack cannot expose implementation types across the boundary.
+Request/response types change through the contract-version process.
+The responsibility split is fixed.
 
 ```rust
 pub trait LanguagePack: Send + Sync {
@@ -74,7 +77,7 @@ pub fn built_in_language_packs() -> LanguagePackRegistry {
 ```
 
 - Compile-time registration; runtime selection by pack ID via `learner_language_profiles.language_pack_id`.
-- Contract compatibility: core has integer `CONTRACT_VERSION`; startup fails clearly when an enabled pack's `contract_version` mismatches.
+- Contract compatibility: core has integer `CONTRACT_VERSION`. Registry construction returns a version-mismatch error when an enabled pack declares another version.
 - Only built-in compatible packs activatable in v1.
 - Enabled pack metadata persisted to `language_packs` table for audit + historical attribution.
 
@@ -86,7 +89,9 @@ pub fn built_in_language_packs() -> LanguagePackRegistry {
 
 ## 6. `synthetic-test-pack`
 
-Minimal pack implementing full contract with artificial language rules. Used by core CI so generic behavior never couples to Spanish. Not registered in production builds.
+`synthetic-test-pack` implements the language-pack contract with artificial language rules.
+Core CI uses it to test language-neutral behavior.
+Production builds do not register it.
 
 ## 7. `language-pack-es-es`
 
@@ -100,10 +105,12 @@ Contains, as code + versioned declarative assets (`language-packs/es-es/assets/`
 | `error-taxonomy/` | Spanish error codes → core categories; correction guidance |
 | `card-templates/` | Production, listening, contrast, transfer templates |
 | `tutor-instructions/` | Prompt fragments, correction conventions; Russian learner-facing defaults |
-| `curriculum/` | Practical scenarios for life in Spain; CEFR-mapped catalog |
+| `curriculum/` | Scenarios for life in Spain; CEFR-mapped catalog |
 | `phrase-seeds/` | Phrases/constructions for initial curriculum |
 
-Target: contemporary Spanish of Spain. Default source language: Russian. No Spanish-specific code moves into core crates — ever.
+Target: contemporary Spanish of Spain.
+Default source language: Russian.
+Core crates do not contain Spanish-specific code.
 
 ## 8. Conformance suite
 
