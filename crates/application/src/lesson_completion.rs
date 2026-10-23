@@ -36,7 +36,7 @@ pub struct LessonCompletionContext {
     pub evidence_for_mastery: Vec<(LearningItemId, Vec<LearningItemEvidence>)>,
 }
 
-/// Reference to an item that may not have an ID yet.
+/// Reference to either a persisted item ID or a lesson-local item key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ItemRef {
     /// Existing row.
