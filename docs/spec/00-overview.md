@@ -19,8 +19,8 @@ Support spoken-language practice while storing learner state, review history, tu
 ## Topology
 
 One runtime serves the PWA and JSON-RPC on `127.0.0.1:8787`.
-It dispatches MCP in-process through OpenAI Secure MCP Tunnel.
-It accesses the same SQLite database.
+The runtime dispatches MCP in-process through OpenAI Secure MCP Tunnel.
+The runtime accesses the same SQLite database.
 The application has no remote deployment or secondary database.
 
 ## Core invariants
