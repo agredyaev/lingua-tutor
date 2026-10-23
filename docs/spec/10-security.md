@@ -4,7 +4,15 @@ Scope: active local threat model.
 
 ## 1. Threat model
 
-Primary risks are malformed/imported content, duplicate or forged local writes, prompt injection through stored lesson/card text, unsafe markup, accidental database loss, excessive MCP permissions, and secret leakage.
+Threats in scope:
+
+- malformed imported content;
+- duplicate or forged local writes;
+- prompt injection through stored lesson or card text;
+- executable markup;
+- database loss or corruption;
+- MCP operations broader than the documented tool contract;
+- secret leakage.
 
 ## 2. Requirements
 
@@ -24,4 +32,5 @@ Primary risks are malformed/imported content, duplicate or forged local writes, 
 
 ## 3. Privacy
 
-Learning records remain local except when the user explicitly sends/receives data through ChatGPT MCP or exports data. No advertising, behavioral analytics, or third-party tracking SDKs.
+Learning records remain on the local machine unless the user sends data through ChatGPT MCP or exports it.
+The application includes no advertising, behavioral analytics, or third-party tracking SDKs.
