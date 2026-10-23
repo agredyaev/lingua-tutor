@@ -31,7 +31,7 @@ Published targets:
 - macOS Apple Silicon: `lingua-tutor-vX.Y.Z-darwin-arm64.zip`
 - Linux x86_64: `lingua-tutor-vX.Y.Z-linux-x64.zip`
 - Linux ARM64: `lingua-tutor-vX.Y.Z-linux-aarch64.zip`
-- `SHA256SUMS` authenticates the downloaded archives against the release metadata.
+- `SHA256SUMS` verifies the downloaded archives against the checksums published with the release; it is an integrity check, not a code-signing identity proof.
 
 Rust/Cargo, Trunk, Node.js, a service manager, installer wrapper, separate web bundle, and separate tunnel executable are not runtime prerequisites.
 
