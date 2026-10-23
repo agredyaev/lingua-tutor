@@ -35,7 +35,9 @@ Published targets:
 
 Rust/Cargo, Trunk, Node.js, a service manager, installer wrapper, separate web bundle, and separate tunnel executable are not runtime prerequisites.
 
-Source builds are a contributor/CI workflow only and must not be presented as the normal user installation path. User-facing commands live in [../installation.md](../installation.md).
+Source builds are for contributors and CI.
+Release-user installation uses published binaries.
+User-facing commands live in [../installation.md](../installation.md).
 
 ## Backup and health
 
