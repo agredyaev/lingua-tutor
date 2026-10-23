@@ -38,7 +38,7 @@ lingua-tutor
        ChatGPT
 ```
 
-There is no public application listener. The UI stays loopback-only.
+The runtime binds HTTP to `127.0.0.1`. It does not open a public listener.
 
 The tunnel wire/policy implementation is adapted from Rivet. No `tunnel-client`, cloudflared, LaunchAgent, or second MCP process is required.
 
@@ -69,11 +69,11 @@ lingua-tutor backup
 lingua-tutor where
 ```
 
-Backups are written next to the active project database under the project state directory and validated by SQLite integrity/foreign-key checks.
+`lingua-tutor backup` writes the backup under the project state directory and runs SQLite integrity and foreign-key checks.
 
 ## Install and update
 
-End users install the self-contained executable from [GitHub Releases](https://github.com/agredyaev/lingua-tutor/releases/latest). The release archive contains exactly one file named `lingua-tutor`; Rust and Cargo are not runtime prerequisites.
+Install the executable from [GitHub Releases](https://github.com/agredyaev/lingua-tutor/releases/latest). Each release archive contains one file named `lingua-tutor`. Running the binary does not require Rust or Cargo.
 
 Use [installation.md](installation.md) for supported targets, checksum verification, macOS Gatekeeper handling, updates, uninstall, and troubleshooting.
 
