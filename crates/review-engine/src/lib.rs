@@ -25,7 +25,7 @@ pub enum Grade {
     Again = 1,
     /// Correct with substantial effort.
     Hard = 2,
-    /// Correct with normal effort.
+    /// Correct after a pause or minor self-correction.
     Good = 3,
     /// Immediate, confident, fully correct.
     Easy = 4,
