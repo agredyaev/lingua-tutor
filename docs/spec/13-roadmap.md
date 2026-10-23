@@ -11,7 +11,8 @@ ChatGPT integration uses one in-process MCP JSON-RPC dispatcher through OpenAI S
 - Core records: learner/language profiles, lessons, evidence, errors, listening attempts.
 - Cards/review: due queue, immutable review events, scheduler state, undo, backlog protection.
 - Language packs: versioned pack contract, es-ES implementation, conformance suite.
-- Planner loop: review evidence, item × capability projections, task scoring, spaced tutor-focus threads, redesign candidates, recurring error targets, lesson planning, and decision→outcome calibration.
+- Planner loop: review evidence, item × capability projections, and task scoring.
+- Planner loop: spaced tutor-focus threads, redesign candidates, recurring error targets, lesson planning, and decision→outcome calibration.
 - Local hardening: install/update flow, backup/restore, health checks, PWA/e2e validation.
 - MCP: bounded read/write tools call the same application handlers as the PWA operation boundary.
 - Synthetic-pack validation continuously proves that core/review logic is language-neutral.
