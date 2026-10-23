@@ -73,7 +73,9 @@ lingua-tutor where
 
 ## Install and update
 
-Install the executable from [GitHub Releases](https://github.com/agredyaev/lingua-tutor/releases/latest). Each release archive contains one file named `lingua-tutor`. Running the binary does not require Rust or Cargo.
+Install the executable from [GitHub Releases](https://github.com/agredyaev/lingua-tutor/releases/latest).
+
+Each release archive contains one file named `lingua-tutor`. Running the binary does not require Rust or Cargo.
 
 Use [installation.md](installation.md) for supported targets, checksum verification, macOS Gatekeeper handling, updates, uninstall, and troubleshooting.
 
