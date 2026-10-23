@@ -99,7 +99,7 @@ lingua-tutor --help
 
 Release binaries are currently distributed without an Apple notarization flow. Verify the SHA-256 checksum first.
 
-If macOS blocks the verified binary because it was downloaded from the internet, remove the quarantine attribute from that installed file:
+If macOS blocks a binary whose SHA-256 matches `SHA256SUMS`, remove the quarantine attribute from that installed file:
 
 ```sh
 xattr -d com.apple.quarantine "$HOME/.local/bin/lingua-tutor"
@@ -165,7 +165,7 @@ Remove the executable:
 rm "$HOME/.local/bin/lingua-tutor"
 ```
 
-This does not delete learner data. Workspace databases remain under each `<workspace>/.lingua-tutor/` directory until explicitly removed.
+Removing the executable does not delete learner data. Workspace databases remain under each `<workspace>/.lingua-tutor/` directory until you remove them.
 
 ## Troubleshooting
 
@@ -192,7 +192,7 @@ lingua-tutor run --no-tunnel --port 18787
 
 Then open `http://127.0.0.1:18787`.
 
-### Workspace location is unclear
+### Find the workspace path
 
 Run:
 
@@ -204,4 +204,4 @@ See [local-runtime.md](local-runtime.md) for the runtime topology, workspace beh
 
 ## Building from source
 
-Source builds are for contributors and CI, not the installation path for release users. See [spec/12-testing.md](spec/12-testing.md) for the repository acceptance commands.
+Contributors and CI build from source. Release users install published binaries. See [spec/12-testing.md](spec/12-testing.md) for repository acceptance commands.
