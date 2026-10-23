@@ -71,10 +71,10 @@ lingua-tutor where
 
 Backups are written next to the active project database under the project state directory and validated by SQLite integrity/foreign-key checks.
 
-## Install/update
+## Install and update
 
-```sh
-cargo install --path apps/local --bin lingua-tutor --locked
-```
+End users install the self-contained executable from [GitHub Releases](https://github.com/agredyaev/lingua-tutor/releases/latest). The release archive contains exactly one file named `lingua-tutor`; Rust and Cargo are not runtime prerequisites.
 
-The CLI is installed directly by Cargo. No installer script or service wrapper is required.
+Use [installation.md](installation.md) for supported targets, checksum verification, macOS Gatekeeper handling, updates, uninstall, and troubleshooting.
+
+No service manager, installer wrapper, separate web bundle, or separate tunnel executable is required.

@@ -35,7 +35,26 @@ Style: no restating signature; no "This function…" filler; intra-doc links (`[
 - `cargo doc --workspace --no-deps` warning-free (gate added to [11-infrastructure.md](11-infrastructure.md) §3 list as part of step 3 test run).
 - Doc tests run with `cargo test --workspace`.
 
-## 2. NPR 7150.2D-derived documentation discipline
+
+## 2. User documentation contract
+
+User documentation is release-first and task-oriented.
+
+- `README.md` is the entry point: supported platforms, release asset naming, quick start, and links to operational docs.
+- `docs/installation.md` is the normative installation/update/uninstall guide for release users.
+- `docs/local-runtime.md` is the normative runtime/workspace/credentials/maintenance guide.
+- End-user installation must use published GitHub Release binaries. Rust/Cargo/Trunk/Node.js commands belong only in contributor, CI, or acceptance sections.
+- The documented archive contract must match CI exactly: one `lingua-tutor` executable per ZIP plus `SHA256SUMS`.
+- Every supported platform must have copy-pasteable checksum verification and installation commands.
+- Unsupported targets must be stated explicitly; documentation must not imply binaries exist where CI does not publish them.
+- Update instructions must preserve workspace data and tell the user to back up before replacing the executable.
+- Security-sensitive bypasses such as macOS quarantine removal must be documented only after checksum verification, with the safety precondition stated next to the command.
+- Runtime-created state must be distinguished from release-package contents.
+- Troubleshooting must cover command discovery/PATH, architecture mismatch, occupied port, and workspace discovery.
+
+CI enforces the key user-facing contract by rejecting `cargo install` in `README.md`, `docs/installation.md`, and `docs/local-runtime.md`.
+
+## 3. NPR 7150.2D-derived documentation discipline
 
 Full NPR document set collapsed to what a Class-E solo project actually needs; each NASA artifact maps to an existing spec file — no new documents invented:
 
@@ -57,7 +76,7 @@ Binding practices retained from NPR:
 - **ADRs:** every deviation from spec or major decision → ADR (started WBS 1.8). One page max.
 - **Records over memory:** decisions, spikes (FSRS GO/NO-GO), release metadata — written, not remembered.
 
-## 3. Power of Ten → Rust mapping (JPL, Holzmann)
+## 4. Power of Ten → Rust mapping (JPL, Holzmann)
 
 Binding where mapped; Rust makes several rules free.
 
@@ -74,10 +93,12 @@ Binding where mapped; Rust makes several rules free.
 | 9 | Limited preprocessor/pointer use | Adapted: macro discipline — no proc-macros of our own; declarative macros only for test tables and mechanical ID newtypes (`learning-core/src/ids.rs`). No `unsafe` (already binding). |
 | 10 | All warnings on, zero tolerance | Already: `-D warnings`, clippy gate, `cargo-deny` ([11-infrastructure.md](11-infrastructure.md) §3). |
 
-## 4. Review checklist additions (PR)
+## 5. Review checklist additions (PR)
 
 - [ ] Public items documented; doc tests pass; no broken intra-doc links
 - [ ] `# Errors` present on every public `Result` fn
 - [ ] PR references spec file + section (traceability)
 - [ ] Loops bounded; no recursion; ignored `Result` justified
 - [ ] Deviation from spec → ADR included in same PR
+- [ ] User-facing installation matches the current release asset contract
+- [ ] No Cargo-based installation is presented as the release-user path
