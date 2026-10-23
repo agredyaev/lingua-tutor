@@ -220,7 +220,23 @@ Inputs:
 - open adaptive recommendations;
 - learner preferences.
 
-The deterministic priority order is: required method change → due error rechecks → prompt dependence → listening weakness → slow retrieval → low confidence → insufficient learner speaking → recurring errors → significant review backlog → open evidence-based recommendations → due retrieval → new high-utility material.
+Planner priorities are numeric:
+
+| Condition | Action | Score |
+|---|---|---:|
+| `method_change_errors > 0` | `change_method` | 100 |
+| `due_error_rechecks > 0` | `run_error_rechecks` | 96 |
+| `unaided_recall_rate < 0.60` | `reduce_prompt_dependence` | 92 |
+| `listening_score < 0.70` | `strengthen_listening` | 88 |
+| `avg_answer_millis > 5000` | `build_automaticity` | 84 |
+| `confidence < 0.55` | `stabilize_confidence` | 82 |
+| `speaking_ratio < 0.45` | `increase_speaking_share` | 80 |
+| `active_errors > 0` | `repair_recurring_errors` | 78 |
+| `overdue_reviews > 0` | `consolidate_overdue_material` | 76 |
+| `open_recommendations > 0` | `apply_adaptive_recommendations` | 72 |
+| `due_reviews > 0` | `retrieve_due_material` | 68 |
+| `max_new_items > 0` | `introduce_high_utility_material` | 55 |
+| no condition above matched | `diagnose_and_expand` | 50 |
 
 The planner returns:
 - primary objective;
@@ -255,7 +271,21 @@ For each learning item it maintains separate estimates for:
 - spontaneous production;
 - transfer.
 
-Each estimate uses a bounded per-item history and calendar-time decay. It tracks weighted success, explicitly unaided success, latency, evidence strength, qualified-success streak, concrete contexts, and semantic context families. Old evidence loses strength automatically; unknown assistance never counts as independence. `listening_attempts` is the canonical listening signal to prevent double counting.
+Each estimate uses bounded per-item history and calendar-time decay.
+
+Tracked fields:
+
+- weighted success rate;
+- unaided success rate;
+- response latency;
+- evidence strength;
+- qualified-success streak;
+- contexts;
+- context families.
+
+Evidence weight decays with age.
+Missing assistance does not count as unaided evidence.
+`listening_attempts` is the listening source used by the projection.
 
 The planner then ranks concrete `TaskCandidate` actions such as:
 - `diagnostic_spontaneous`;
@@ -265,7 +295,10 @@ The planner then ranks concrete `TaskCandidate` actions such as:
 - `transfer_practice`;
 - `automaticity_drill`.
 
-`TaskCandidate` and tutor-focus state are internal planner inputs. They are merged into one bounded tutor-facing `tutor_tasks` queue containing action, capability, priority, due/stage, context policy, rationale, and success criterion. The tutor follows this single queue; no embeddings, opaque model score, or reinforcement-learning policy is required.
+`TaskCandidate` and tutor-focus state are planner inputs.
+The runtime merges them into one bounded `tutor_tasks` queue.
+Each task contains action, capability, priority, due/stage, context policy, rationale, and success criterion.
+The planner uses deterministic Rust rules; it does not use embeddings or a reinforcement-learning policy.
 
 ## 10. Spaced tutor-focus threads
 
@@ -292,7 +325,9 @@ A thread is consolidated at these thresholds:
 - spontaneous production: weighted success ≥ 0.85, unaided success ≥ 0.80, evidence strength ≥ 0.70, qualified-success streak ≥ 2;
 - transfer: weighted success ≥ 0.80, unaided success ≥ 0.80, at least 3 successful context families, evidence strength ≥ 0.65, qualified-success streak ≥ 2.
 
-Internal focus threads expose successful contexts/families and a next-context policy. They are merged with candidate scoring into `tutor_tasks`; `due_now=true` tasks are retrieval obligations before optional new material, subject to error-method-change priorities.
+Focus threads expose successful contexts, context families, and next-context policy.
+The runtime merges focus threads and candidate scores into `tutor_tasks`.
+A task with `due_now = true` is scheduled before new material, after method-change and error-recheck priorities.
 
 ## 11. Planner history and calibration
 
@@ -304,8 +339,12 @@ At actual lesson start, the runtime persists one `planner_decisions` snapshot co
 - ranked task candidates;
 - tutor-focus threads.
 
-Reading tutor context alone has no side effects. On lesson completion the same row receives the observed outcome: lesson metrics, evidence, errors, mastery proposals, scenario, and next goal.
+Reading tutor context does not write state.
+Lesson completion writes the observed outcome to the existing planner row: lesson metrics, evidence, errors, mastery proposals, scenario, and next goal.
 
-The next tutor receives a compact bounded `planner_history`, plus `intervention_effectiveness`. The latter compares consecutive planner snapshots only after a minimum delay and only when newer evidence exists for the targeted item. It reports samples/newly-observed/improved/stable/declined and mean success delta by action/capability. It does not auto-tune thresholds; it provides deterministic evidence for future tuning and method changes.
+Tutor context includes bounded `planner_history` and `intervention_effectiveness`.
+`intervention_effectiveness` compares consecutive snapshots only after the configured minimum delay and only when the target item has newer evidence.
+It reports sample count, newly observed count, improved/stable/declined counts, and mean success delta by action and capability.
+It does not change thresholds.
 
 The calibration chain is: `decision before lesson → intervention → delayed observable learner-state change`.
