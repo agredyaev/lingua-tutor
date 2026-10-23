@@ -28,7 +28,16 @@ broken_intra_doc_links = "deny"
 | `# Examples` | Public API of `learning-core`, `review-engine`, `language-pack-api`, `tutor-contract`. Doc tests compile + run in CI. |
 | `# Invariants` | Types with private fields guarding invariants (schedule state, state hash). |
 
-Style: state behavior, constraint, invariant, or reason. Do not restate the signature. Avoid `This function...`. Use intra-doc links such as `[`CardId`]`.
+Style rules:
+
+- State behavior, constraint, invariant, or reason.
+- Do not restate the signature.
+- Do not use marketing claims.
+- Do not use qualitative words such as `useful`, `easy`, `normal`, `robust`, or `good enough` unless the text defines a measurable criterion.
+- Binding requirements use `must`, `must not`, `can`, or an explicit condition. Do not use `may` or `should` for requirements.
+- Avoid pronoun-led filler such as `This function...` or `These values...`.
+- Use intra-doc links such as `[`CardId`]`.
+- Code comments explain an invariant, boundary, reason, or non-obvious state transition. Remove comments that only restate the next line of code.
 
 ### Doc gates (CI)
 
@@ -82,15 +91,15 @@ Binding where mapped; Rust makes several rules free.
 
 | # | JPL rule | Here |
 |---|---|---|
-| 1 | Simple control flow; no goto/setjmp | Rust has no goto/setjmp control flow here. Split code when nesting hides branch conditions ([16-rust-guidelines.md](16-rust-guidelines.md) §1). |
-| 2 | Fixed upper bound on every loop | Binding: all queue/import/replay loops bounded by spec limits (`max_review_batch`, size-bounded imports, bounded offline batches). No `loop` without break bound. |
+| 1 | Simple control flow; no goto/setjmp | Split code when nesting hides branch conditions ([16-rust-guidelines.md](16-rust-guidelines.md) §1). |
+| 2 | Fixed upper bound on every loop | Queue, import, and replay loops use spec limits. A `loop` requires an explicit break bound. |
 | 3 | No recursion | Binding: none of the domain needs it; recursion = review flag. |
 | 4 | No heap after init | Not adopted. The application permits bounded allocations. |
 | 5 | Function ≤ 60 lines | Already ≤ 50 ([16-rust-guidelines.md](16-rust-guidelines.md) §1). |
-| 6 | Min two assertions per function | Adapted: invariants asserted at boundaries — schema validation, state-hash check, `debug_assert!` for internal invariants (scheduler transitions). Not a per-function quota. |
+| 6 | Min two assertions per function | Adapted. Assert invariants at boundaries; no per-function assertion quota. |
 | 7 | Minimal scope for data | No module-level mutable state. Use `OnceLock` for process-wide immutable initialization. |
 | 8 | Check every return value | Free: `#[must_use]` + `Result` + clippy `unwrap_used = deny`. Ignoring a `Result` (`let _ =`) requires justification comment. |
-| 9 | Limited preprocessor/pointer use | Adapted: macro discipline — no proc-macros of our own; declarative macros only for test tables and mechanical ID newtypes (`learning-core/src/ids.rs`). No `unsafe` (already binding). |
+| 9 | Limited preprocessor/pointer use | No project proc-macros. Declarative macros are limited to test tables and ID newtypes. `unsafe` is forbidden. |
 | 10 | All warnings on, zero tolerance | CI runs clippy with `-D warnings` and runs `cargo-deny` ([11-infrastructure.md](11-infrastructure.md) §3). |
 
 ## 5. Review checklist additions (PR)
