@@ -73,7 +73,7 @@ Lesson metrics (per lesson): speaking seconds, recall counts, listening score, a
 
 ## 5. Learning item
 
-Primary unit = useful phrase / sentence frame / pattern. Isolated word only when: independently useful, repeatedly missing in phrases, high practical value, phrase card would add complexity.
+Primary unit: phrase, sentence frame, or pattern. Use `Word` only when the learner repeatedly misses the word inside phrases or when the word is an independent response target.
 
 ```rust
 pub enum LearningItemType { Phrase, Collocation, Pattern, Word, ResponseFrame }
@@ -100,7 +100,7 @@ pub struct LearningItem {
 
 ## 6. Evidence
 
-Core evidence kinds fixed; pack may attach bounded metadata.
+Core defines the evidence-kind set. A pack can attach metadata within the pack schema and size limits.
 
 ```rust
 pub enum EvidenceKind {
@@ -152,7 +152,7 @@ pub struct ErrorTarget {
 
 - `ErrorOccurrence`: one sighting; links lesson + evidence.
 - `ErrorRecheck`: scheduled at +1, +3, +7 days; result pass/fail.
-- Escalation: 3 occurrences → mini-target + contrast card when appropriate; 5 unresolved → method change required.
+- Escalation: 3 occurrences → mini-target. Add a contrast card when the error has a competing form to contrast. 5 unresolved occurrences → method change required.
 
 ## 8. Recommendations
 
