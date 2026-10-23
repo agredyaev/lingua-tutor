@@ -23,7 +23,7 @@ Depends on: [08-local-rpc.md](08-local-rpc.md), [05-review-engine.md](05-review-
 | Errors | Typed API error enum in `shared-schema`; `<ErrorBoundary>` around each page; render error + retry, never blank screen. |
 | Global state | `provide_context`/`use_context` for: active language profile, learner settings, offline queue handle. No global mutable statics. |
 | Routing | `leptos_router`. Routes = §3. |
-| Components | Props typed; children composition per book conventions; components small, one responsibility. |
+| Components | Props typed; children composition per book conventions; one responsibility per component. |
 
 ## 3. Routes
 
