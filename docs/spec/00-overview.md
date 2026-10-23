@@ -1,10 +1,10 @@
 # 00 — Overview
 
-Lingua Tutor is a local-first language-learning application.
+Lingua Tutor is a local language-learning application.
 
 ## Product goal
 
-Help a learner start speaking quickly while preserving durable learner state, review history, tutor evidence, and adaptive scheduling in one local system of record.
+Support spoken-language practice while storing learner state, review history, tutor evidence, and scheduling state in one local database.
 
 ## Runtime stack
 
@@ -18,7 +18,7 @@ Help a learner start speaking quickly while preserving durable learner state, re
 
 ## Topology
 
-One local runtime serves the PWA and browser JSON-RPC boundary on `127.0.0.1:8787`, dispatches MCP in-process through the built-in secure tunnel, and accesses the same SQLite database. There is no remote application deployment or secondary database.
+One runtime serves the PWA and JSON-RPC on `127.0.0.1:8787`, dispatches MCP in-process through OpenAI Secure MCP Tunnel, and accesses the same SQLite database. The application has no remote deployment or secondary database.
 
 ## Core invariants
 
