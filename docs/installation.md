@@ -1,6 +1,8 @@
 # Installation
 
-Lingua Tutor is distributed through GitHub Releases as one native executable per supported platform. Rust, Cargo, Node.js, Trunk, and a separate MCP tunnel executable are not required to run the released application.
+GitHub Releases provides one native executable per supported platform.
+
+Running a release binary does not require Rust, Cargo, Node.js, Trunk, or a separate MCP tunnel executable.
 
 ## Supported release targets
 
