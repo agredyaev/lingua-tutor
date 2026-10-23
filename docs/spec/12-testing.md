@@ -39,13 +39,13 @@ Lesson-result import creates cards; MCP-equivalent lesson completion through the
 
 ## 8. Performance targets (one learner)
 
-- Dashboard operation < 500 ms normal load.
-- Review operation response < 300 ms online.
-- Next-card transition feels immediate (queue prefetched client-side).
+- Dashboard operation target: < 500 ms. A performance result is invalid unless it records the dataset size and query parameters.
+- Review operation target: < 300 ms. A performance result is invalid unless it records the dataset size and operation parameters.
+- Next-card transition reads from the prefetched client queue; it must not wait for a network round-trip.
 - Offline review independent of server latency.
 - Due-card query uses `ix_schedule_due`.
 - Bounded review batches.
-- Capacity: tens of thousands of review events, several thousand cards, no redesign.
+- Capacity claims require a recorded event count, card count, and measured operation latencies.
 - Compressed frontend payload ≤ 3 MB (CI-reported).
 
 ## 9. Acceptance commands
