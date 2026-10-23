@@ -19,9 +19,9 @@ pub struct TutorFocusThread {
     pub capability: CapabilityKind,
     /// Spacing stage 0..=4; larger means the skill survived longer gaps.
     pub stage: u8,
-    /// Next time this skill should be probed by the tutor.
+    /// Earliest timestamp for the next tutor probe.
     pub due_at_unix: i64,
-    /// Whether this thread should be considered in the current lesson.
+    /// `true` when the thread is eligible for the current lesson.
     pub due_now: bool,
     /// Successful concrete contexts already observed.
     pub successful_contexts: Vec<String>,
