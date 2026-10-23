@@ -1,4 +1,4 @@
-//! Table-driven adaptive rules (07-tutor-contract.md §7): explicit Rust,
+//! Table-driven recommendation rules (07-tutor-contract.md §7): explicit Rust,
 //! deterministic, unit-tested. Rules emit recommendations — they never
 //! mutate content (05-review-engine.md §10 actions are proposals).
 
@@ -46,7 +46,7 @@ pub const REDESIGN_AGAIN_THRESHOLD: usize = 3;
 pub const REDESIGN_HARD_THRESHOLD: usize = 3;
 /// Latency considered "high" (ms).
 pub const HIGH_LATENCY_MILLIS: u32 = 10_000;
-/// Reviews needed before the low-utility rule may fire.
+/// Minimum graded reviews before evaluating the low-utility rule.
 pub const RETIREMENT_MIN_REVIEWS: u32 = 10;
 
 const AGAIN: u8 = 1;
