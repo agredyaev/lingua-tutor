@@ -1,4 +1,4 @@
-//! Deterministic fallback scheduler (05-review-engine.md §2): small
+//! Deterministic fallback scheduler (05-review-engine.md §2).
 //! multiplicative scheme, integer arithmetic only, always available. Ships
 //! regardless of the FSRS gate outcome; same trait, same persisted shape.
 
@@ -71,7 +71,7 @@ impl ReviewScheduler for FallbackScheduler {
 
     /// Exponential decay pinned to the scheduled interval: R = 0.9^(t/interval),
     /// so retrievability is exactly `desired_retention`'s default at the due
-    /// instant. Deterministic; good enough for queue ordering until FSRS data.
+    /// instant. Used for deterministic queue ordering before FSRS state exists.
     fn predicted_retrievability(
         &self,
         state: &ScheduledState,
