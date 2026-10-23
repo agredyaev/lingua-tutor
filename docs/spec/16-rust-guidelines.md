@@ -1,6 +1,6 @@
 # 16 — Rust Guidelines (Binding)
 
-Scope: coding rules for all crates. Distilled from rust-anti-pattern, rust-error-advanced, rust-testing, rust-database, rust-performance skills + project constraints. Enforced by clippy config + code review. Zero tolerance for overengineering.
+Scope: coding rules for all crates. Derived from project constraints and Rust review rules. Enforced by clippy configuration and code review.
 Depends on: [02-workspace.md](02-workspace.md), [12-testing.md](12-testing.md).
 
 ## 1. Anti-overengineering rules
@@ -32,7 +32,7 @@ Rules:
 
 - `.unwrap()`/`.expect()` forbidden in production code. `expect("reason")` allowed only for provably-infallible cases; reason states the invariant. Tests exempt.
 - No `Box<dyn Error>` in public APIs — loses type info; use `thiserror` variants.
-- Keep error enums small; merge variants nobody matches on separately (over-designed taxonomy = anti-pattern).
+- Merge error variants that no caller handles differently.
 - Propagate with `?`; add context at boundaries, not every hop.
 - `ScheduleError` invariant violations (non-finite interval) → error, never panic — the native runtime must not crash during an operation.
 
@@ -61,8 +61,8 @@ Order of leverage: algorithm > data structure > allocations > micro. Work down, 
 - Pre-allocate known sizes: `Vec::with_capacity` for queue batches, export buffers.
 - Batch SQLite writes in one transaction; do not add per-row query loops when a set operation works.
 - No string concatenation in loops; build with capacity or `format!` once.
-- Small fixed sets: `Vec` + linear search or enum-indexed array, not `HashMap` — hash overhead exceeds scan for card grades, evidence kinds, pack lookups.
-- Not applicable here, do not import: rayon/thread pools, false-sharing padding, NUMA, jemalloc, object pools — the one-user local runtime does not justify server-class machinery. Their appearance in a PR = overengineering flag.
+- For fixed sets used here (card grades, evidence kinds, pack lookups), use an enum-indexed array or `Vec` with linear scan unless a benchmark shows a `HashMap` win.
+- Do not add rayon, thread pools, false-sharing padding, NUMA handling, jemalloc, or object pools without a measured requirement and benchmark.
 - WASM size is the binding perf budget ([09-frontend.md](09-frontend.md) §9); dependency weight reviewed before any `cargo add` to `apps/web`.
 
 ## 6. Testing
