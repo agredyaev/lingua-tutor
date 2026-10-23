@@ -1,4 +1,4 @@
-//! In-process MCP JSON-RPC dispatch used by the built-in secure tunnel.
+//! In-process MCP JSON-RPC dispatch for OpenAI Secure MCP Tunnel.
 
 use crate::{Env, mcp_tools};
 
