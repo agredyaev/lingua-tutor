@@ -8,7 +8,10 @@ Spaced repetition is required. Options were Anki as an external engine (AnkiConn
 
 ## Decision
 
-Own `review-engine` behind the application-owned `ReviewScheduler` trait. Use the pinned FSRS-compatible implementation after the compatibility/determinism spike recorded in ADR-0004; ship the deterministic fallback scheduler regardless. Anki is forbidden as a runtime dependency.
+Own `review-engine` behind the application-owned `ReviewScheduler` trait.
+Use the pinned FSRS implementation selected in ADR-0004.
+Ship `FallbackScheduler` behind the same trait.
+Do not use Anki as a runtime dependency.
 
 ## Consequences
 
