@@ -23,11 +23,11 @@ pub struct Timestamp(pub i64);
 pub enum Grade {
     /// Not recalled correctly before reveal.
     Again = 1,
-    /// Correct with substantial effort.
+    /// Correct after hesitation or self-correction.
     Hard = 2,
-    /// Correct after a pause or minor self-correction.
+    /// Correct after at most a short pause, without answer reveal.
     Good = 3,
-    /// Immediate, confident, fully correct.
+    /// Immediate correct answer without self-correction.
     Easy = 4,
 }
 
@@ -152,7 +152,7 @@ impl Default for SchedulerSettings {
             max_new_cards_per_day: 8,
             target_review_minutes: (8, 12),
             max_review_batch: 50,
-            max_interval_days: 1825, // 5 years — conservative ceiling
+            max_interval_days: 1825, // 5 years
             timezone: "Europe/Madrid".to_owned(),
         }
     }
