@@ -7,7 +7,7 @@ Depends on: [02-workspace.md](02-workspace.md), [12-testing.md](12-testing.md).
 
 | Rule | Test |
 |---|---|
-| No abstraction before second consumer | Trait with one impl → concrete type. Exceptions: `ReviewScheduler`, `LanguagePack` (spec-mandated boundaries with 2 impls from M0: FSRS+fallback, synthetic+es-ES). |
+| No abstraction before second consumer | One implementation → concrete type. `ReviewScheduler` and `LanguagePack` are exceptions because each has two implementations. |
 | No new crate before first real code | Crate exists only when its first type lands ([02-workspace.md](02-workspace.md) §1). |
 | Enum over trait object | Closed set of behaviors → `enum` + `match`, not `Box<dyn Trait>`. |
 | No builder pattern for ≤ 4 fields | Struct literal or `new()`. |
@@ -48,7 +48,7 @@ Rules:
 ## 4. Database (SQLite repositories)
 
 - Repository layer (`apps/local/src/repositories/`) strictly separated from domain logic; SQL lives only there.
-- Transaction boundary = domain invariant: review event + schedule state one batch; lesson completion one batch ([01-architecture.md](01-architecture.md) §4). Short transactions; no network calls inside.
+- Transaction boundaries follow domain invariants ([01-architecture.md](01-architecture.md) §4). Review event + schedule state use one transaction. Lesson completion uses one transaction. Network calls do not run inside transactions.
 - No N+1: queue fetch joins card + schedule state in one query.
 - Additive migrations preferred; destructive → backup first + phased ([04-database.md](04-database.md) §4, [11-infrastructure.md](11-infrastructure.md) §5).
 - Timezone/nullability handled once at repository boundary; domain types never hold raw TEXT timestamps.
@@ -85,7 +85,9 @@ panic = "warn"
 cognitive_complexity = "warn"
 ```
 
-CI: `cargo clippy --workspace --all-targets --all-features -- -D warnings` (gate 2, [11-infrastructure.md](11-infrastructure.md) §3). `#[allow]` requires a one-line justification comment.
+CI runs `cargo clippy --workspace --all-targets --all-features -- -D warnings` ([11-infrastructure.md](11-infrastructure.md) §3).
+
+Each `#[allow]` requires a one-line justification comment.
 
 ## 8. Review checklist (PR)
 
