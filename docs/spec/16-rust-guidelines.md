@@ -15,7 +15,7 @@ Depends on: [02-workspace.md](02-workspace.md), [12-testing.md](12-testing.md).
 | No premature optimization | Measure first ([12-testing.md](12-testing.md) §8 targets). Exception: due-card index — spec-mandated. |
 | No speculative config | Hardcode defaults from spec; config knob only when spec names it a setting. |
 | Function ≤ 50 lines | Longer → split responsibilities. |
-| No `pub` field with invariant | Private + constructor validation. Plain data DTOs in `shared-schema` may stay `pub`. |
+| No `pub` field with invariant | Private + constructor validation. Plain data DTO fields in `shared-schema` remain `pub`. |
 | Delete, don't deprecate | Single-user app, no compatibility aliases ([00-overview.md](00-overview.md) §5). |
 
 ## 2. Error handling
