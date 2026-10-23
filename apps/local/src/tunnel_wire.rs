@@ -1,6 +1,6 @@
 //! Pure OpenAI tunnel wire decoding helpers.
 //!
-//! This module owns no I/O and retains no state. Keep it suitable for fuzzing.
+//! Owns no I/O or retained state. Fuzz tests call these parsing functions directly.
 
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
