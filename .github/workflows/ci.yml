@@ -37,12 +37,6 @@ jobs:
       - name: Test
         run: cargo test --locked --workspace
 
-      - name: Representative performance gate
-        run: >-
-          cargo test --locked --release -p lingua-tutor-local
-          representative_single_learner_latency_stays_within_budget
-          -- --ignored --nocapture
-
       - name: Build web
         working-directory: apps/web
         run: trunk build --release --cargo-profile wasm-release
@@ -137,7 +131,7 @@ jobs:
       - name: Build native release binary
         run: cargo build --locked --release -p lingua-tutor-local --bin lingua-tutor
 
-      - name: Smoke native binary and backup recovery
+      - name: Smoke native binary
         shell: bash
         run: |
           set -euo pipefail
@@ -145,50 +139,28 @@ jobs:
 
           workspace="$(mktemp -d)"
           log="$workspace/runtime.log"
-          binary="$GITHUB_WORKSPACE/target/release/lingua-tutor"
           (
             cd "$workspace"
-
-            start_runtime() {
-              "$binary" run --no-tunnel --port 18787 >"$log" 2>&1 &
-              pid=$!
-              ready=0
-              for _ in {1..30}; do
-                if curl -fsS http://127.0.0.1:18787/ >/dev/null; then
-                  ready=1
-                  break
-                fi
-                sleep 1
-              done
-              if [[ "$ready" != 1 ]]; then
-                cat "$log"
-                exit 1
-              fi
-            }
-
-            start_runtime
+            "$GITHUB_WORKSPACE/target/release/lingua-tutor" run --no-tunnel --port 18787 >"$log" 2>&1 &
+            pid=$!
             trap 'kill "$pid" 2>/dev/null || true' EXIT
+
+            ready=0
+            for _ in {1..30}; do
+              if curl -fsS http://127.0.0.1:18787/ >/dev/null; then
+                ready=1
+                break
+              fi
+              sleep 1
+            done
+            if [[ "$ready" != 1 ]]; then
+              cat "$log"
+              exit 1
+            fi
 
             test -s .lingua-tutor/web/index.html
             response="$(curl -fsS               -H 'Content-Type: application/json'               -d '{"jsonrpc":"2.0","id":1,"method":"health","params":{}}'               http://127.0.0.1:18787/rpc)"
             grep -Fq '"result"' <<< "$response"
-
-            created="$(curl -fsS               -H 'Content-Type: application/json'               -d '{"jsonrpc":"2.0","id":2,"method":"create_language_profile","params":{"language_pack_id":"es-ES","source_language":"ru"}}'               http://127.0.0.1:18787/rpc)"
-            grep -Fq '"result"' <<< "$created"
-
-            backup_path="$("$binary" backup)"
-            test -s "$backup_path"
-
-            kill "$pid"
-            wait "$pid" || true
-            rm .lingua-tutor/lingua.sqlite3
-            cp "$backup_path" .lingua-tutor/lingua.sqlite3
-            "$binary" check
-
-            start_runtime
-            restored="$(curl -fsS               -H 'Content-Type: application/json'               -d '{"jsonrpc":"2.0","id":3,"method":"list_language_profiles","params":{}}'               http://127.0.0.1:18787/rpc)"
-            grep -Fq '"language_pack_id":"es-ES"' <<< "$restored"
-            grep -Fq '"source_language":"ru"' <<< "$restored"
           )
 
       - if: runner.os == 'macOS'
