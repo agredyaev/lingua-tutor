@@ -40,7 +40,9 @@ The first run creates runtime state under the current directory:
     └── web/
 ```
 
-The release archive contains one executable. The executable embeds the web application and runtime resources. At runtime it writes the web assets into the workspace state directory.
+The release archive contains one executable.
+
+The executable embeds the web application and runtime resources. At runtime it writes the web assets into the workspace state directory.
 
 Running `lingua-tutor run` again from the same directory reuses the same database.
 
