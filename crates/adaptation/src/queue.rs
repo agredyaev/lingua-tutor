@@ -27,7 +27,7 @@ pub struct TutorTask {
     pub successful_contexts: Vec<String>,
     /// Successful semantic context families already used.
     pub successful_context_families: Vec<String>,
-    /// How the next context should differ.
+    /// Required context change for the next task.
     pub next_context_policy: Option<String>,
     /// Why this action is ranked here.
     pub rationale: String,
