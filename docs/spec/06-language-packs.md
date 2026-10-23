@@ -9,7 +9,17 @@ Depends on: [01-architecture.md](01-architecture.md) AD-9, [02-workspace.md](02-
 |---|---|
 | Profiles, lesson lifecycle, tutor-context assembly, tutor result validation, item/evidence/error history, card mutation workflow, review orchestration, scheduling persistence, analytics, offline reconciliation, auth, import/export/API/MCP boundaries | BCP 47 locale metadata; supported source languages; text normalization + canonical comparison; punctuation/capitalization/diacritic/contraction policies; accepted-answer matching; tokenization/morphology helpers; language error taxonomy + mapping to core categories; phrase/collocation/frame seeds; card-generation templates; tutor prompt fragments + correction conventions; pronunciation/transcription conventions; scenarios + cultural notes; CEFR descriptors; locale content labels (not app chrome) |
 
-Core never decides language-specific correctness, naturalness, morphology, punctuation tolerance, or error classification. Pack never: accesses SQLite; performs network calls; reads secrets; bypasses core validation; owns scheduling state; writes review events; defines executable workflows.
+Core does not decide language-specific correctness, morphology, punctuation policy, or error classification.
+
+A language pack must not:
+
+- access SQLite;
+- perform network calls;
+- read secrets;
+- bypass core validation;
+- own scheduling state;
+- write review events;
+- define executable workflows.
 
 ## 2. Contract
 
@@ -114,8 +124,26 @@ Core crates do not contain Spanish-specific code.
 
 ## 8. Conformance suite
 
-Shared suite in `test-support`; every pack must pass ([12-testing.md](12-testing.md) §5): manifest validity; contract-version compatibility; deterministic normalization; bounded answer evaluation; stable error codes; card-template validation; no secret/network access; asset schema validation; historical version attribution.
+Every pack runs the shared `test-support` suite ([12-testing.md](12-testing.md) §5). It checks:
+
+- manifest validity;
+- contract-version compatibility;
+- deterministic normalization;
+- bounded answer evaluation;
+- stable error codes;
+- card-template validation;
+- absence of secret and network access;
+- asset schema validation;
+- historical version attribution.
 
 ## 9. Non-goals v1
 
-No: downloaded executable plugins; untrusted WASM plugins; marketplace; user-authored executable plugins; independently deployed packs; per-pack databases; pack-owned scheduling algorithms.
+Out of scope:
+
+- downloaded executable plugins;
+- WASM plugins;
+- plugin marketplace;
+- user-authored executable plugins;
+- independently deployed packs;
+- per-pack databases;
+- pack-owned scheduling algorithms.
