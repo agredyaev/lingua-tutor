@@ -142,11 +142,11 @@ pub struct Lesson {
 }
 
 /// Learning item kind (03-domain-model.md §5). Phrase-first: `Word` only
-/// when independently useful and a phrase card would add complexity.
+/// for words tracked as independent response targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LearningItemType {
-    /// Useful phrase (primary unit).
+    /// Phrase learning item.
     Phrase,
     /// Word combination.
     Collocation,
@@ -287,7 +287,7 @@ pub struct ErrorTarget {
     pub status: ErrorTargetStatus,
 }
 
-/// Occurrences after which a mini-target (+ contrast card when appropriate)
+/// Occurrence count that triggers a mini-target. Contrast-card creation is decided
 /// is recommended (03-domain-model.md §7).
 pub const ERROR_ESCALATION_THRESHOLD: u32 = 3;
 /// Unresolved occurrences after which method change is required.
@@ -313,7 +313,7 @@ impl ErrorTarget {
     }
 }
 
-/// What an adaptive recommendation is about (03-domain-model.md §8).
+/// Entity targeted by a recommendation (03-domain-model.md §8).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "subject_type",

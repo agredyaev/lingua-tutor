@@ -2,7 +2,10 @@
 
 ## Runtime layout
 
-- `lingua-tutor run`: materializes embedded UI assets, opens or creates `.lingua-tutor/lingua.sqlite3`, serves loopback static assets + `POST /rpc` + export downloads, and connects the in-process MCP service to OpenAI Secure MCP Tunnel.
+- `lingua-tutor run` writes embedded UI assets into the workspace state directory.
+- It opens or creates `.lingua-tutor/lingua.sqlite3`.
+- It serves static assets, `POST /rpc`, and export downloads on loopback.
+- It connects the in-process MCP service to OpenAI Secure MCP Tunnel.
 - The current working directory identifies the workspace.
 - Repeated runs in the same directory reuse the same SQLite database.
 - Tunnel ID and Runtime API key are hidden-input, session-only values and are never persisted.
@@ -35,7 +38,9 @@ Published targets:
 
 Rust/Cargo, Trunk, Node.js, a service manager, installer wrapper, separate web bundle, and separate tunnel executable are not runtime prerequisites.
 
-Source builds are a contributor/CI workflow only and must not be presented as the normal user installation path. User-facing commands live in [../installation.md](../installation.md).
+Source builds are for contributors and CI.
+Release-user installation uses published binaries.
+User-facing commands live in [../installation.md](../installation.md).
 
 ## Backup and health
 

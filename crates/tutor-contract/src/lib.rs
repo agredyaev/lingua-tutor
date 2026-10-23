@@ -2,7 +2,7 @@
 //! (07-tutor-contract.md §2–3). Schema and bounds checking only — no
 //! business logic; applying results is `application`'s job.
 //!
-//! This is the untrusted-input boundary: payloads arrive as pasted ChatGPT
+//! Untrusted-input boundary: payloads arrive as pasted ChatGPT
 //! output. Parsing/validation must never panic (fuzzed in `fuzz/`).
 
 mod validate;

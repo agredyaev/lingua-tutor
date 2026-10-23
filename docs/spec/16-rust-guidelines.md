@@ -1,13 +1,13 @@
 # 16 — Rust Guidelines (Binding)
 
-Scope: coding rules for all crates. Distilled from rust-anti-pattern, rust-error-advanced, rust-testing, rust-database, rust-performance skills + project constraints. Enforced by clippy config + code review. Zero tolerance for overengineering.
+Scope: coding rules for all crates. Derived from project constraints and Rust review rules. Enforced by clippy configuration and code review.
 Depends on: [02-workspace.md](02-workspace.md), [12-testing.md](12-testing.md).
 
 ## 1. Anti-overengineering rules
 
 | Rule | Test |
 |---|---|
-| No abstraction before second consumer | Trait with one impl → concrete type. Exceptions: `ReviewScheduler`, `LanguagePack` (spec-mandated boundaries with 2 impls from M0: FSRS+fallback, synthetic+es-ES). |
+| No abstraction before second consumer | One implementation → concrete type. `ReviewScheduler` and `LanguagePack` are exceptions because each has two implementations. |
 | No new crate before first real code | Crate exists only when its first type lands ([02-workspace.md](02-workspace.md) §1). |
 | Enum over trait object | Closed set of behaviors → `enum` + `match`, not `Box<dyn Trait>`. |
 | No builder pattern for ≤ 4 fields | Struct literal or `new()`. |
@@ -15,12 +15,12 @@ Depends on: [02-workspace.md](02-workspace.md), [12-testing.md](12-testing.md).
 | No premature optimization | Measure first ([12-testing.md](12-testing.md) §8 targets). Exception: due-card index — spec-mandated. |
 | No speculative config | Hardcode defaults from spec; config knob only when spec names it a setting. |
 | Function ≤ 50 lines | Longer → split responsibilities. |
-| No `pub` field with invariant | Private + constructor validation. Plain data DTOs in `shared-schema` may stay `pub`. |
+| No `pub` field with invariant | Private + constructor validation. Plain data DTO fields in `shared-schema` remain `pub`. |
 | Delete, don't deprecate | Single-user app, no compatibility aliases ([00-overview.md](00-overview.md) §5). |
 
 ## 2. Error handling
 
-Decision: expected failure → `Result`; normal absence → `Option`; bug/invariant violation → `panic!`/`assert!`.
+Decision: expected failure → `Result`; expected absence → `Option`; bug or invariant violation → `panic!`/`assert!`.
 
 | Layer | Strategy |
 |---|---|
@@ -32,7 +32,7 @@ Rules:
 
 - `.unwrap()`/`.expect()` forbidden in production code. `expect("reason")` allowed only for provably-infallible cases; reason states the invariant. Tests exempt.
 - No `Box<dyn Error>` in public APIs — loses type info; use `thiserror` variants.
-- Keep error enums small; merge variants nobody matches on separately (over-designed taxonomy = anti-pattern).
+- Merge error variants that no caller handles differently.
 - Propagate with `?`; add context at boundaries, not every hop.
 - `ScheduleError` invariant violations (non-finite interval) → error, never panic — the native runtime must not crash during an operation.
 
@@ -48,7 +48,10 @@ Rules:
 ## 4. Database (SQLite repositories)
 
 - Repository layer (`apps/local/src/repositories/`) strictly separated from domain logic; SQL lives only there.
-- Transaction boundary = domain invariant: review event + schedule state one batch; lesson completion one batch ([01-architecture.md](01-architecture.md) §4). Short transactions; no network calls inside.
+- Transaction boundaries follow domain invariants ([01-architecture.md](01-architecture.md) §4).
+- Review event + schedule state use one transaction.
+- Lesson completion uses one transaction.
+- Network calls do not run inside transactions.
 - No N+1: queue fetch joins card + schedule state in one query.
 - Additive migrations preferred; destructive → backup first + phased ([04-database.md](04-database.md) §4, [11-infrastructure.md](11-infrastructure.md) §5).
 - Timezone/nullability handled once at repository boundary; domain types never hold raw TEXT timestamps.
@@ -61,8 +64,8 @@ Order of leverage: algorithm > data structure > allocations > micro. Work down, 
 - Pre-allocate known sizes: `Vec::with_capacity` for queue batches, export buffers.
 - Batch SQLite writes in one transaction; do not add per-row query loops when a set operation works.
 - No string concatenation in loops; build with capacity or `format!` once.
-- Small fixed sets: `Vec` + linear search or enum-indexed array, not `HashMap` — hash overhead exceeds scan for card grades, evidence kinds, pack lookups.
-- Not applicable here, do not import: rayon/thread pools, false-sharing padding, NUMA, jemalloc, object pools — the one-user local runtime does not justify server-class machinery. Their appearance in a PR = overengineering flag.
+- For fixed sets used here (card grades, evidence kinds, pack lookups), use an enum-indexed array or `Vec` with linear scan unless a benchmark shows a `HashMap` win.
+- Do not add rayon, thread pools, false-sharing padding, NUMA handling, jemalloc, or object pools without a measured requirement and benchmark.
 - WASM size is the binding perf budget ([09-frontend.md](09-frontend.md) §9); dependency weight reviewed before any `cargo add` to `apps/web`.
 
 ## 6. Testing
@@ -85,7 +88,9 @@ panic = "warn"
 cognitive_complexity = "warn"
 ```
 
-CI: `cargo clippy --workspace --all-targets --all-features -- -D warnings` (gate 2, [11-infrastructure.md](11-infrastructure.md) §3). `#[allow]` requires a one-line justification comment.
+CI runs `cargo clippy --workspace --all-targets --all-features -- -D warnings` ([11-infrastructure.md](11-infrastructure.md) §3).
+
+Each `#[allow]` requires a one-line justification comment.
 
 ## 8. Review checklist (PR)
 

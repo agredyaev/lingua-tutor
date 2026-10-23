@@ -23,14 +23,14 @@ pub struct RecentLearningSignals {
     pub confidence: Option<f64>,
 }
 
-/// Explicit learner preferences that may constrain lesson planning.
+/// Learner preferences used as planner constraints.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct PlannerPreferences {
     /// Optional cap on newly introduced items in one tutor lesson.
     pub max_new_items_per_lesson: Option<u8>,
     /// Optional preferred difficulty: supported, balanced, or stretch.
     pub preferred_difficulty: Option<String>,
-    /// Real-life scenarios that should be considered before generic catalog order.
+    /// Preferred scenarios ranked ahead of catalog order.
     pub priority_scenarios: Vec<String>,
 }
 
@@ -47,7 +47,7 @@ pub struct LessonPlannerInput {
     pub active_errors: u32,
     /// Error targets whose current teaching method must change.
     pub method_change_errors: u32,
-    /// Open evidence-based adaptive recommendations.
+    /// Pending recommendations derived from evidence.
     pub open_recommendations: u32,
     /// Effective new-card budget after backlog protection.
     pub new_card_budget: u8,
@@ -214,7 +214,7 @@ pub fn plan_next_lesson(input: &LessonPlannerInput) -> AdaptiveLessonPlan {
         priorities.push(priority(
             "diagnose_and_expand",
             50,
-            "no urgent weakness is detected; probe retained skills, then expand one useful scenario",
+            "no urgent weakness is detected; probe retained skills, then use one scenario from learner priorities",
         ));
     }
 

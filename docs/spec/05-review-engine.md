@@ -1,6 +1,8 @@
 # 05 — Review Engine
 
-Scope: `review-engine` crate. Scheduler trait, algorithm selection, states, grades, queue, events, backlog protection. Language-neutral: no knowledge of Spanish, grammar, or vocabulary.
+Scope: `review-engine` crate.
+Covers scheduler selection, state, grades, queue ordering, review events, and backlog rules.
+Contains no language-specific rules.
 Depends on: [03-domain-model.md](03-domain-model.md), [04-database.md](04-database.md).
 
 ## 1. Scheduler trait
@@ -28,9 +30,10 @@ pub trait ReviewScheduler {
 
 ## 2. Algorithm selection
 
-- Preferred: FSRS-compatible (difficulty, stability, retrievability; adaptive-capable).
-- Adoption gate is native-runtime correctness: deterministic outputs, stable persisted algorithm/version, and golden/property tests. The historical WASM spike is retained in ADR-0004 as evidence only; `review-engine` is not a browser dependency.
-- Gate fails → `FallbackScheduler`: small deterministic algorithm behind the same trait. Keep trait, preserve immutable review data, defer optimization, do not block the app.
+- Primary scheduler: FSRS-compatible, with difficulty, stability, and retrievability state.
+- Adoption requires deterministic outputs, persisted algorithm/version state, and passing golden/property tests.
+- ADR-0004 retains the historical WASM spike. `review-engine` is not a browser dependency.
+- If the FSRS gate fails, use `FallbackScheduler` behind the same trait. Preserve immutable review data.
 - Persist per state: `algorithm`, `algorithm_version`, `parameter_set_id`. Never invalid, negative, or non-finite intervals.
 
 ## 3. Card states
@@ -41,16 +44,18 @@ candidate → new → learning → review ⇄ relearning
                         any → retired
 ```
 
-`candidate`: tutor proposal, not introduced (budget, duplication, or quality validation pending). Full transition rules: tutor mutations ([07-tutor-contract.md](07-tutor-contract.md)) + review results.
+`candidate`: card proposal not yet admitted to review.
+A candidate remains pending because of activation budget, duplicate detection, or validation.
+Tutor mutations and review results define state transitions ([07-tutor-contract.md](07-tutor-contract.md)).
 
 ## 4. Grades
 
 | Grade | Value | Meaning |
 |---|---|---|
 | `Again` | 1 | Not recalled correctly before reveal |
-| `Hard` | 2 | Correct, but substantial effort / hesitation / minor self-correction |
-| `Good` | 3 | Correct with normal effort |
-| `Easy` | 4 | Immediate, confident, fully correct |
+| `Hard` | 2 | Correct after hesitation or self-correction |
+| `Good` | 3 | Correct after at most a short pause, without answer reveal |
+| `Easy` | 4 | Immediate correct answer without self-correction |
 
 UI must state: `Hard` is a passing grade; after forgetting, use `Again` ([09-frontend.md](09-frontend.md) §4).
 
@@ -81,9 +86,13 @@ Raising desired retention raises workload; UI must show the consequence, not enc
 
 ## 7. Review events
 
-Immutable; schema in [04-database.md](04-database.md) `review_events`. Per grade submission: event insert + `card_schedule_state` update in one transaction. `client_operation_id` UNIQUE = idempotency; duplicate submission returns the original result, writes nothing.
+`review_events` rows are immutable.
+Each grade writes the event and `card_schedule_state` in one transaction.
+`client_operation_id` is unique. A duplicate submission returns the original result and writes no row.
 
-State hashes: `prior_state_hash` / `result_state_hash` = deterministic hash of `ScheduledState`. Purposes: offline conflict detection, reproducibility tests, audit. Stale `prior_state_hash` on submission → reject with conflict error; client refetches state.
+`prior_state_hash` and `result_state_hash` are deterministic hashes of `ScheduledState`.
+The hashes support offline conflict detection, reproducibility tests, and audit.
+A stale `prior_state_hash` returns a conflict error; the client refetches state.
 
 Undo: only the immediately previous grade; compensating event with `compensates_event_id` set + recalculated state. Never deletes.
 
@@ -97,7 +106,9 @@ Order:
 4. due same-day learning cards;
 5. new cards within remaining daily budget.
 
-Bounded batch (≤ `max_review_batch`). Avoid consecutive near-duplicates when practical. Due-card query must hit `ix_schedule_due`.
+Batch size is at most `max_review_batch`.
+If another due card is available, do not place near-duplicates consecutively.
+The due-card query must use `ix_schedule_due`.
 
 ## 9. Backlog protection
 
@@ -108,11 +119,27 @@ Bounded batch (≤ `max_review_batch`). Avoid consecutive near-duplicates when p
 
 ## 10. Ineffective-card detection
 
-Redesign candidate when any holds: repeated `Again` in rolling window; high response time + frequent `Hard`; repeated failure despite successful related cards; learner-reported ambiguous prompt; conflict with another card; review success + repeated conversational failure.
+A card becomes a redesign candidate when any configured condition matches:
 
-Recommended actions (emitted as recommendations, never auto-applied): clarify prompt; add context; add accepted answer; split; switch modality; add contrast; suspend temporarily; replace with role-play practice.
+- `Again` count reaches the rolling-window threshold;
+- `Hard` count reaches its threshold and mean response time reaches the latency threshold;
+- the card fails while related cards succeed;
+- the learner reports an ambiguous prompt;
+- the card conflicts with another card;
+- review success coexists with spontaneous-production failure.
+
+The detector emits recommendations; it does not apply mutations.
+Actions: clarify prompt; add context; add accepted answer; split; switch modality; add contrast; suspend; replace with role-play practice.
 
 ## 11. Parameter sets
 
 - v1 ships reviewed defaults in `scheduler_parameter_sets` (`origin='default'`).
-- Constraints when implemented: documented minimum sample threshold; ignore invalid/corrected events; run off request path; retain previous set; dry-run comparison; no mass rescheduling by default; rollback supported.
+Parameter optimization, when enabled, must:
+
+- define a minimum sample threshold;
+- exclude invalid and corrected events;
+- run outside the request path;
+- retain the previous parameter set;
+- record a dry-run comparison;
+- avoid mass rescheduling unless explicitly requested;
+- support rollback.

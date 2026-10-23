@@ -73,7 +73,7 @@ Lesson metrics (per lesson): speaking seconds, recall counts, listening score, a
 
 ## 5. Learning item
 
-Primary unit = useful phrase / sentence frame / pattern. Isolated word only when: independently useful, repeatedly missing in phrases, high practical value, phrase card would add complexity.
+Primary unit: phrase, sentence frame, or pattern. Use `Word` only when the learner repeatedly misses the word inside phrases or when the word is an independent response target.
 
 ```rust
 pub enum LearningItemType { Phrase, Collocation, Pattern, Word, ResponseFrame }
@@ -100,7 +100,7 @@ pub struct LearningItem {
 
 ## 6. Evidence
 
-Core evidence kinds fixed; pack may attach bounded metadata.
+Core defines the evidence-kind set. A pack can attach metadata within the pack schema and size limits.
 
 ```rust
 pub enum EvidenceKind {
@@ -128,7 +128,9 @@ pub struct LearningItemEvidence {
 
 - Card review success alone never yields mastery.
 - Provisional mastery: unaided production (`SpontaneousProduction` success).
-- Full mastery: successful `Transfer` evidence with explicit `assistance_level = 0` in ≥ 3 distinct semantic `context_family` values. Missing assistance is unknown and cannot prove independence; concrete `context_key` variants inside the same family count once.
+- Full mastery requires successful `Transfer` evidence with `assistance_level = 0` in at least 3 distinct `context_family` values.
+- Missing `assistance_level` does not prove independent production.
+- Multiple `context_key` values inside one `context_family` count as one family.
 - Failed 1/3/7-day recheck returns target to active practice.
 
 ## 7. Errors
@@ -152,7 +154,7 @@ pub struct ErrorTarget {
 
 - `ErrorOccurrence`: one sighting; links lesson + evidence.
 - `ErrorRecheck`: scheduled at +1, +3, +7 days; result pass/fail.
-- Escalation: 3 occurrences → mini-target + contrast card when appropriate; 5 unresolved → method change required.
+- Escalation: 3 occurrences → mini-target. Add a contrast card when the error has a competing form to contrast. 5 unresolved occurrences → method change required.
 
 ## 8. Recommendations
 
@@ -172,6 +174,28 @@ pub enum RecommendationSubject {
 
 ## 9. Analytics: tracked indicators
 
-Minimum tracked set: lessons completed; active speaking minutes; new phrases introduced; cards created/modified/split/merged/suspended/retired by tutor; reviews completed; due + overdue counts; review time; grade distribution; estimated retention; items recalled unaided; items transferred; listening score; response latency + long pauses; repeated errors by category; error recovery at 1/3/7 days; review backlog; weekly consistency.
+Tracked indicators:
 
-Dashboard queries answerable at any time: next lesson; due cards today; unaided-producible items; recognition-only items; review-pass-but-conversation-fail items; recurring errors; pending tutor card actions; workload excess; listening trend; speaking-time trend; targets needing method change.
+- lessons completed and active speaking minutes;
+- new phrases introduced;
+- card create/update/split/merge/suspend/retire counts;
+- reviews completed, due count, overdue count, review time, and grade distribution;
+- estimated retention;
+- unaided recall and transfer counts;
+- listening score;
+- response latency and long-pause count;
+- repeated errors by category and 1/3/7-day recovery;
+- review backlog and weekly consistency.
+
+Dashboard queries:
+
+- next lesson;
+- due cards today;
+- items produced without assistance;
+- recognition-only items;
+- items passed in review but failed in conversation;
+- recurring errors;
+- pending card actions;
+- review workload above configured limits;
+- listening and speaking-time trends;
+- targets with `method_change_required = true`.

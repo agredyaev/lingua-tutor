@@ -17,13 +17,13 @@ Depends on: [08-local-rpc.md](08-local-rpc.md), [05-review-engine.md](05-review-
 | Signals | `signal()` for state; `signal_local()` for `!Send` browser types. |
 | Read without clone | `.read()` / `.with()` for inspection (`names.read().is_empty()`), `.get()` only when a clone is needed. |
 | Derived state | Derived signal closures for cheap computations; `Memo::new()` for expensive/cached ones. |
-| Effects | Writing signals from effects is forbidden (official Leptos guidance: inefficient, loop-prone). Top-down data flow via derived signals/memos. Effects only for true side effects (DOM APIs, storage). |
-| API reads | `LocalResource` (CSR; browser fetch futures are `!Send`). Wrap in `<Suspense>`/`<Transition>` with fallback. `<Transition>` on review queue to avoid flicker between cards. |
-| API writes | `Action` for every mutation: grade submit, lesson import apply, card mutations. Pending state from `action.pending()` disables the trigger control — this is the double-submit guard. |
+| Effects | Effects do not write application signals. Use derived signals/memos for derived state. Effects are limited to DOM APIs and storage. |
+| API reads | Use `LocalResource` for browser fetch futures. Use `<Suspense>`/`<Transition>` for pending state. |
+| API writes | Use `Action` for mutations. While `action.pending()` is true, disable the trigger control. |
 | Errors | Typed API error enum in `shared-schema`; `<ErrorBoundary>` around each page; render error + retry, never blank screen. |
 | Global state | `provide_context`/`use_context` for: active language profile, learner settings, offline queue handle. No global mutable statics. |
 | Routing | `leptos_router`. Routes = §3. |
-| Components | Props typed; children composition per book conventions; components small, one responsibility. |
+| Components | Props typed; children composition per book conventions; one responsibility per component. |
 
 ## 3. Routes
 
@@ -88,4 +88,6 @@ lto = true
 codegen-units = 1
 ```
 
-Trunk release builds use this profile. Avoid size-heavy deps (`regex`, full ICU) in `apps/web`. WASM is served by the local runtime; release size is measured in CI. Binary size measured in CI ([12-testing.md](12-testing.md)).
+Trunk release builds use this profile.
+Do not add `regex` or full ICU to `apps/web` without a measured size-budget review.
+CI records WASM and native binary sizes ([12-testing.md](12-testing.md)).

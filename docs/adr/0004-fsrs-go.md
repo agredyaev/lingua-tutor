@@ -4,7 +4,8 @@ Date: 2026-07-12. Status: accepted; WASM-specific consequence superseded by ADR-
 
 ## Evidence
 
-Candidates: `fsrs` 6.6.1 vs `rs-fsrs` 1.2.1. The spike established deterministic scheduler behavior and acceptable dependency weight.
+Candidates: `fsrs` 6.6.1 and `rs-fsrs` 1.2.1.
+The spike recorded deterministic scheduler behavior and dependency size.
 
 | Gate | Result |
 |---|---|
@@ -14,7 +15,10 @@ Candidates: `fsrs` 6.6.1 vs `rs-fsrs` 1.2.1. The spike established deterministic
 
 ## Decision
 
-Pin `fsrs = "6.6.1"`, use FSRS-6 defaults, and keep `FsrsScheduler` behind `ReviewScheduler`. Third-party FSRS types never leave `review-engine`. Persist `algorithm_version = "fsrs-rs-6.6.1"` with schedule state.
+Pin `fsrs = "6.6.1"` and use FSRS-6 defaults.
+Keep `FsrsScheduler` behind `ReviewScheduler`.
+Third-party FSRS types do not leave `review-engine`.
+Persist `algorithm_version = "fsrs-rs-6.6.1"` with schedule state.
 
 `FallbackScheduler` ships behind the same trait so the external scheduler dependency can be replaced without losing review history.
 

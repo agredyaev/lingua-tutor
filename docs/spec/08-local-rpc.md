@@ -19,7 +19,9 @@ Content-Type: application/json
 }
 ```
 
-Successful calls return JSON-RPC 2.0 `result`. Application failures return JSON-RPC errors whose `data` preserves the stable application error code, message, details, and HTTP-like status used by shared UI error handling.
+Successful calls return JSON-RPC 2.0 `result`.
+Application failures return JSON-RPC errors.
+The error `data` contains the application error code, message, details, and status consumed by shared UI error handling.
 
 Rules:
 
@@ -112,7 +114,8 @@ GET /api/v1/export/full?language_profile_id={id}
 GET /api/v1/export/cards.csv?language_profile_id={id}
 ```
 
-They return attachments. Tutor context is an RPC operation (`get_tutor_context`), not an HTTP export route.
+The two download routes return attachments.
+Tutor context uses the `get_tutor_context` RPC operation, not an HTTP export route.
 
 ## 4. Shared schemas
 
@@ -122,7 +125,9 @@ Domain types stay in domain crates; persistence rows stay in `apps/local::reposi
 
 ## 5. MCP relationship
 
-MCP does not call the browser HTTP endpoint. `mcp_tools` invokes the same application handlers directly in-process, and the secure tunnel carries MCP JSON-RPC externally.
+MCP does not call the browser HTTP endpoint.
+`mcp_tools` invokes the same application handlers in-process.
+OpenAI Secure MCP Tunnel carries MCP JSON-RPC between the local runtime and OpenAI.
 
 Therefore:
 

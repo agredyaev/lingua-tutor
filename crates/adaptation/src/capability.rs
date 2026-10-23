@@ -1,6 +1,6 @@
 //! Item-level capability projections derived from immutable learning evidence.
 //!
-//! These values are never persisted as a second source of truth. They are
+//! Capability values are derived from persisted evidence and are not persisted.
 //! recomputed from bounded recent evidence whenever the tutor needs a plan.
 
 use serde::{Deserialize, Serialize};

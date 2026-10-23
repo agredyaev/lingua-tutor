@@ -4,9 +4,11 @@ Date: 2026-10-16. Status: accepted.
 
 ## Context
 
-The original design carried assumptions from a remote/Worker-style deployment and exposed most application use cases as REST `/api/v1` resources. After the local-first cutover, the product is one native Rust binary, one directory-local SQLite database, one Leptos PWA, and one in-process MCP implementation.
+The original design assumed a remote Worker-style deployment and exposed most application operations as REST `/api/v1` resources.
+The current runtime uses one native Rust binary, one directory-local SQLite database, one Leptos PWA, and one in-process MCP implementation.
 
-Keeping REST-shaped internal calls, Worker/WASM scheduler constraints, credential files, or a second application transport would duplicate representations and contradict the single-process architecture.
+REST-shaped internal calls and a second application transport would add a second operation path.
+Worker/WASM scheduler constraints or credential files would add runtime state that the native process does not require.
 
 ## Decision
 
@@ -16,7 +18,7 @@ Keeping REST-shaped internal calls, Worker/WASM scheduler constraints, credentia
 - Only file downloads remain direct `/api/v1` routes.
 - SQLite migrations belong to `apps/local/migrations`.
 - `review-engine` is native-only. The PWA does not depend on it, so workspace-wide WASM `getrandom` configuration is removed.
-- Tunnel ID and Runtime API key are prompted securely for each run and remain process-memory-only.
+- Each run prompts for Tunnel ID and Runtime API key with terminal echo disabled. The runtime keeps both values in process memory only.
 - Build-time language packs remain unchanged.
 
 ## Consequences

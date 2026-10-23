@@ -69,6 +69,6 @@ Core crates do not depend on concrete language packs or runtime infrastructure. 
 | Application runtime | native Rust |
 | Database | SQLite |
 | Browser boundary | loopback static assets + `POST /rpc` + file downloads |
-| MCP | one in-process tool dispatcher through the built-in secure tunnel |
+| MCP | one in-process tool dispatcher through OpenAI Secure MCP Tunnel |
 | Remote MCP bridge | outbound OpenAI Secure MCP Tunnel protocol adapted from Rivet |
 | Service management | foreground `lingua-tutor run`; current directory selects workspace |

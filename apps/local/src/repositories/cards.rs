@@ -74,11 +74,10 @@ pub const COUNT_ACTIVATED_TODAY: &str = "SELECT COUNT(*) AS n FROM cards
  WHERE learner_language_profile_id = ?1 AND status != 'candidate'
    AND created_at >= ?2";
 
-/// Oldest deferred (`candidate`) cards for a profile, for activation-budget
-/// promotion: a card that missed the daily mint budget at creation time has
-/// no other path back to `new` — nothing else in the codebase ever revisits
-/// it — so each queue fetch gives the oldest ones first claim on today's
-/// remaining budget.
+/// Selects deferred `candidate` cards for activation.
+///
+/// No other transition promotes `candidate` to `new`. The query orders by
+/// creation time so older candidates consume the remaining daily budget first.
 pub const SELECT_OLDEST_CANDIDATES: &str = "SELECT id FROM cards
  WHERE learner_language_profile_id = ?1 AND status = 'candidate'
  ORDER BY created_at ASC LIMIT ?2";

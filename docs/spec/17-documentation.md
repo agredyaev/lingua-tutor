@@ -1,6 +1,6 @@
 # 17 — Documentation & Engineering Standards
 
-Scope: rustdoc rules; NASA-derived standards adapted to this project — NPR 7150.2D (current NASA Software Engineering Requirements) documentation discipline + JPL "Power of Ten" coding rules mapped to Rust. Adapted, not adopted wholesale: single-developer personal app ≈ NASA Class E software; full process bureaucracy would be overengineering ([16-rust-guidelines.md](16-rust-guidelines.md) §1).
+Scope: rustdoc, user documentation, traceability, and selected NPR 7150.2D / JPL Power of Ten rules. The project applies only the rules listed in this file.
 Depends on: [16-rust-guidelines.md](16-rust-guidelines.md), [12-testing.md](12-testing.md).
 
 ## 1. Rustdoc standards
@@ -28,7 +28,16 @@ broken_intra_doc_links = "deny"
 | `# Examples` | Public API of `learning-core`, `review-engine`, `language-pack-api`, `tutor-contract`. Doc tests compile + run in CI. |
 | `# Invariants` | Types with private fields guarding invariants (schedule state, state hash). |
 
-Style: no restating signature; no "This function…" filler; intra-doc links (`[`CardId`]`) over prose references; caveman-terse — every doc sentence carries information.
+Style rules:
+
+- State behavior, constraint, invariant, or reason.
+- Do not restate the signature.
+- Do not use marketing claims.
+- Do not use qualitative words such as `useful`, `easy`, `normal`, `robust`, or `good enough` unless the text defines a measurable criterion.
+- Binding requirements use `must`, `must not`, `can`, or an explicit condition. Do not use `may` or `should` for requirements.
+- Avoid pronoun-led filler such as `This function...` or `These values...`.
+- Use intra-doc links such as `[`CardId`]`.
+- Code comments explain an invariant, boundary, reason, or non-obvious state transition. Remove comments that only restate the next line of code.
 
 ### Doc gates (CI)
 
@@ -38,11 +47,11 @@ Style: no restating signature; no "This function…" filler; intra-doc links (`[
 
 ## 2. User documentation contract
 
-User documentation is release-first and task-oriented.
+User documentation starts from published release binaries and executable tasks.
 
-- `README.md` is the entry point: supported platforms, release asset naming, quick start, and links to operational docs.
-- `docs/installation.md` is the normative installation/update/uninstall guide for release users.
-- `docs/local-runtime.md` is the normative runtime/workspace/credentials/maintenance guide.
+- `README.md` lists supported platforms, release asset names, quick-start commands, and links to operational docs.
+- `docs/installation.md` defines release-user installation, update, and uninstall steps.
+- `docs/local-runtime.md` defines runtime, workspace, credential, and maintenance behavior.
 - End-user installation must use published GitHub Release binaries. Rust/Cargo/Trunk/Node.js commands belong only in contributor, CI, or acceptance sections.
 - The documented archive contract must match CI exactly: one `lingua-tutor` executable per ZIP plus `SHA256SUMS`.
 - Every supported platform must have copy-pasteable checksum verification and installation commands.
@@ -56,7 +65,7 @@ CI enforces the key user-facing contract by rejecting `cargo install` in `README
 
 ## 3. NPR 7150.2D-derived documentation discipline
 
-Full NPR document set collapsed to what a Class-E solo project actually needs; each NASA artifact maps to an existing spec file — no new documents invented:
+The table maps the retained NPR artifact categories to existing project files:
 
 | NPR 7150.2D artifact | This project |
 |---|---|
@@ -82,16 +91,16 @@ Binding where mapped; Rust makes several rules free.
 
 | # | JPL rule | Here |
 |---|---|---|
-| 1 | Simple control flow; no goto/setjmp | Free in Rust. Deep nesting → extract ([16-rust-guidelines.md](16-rust-guidelines.md) §1). |
-| 2 | Fixed upper bound on every loop | Binding: all queue/import/replay loops bounded by spec limits (`max_review_batch`, size-bounded imports, bounded offline batches). No `loop` without break bound. |
+| 1 | Simple control flow; no goto/setjmp | Split code when nesting hides branch conditions ([16-rust-guidelines.md](16-rust-guidelines.md) §1). |
+| 2 | Fixed upper bound on every loop | Queue, import, and replay loops use spec limits. A `loop` requires an explicit break bound. |
 | 3 | No recursion | Binding: none of the domain needs it; recursion = review flag. |
-| 4 | No heap after init | Not adopted — local application code uses bounded allocations where needed; rule 2 provides the useful bound. |
+| 4 | No heap after init | Not adopted. The application permits bounded allocations. |
 | 5 | Function ≤ 60 lines | Already ≤ 50 ([16-rust-guidelines.md](16-rust-guidelines.md) §1). |
-| 6 | Min two assertions per function | Adapted: invariants asserted at boundaries — schema validation, state-hash check, `debug_assert!` for internal invariants (scheduler transitions). Not a per-function quota. |
-| 7 | Minimal scope for data | Rust default; no module-level mutable state, `OnceLock` for true singletons. |
+| 6 | Min two assertions per function | Adapted. Assert invariants at boundaries; no per-function assertion quota. |
+| 7 | Minimal scope for data | No module-level mutable state. Use `OnceLock` for process-wide immutable initialization. |
 | 8 | Check every return value | Free: `#[must_use]` + `Result` + clippy `unwrap_used = deny`. Ignoring a `Result` (`let _ =`) requires justification comment. |
-| 9 | Limited preprocessor/pointer use | Adapted: macro discipline — no proc-macros of our own; declarative macros only for test tables and mechanical ID newtypes (`learning-core/src/ids.rs`). No `unsafe` (already binding). |
-| 10 | All warnings on, zero tolerance | Already: `-D warnings`, clippy gate, `cargo-deny` ([11-infrastructure.md](11-infrastructure.md) §3). |
+| 9 | Limited preprocessor/pointer use | No project proc-macros. Declarative macros are limited to test tables and ID newtypes. `unsafe` is forbidden. |
+| 10 | All warnings on, zero tolerance | CI runs clippy with `-D warnings` and runs `cargo-deny` ([11-infrastructure.md](11-infrastructure.md) §3). |
 
 ## 5. Review checklist additions (PR)
 

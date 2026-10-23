@@ -1,6 +1,6 @@
 # Lingua Tutor
 
-Local-first adaptive language tutor with one SQLite source of truth.
+Local language-learning runtime with one SQLite database.
 
 - PWA + JSON-RPC `/rpc` on `127.0.0.1:8787`;
 - project-local SQLite;
@@ -19,7 +19,7 @@ Lingua Tutor is distributed as a self-contained native executable. End users do 
    - Linux ARM64: `lingua-tutor-vX.Y.Z-linux-aarch64.zip`
 3. Verify the SHA-256 checksum, unzip the archive, and install the single `lingua-tutor` executable.
 
-Full platform-specific commands, checksum verification, macOS Gatekeeper notes, updates, uninstall, and troubleshooting are in [docs/installation.md](docs/installation.md).
+Platform commands, checksum verification, macOS Gatekeeper handling, updates, uninstall, and troubleshooting: [docs/installation.md](docs/installation.md).
 
 ## Run
 
@@ -40,11 +40,13 @@ The first run creates runtime state under the current directory:
     └── web/
 ```
 
-The release archive contains one executable. The executable embeds the web application and runtime resources, then materializes the web assets into the workspace state directory when it runs.
+The release archive contains one executable.
+
+The executable embeds the web application and runtime resources. At runtime it writes the web assets into the workspace state directory.
 
 Running `lingua-tutor run` again from the same directory reuses the same database.
 
-The CLI securely prompts for:
+The CLI prompts with terminal echo disabled for:
 
 ```text
 Tunnel ID:
@@ -61,7 +63,7 @@ lingua-tutor run --no-tunnel
 
 Open `http://127.0.0.1:8787`.
 
-Useful commands:
+Maintenance commands:
 
 ```sh
 lingua-tutor check
@@ -73,7 +75,7 @@ See [docs/local-runtime.md](docs/local-runtime.md) for runtime behavior and work
 
 ## Development
 
-Cargo is used for development and CI, not for end-user installation.
+Development and CI use Cargo. Release installation does not.
 
 Repository acceptance checks include:
 
@@ -85,4 +87,4 @@ cargo deny --locked check
 cd apps/web && trunk build --release --cargo-profile wasm-release
 ```
 
-See [docs/spec/12-testing.md](docs/spec/12-testing.md) for the full verification contract.
+See [docs/spec/12-testing.md](docs/spec/12-testing.md) for verification commands and acceptance criteria.

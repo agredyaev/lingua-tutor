@@ -1,10 +1,10 @@
 # 14 — Traceability
 
-This file maps active architectural requirements to their canonical documentation.
+Active architectural requirements map to the files below.
 
 | Requirement | Canonical source |
 |---|---|
-| Local-first topology | 01-architecture.md |
+| Local runtime topology | 01-architecture.md |
 | Workspace/dependency direction | 02-workspace.md |
 | Domain model | 03-domain-model.md |
 | SQLite schema and migrations | 04-database.md |

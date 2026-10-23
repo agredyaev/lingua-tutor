@@ -1,6 +1,6 @@
-# 15 — Implementation WBS: Local-First Product
+# 15 — Implementation WBS
 
-The active implementation path is intentionally flat and local.
+The implementation uses one native runtime, one local SQLite database, and one PWA.
 
 ## 1. Runtime foundation
 
@@ -15,11 +15,11 @@ The active implementation path is intentionally flat and local.
 - language-neutral domain types and language-pack contract.
 - profiles, lessons, evidence, errors, listening attempts.
 - cards, scheduling state, immutable review events, undo/idempotency.
-- adaptive recommendations and tutor-context export.
+- rule-derived recommendations and tutor-context export.
 
 ## 3. Local operations
 
-- verified release binaries plus direct Cargo installation; no installer wrapper.
+- release binaries from GitHub Releases; no Cargo installation path for release users and no installer wrapper.
 - current directory selects persistent `.lingua-tutor/` workspace state.
 - explicit SQLite backup with bounded retention.
 - health/integrity checks.
@@ -32,7 +32,7 @@ The active implementation path is intentionally flat and local.
 
 ## 5. Exit gate
 
-The local-first cutover is complete only when:
+The runtime cutover is complete when:
 1. repository search shows no obsolete remote-platform dependencies/configuration;
 2. `cargo fmt`, `clippy`, tests, web build, local smoke, and MCP smoke pass;
 3. a scratch SQLite database initializes and passes integrity/FK checks;

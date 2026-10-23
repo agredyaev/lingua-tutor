@@ -1,7 +1,6 @@
 //! Deterministic intervention-effect summaries from persisted planner snapshots.
 //!
-//! This does not auto-tune policy. It exposes delayed, observable effects so
-//! thresholds and teaching methods can later be changed from evidence.
+//! Does not change policy. Reports delayed outcome deltas from persisted snapshots.
 
 use crate::{CapabilityEstimate, CapabilityKind, ItemCapabilityState, TaskCandidate};
 use serde::Serialize;

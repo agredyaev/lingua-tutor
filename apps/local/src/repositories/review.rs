@@ -124,15 +124,11 @@ pub const COUNT_OVERDUE: &str = "SELECT COUNT(*) AS n
  WHERE c.learner_language_profile_id = ?1
    AND c.status IN ('review','relearning') AND s.due_at < ?2";
 
-/// New cards introduced (graded for the first time) today — the *session*
-/// admission budget. Deliberately distinct from `cards::COUNT_ACTIVATED_TODAY`
-/// (which counts by creation date): a card minted `New` today hasn't been
-/// shown in a queue yet, so charging it against creation date would
-/// double-spend the same budget and exclude it from the very session meant
-/// to introduce it. `review_count = 1` identifies a card graded exactly
-/// once ever (all cards start at `New` with `review_count = 0` and any
-/// grade moves them off `New` for good), so this counts first-ever grades
-/// whose event landed today, regardless of when the card was created.
+/// Counts cards whose first grade was recorded today.
+///
+/// `cards::COUNT_ACTIVATED_TODAY` counts card creation. This query counts
+/// first review events. Cards start with `review_count = 0`; the first grade
+/// sets `review_count = 1`, and no transition returns the card to `New`.
 pub const COUNT_NEW_CARDS_INTRODUCED_TODAY: &str = "SELECT COUNT(*) AS n
  FROM review_events e
  JOIN cards c ON c.id = e.card_id
