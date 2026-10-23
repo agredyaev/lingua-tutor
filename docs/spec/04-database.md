@@ -349,7 +349,8 @@ CREATE INDEX ix_planner_decisions_profile_created
 - `card_mutations`: append-only audit; one row per attempted mutation, applied or not.
 - `review_events.compensates_event_id`: undo and corrections reference the compensated event; original rows never change.
 - Item × capability state and tutor-focus spacing are derived projections over immutable evidence; they are not stored as a second source of truth.
-- `planner_decisions` stores the pre-lesson planner input/decision snapshot and the eventual lesson outcome. It exists for continuity and calibration: the exact decision made before a lesson cannot be reconstructed reliably after new evidence arrives.
+- `planner_decisions` stores the pre-lesson planner input/decision snapshot and the eventual lesson outcome.
+- New evidence changes planner inputs, so a later reconstruction cannot reproduce the pre-lesson snapshot.
 
 ## 4. Migration policy
 
