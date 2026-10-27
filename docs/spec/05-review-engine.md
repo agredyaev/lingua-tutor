@@ -1,40 +1,38 @@
 # 05 — Review Engine
 
-Scope: `review-engine` crate.
-Covers scheduler selection, state, grades, queue ordering, review events, and backlog rules.
-Contains no language-specific rules.
+Scope: `review-engine` plus the native review queue/write passes. Language-neutral: no Spanish, grammar, or vocabulary rules.
 Depends on: [03-domain-model.md](03-domain-model.md), [04-database.md](04-database.md).
 
-## 1. Scheduler trait
+## 1. Processing model
 
-Application-owned. Third-party algorithm crate = implementation detail behind this trait; its types never leave `review-engine`.
+Scheduling behavior is implemented as explicit functions over persisted scalar state. There is no scheduler behavior trait or retained scheduler object graph.
+
+Stable request-local algorithm IDs:
+
+- `FSRS_ID = 0`;
+- `FALLBACK_ID = 1`.
+
+Core passes:
 
 ```rust
-pub trait ReviewScheduler {
-    fn initial_state(&self, input: InitialReviewInput) -> Result<ScheduledState, ScheduleError>;
-
-    fn apply_review(
-        &self,
-        current: &ScheduledState,
-        event: &ReviewEventInput,
-        settings: &SchedulerSettings,
-    ) -> Result<ScheduledState, ScheduleError>;
-
-    fn predicted_retrievability(
-        &self,
-        state: &ScheduledState,
-        at: Timestamp,
-    ) -> Result<f64, ScheduleError>;
-}
+initial_state(id, at)
+apply_review(id, scratch, state, event, settings)
+predicted_retrievability(id, state, at)
+replay(id, activated_at, events, settings)
+state_hash(state)
 ```
+
+The FSRS crate is a request-local computation resource inside `review-engine`; its types never cross the crate boundary. Persisted state remains application-owned scalars.
 
 ## 2. Algorithm selection
 
-- Primary scheduler: FSRS-compatible, with difficulty, stability, and retrievability state.
-- Adoption requires deterministic outputs, persisted algorithm/version state, and passing golden/property tests.
-- ADR-0004 retains the historical WASM spike. `review-engine` is not a browser dependency.
-- If the FSRS gate fails, use `FallbackScheduler` behind the same trait. Preserve immutable review data.
-- Persist per state: `algorithm`, `algorithm_version`, `parameter_set_id`. Never invalid, negative, or non-finite intervals.
+- Preferred algorithm: FSRS-6 via pinned `fsrs = 6.6.1`.
+- Persist `algorithm` and exact `algorithm_version`; unavailable persisted versions fail closed rather than silently changing schedules.
+- Deterministic fallback remains available under its own stable integer ID.
+- Invalid, non-finite, negative, or zero intervals are rejected/clamped by the shared interval pass.
+- Golden/property/replay tests are the algorithm migration gate.
+
+v1 uses the reviewed FSRS default parameter vector. `parameter_set_id` is retained in storage for future validated optimization, but v1 does **not** claim personalized FSRS parameters.
 
 ## 3. Card states
 
@@ -44,102 +42,102 @@ candidate → new → learning → review ⇄ relearning
                         any → retired
 ```
 
-`candidate`: card proposal not yet admitted to review.
-A candidate remains pending because of activation budget, duplicate detection, or validation.
-Tutor mutations and review results define state transitions ([07-tutor-contract.md](07-tutor-contract.md)).
+`candidate` is a tutor proposal awaiting quality/budget admission. A first grade moves `new → learning`; a passing learning/relearning grade moves to `review`; `Again` from review moves to `relearning`.
 
 ## 4. Grades
 
 | Grade | Value | Meaning |
-|---|---|---|
+|---|---:|---|
 | `Again` | 1 | Not recalled correctly before reveal |
-| `Hard` | 2 | Correct after hesitation or self-correction |
-| `Good` | 3 | Correct after at most a short pause, without answer reveal |
-| `Easy` | 4 | Immediate correct answer without self-correction |
+| `Hard` | 2 | Correct, but substantial effort / hesitation / minor self-correction |
+| `Good` | 3 | Correct with normal effort |
+| `Easy` | 4 | Immediate, confident, fully correct |
 
-UI must state: `Hard` is a passing grade; after forgetting, use `Again` ([09-frontend.md](09-frontend.md) §4).
+`Hard` is a passing grade. Forgetting is `Again`.
 
 ## 5. Learning flow
 
-1. Tutor introduces phrase in lesson.
-2. Learner performs immediate retrieval in lesson.
-3. Card due in second daily session or next practical window.
-4. After first delayed successful recall, scheduler owns due dates.
-5. Failed review → `relearning`.
+1. Tutor introduces material and obtains an immediate retrieval attempt in the lesson.
+2. Accepted card candidates are admitted only within the effective new-card budget.
+3. A newly admitted card is due immediately for its first review opportunity.
+4. After graded retrieval, FSRS owns the next due interval.
+5. Failed mature review enters `relearning`.
 
-No configurable learning-step subsystem.
+There is no configurable multi-step learning/relearning subsystem. Short-term scheduling remains inside FSRS rather than duplicating Anki-style fixed steps.
 
-## 6. Settings and defaults
+## 6. Settings and profile policy
 
 ```rust
 pub struct SchedulerSettings {
-    pub desired_retention: f64,        // 0.90
-    pub max_new_cards_per_day: u8,     // 8
-    pub target_review_minutes: (u8, u8), // (8, 12)
-    pub max_review_batch: u16,         // 50
-    pub max_interval_days: u32,        // conservative, several years
-    pub timezone: Tz,                  // Europe/Madrid default
+    pub desired_retention: f64,
+    pub max_new_cards_per_day: u8,
+    pub target_review_minutes: (u8, u8),
+    pub max_review_batch: u16,
+    pub max_interval_days: u32,
+    pub timezone: String,
 }
 ```
 
-Raising desired retention raises workload; UI must show the consequence, not encourage increases.
+Runtime policy is loaded from the persisted learner profile for every grading/replay path:
 
-## 7. Review events
+- `desired_retention`: profile value, default 0.90; runtime accepts only 0.70–0.97 to prevent pathological workload/retention settings;
+- `max_new_cards_per_day`: profile value, default 8;
+- review-minute ceiling: profile value, default 12;
+- timezone: profile value;
+- `max_review_batch`: 50;
+- `max_interval_days`: 36,500 (100 years).
 
-`review_events` rows are immutable.
-Each grade writes the event and `card_schedule_state` in one transaction.
-`client_operation_id` is unique. A duplicate submission returns the original result and writes no row.
+Changing desired retention changes future FSRS intervals; historical review events are not rewritten.
 
-`prior_state_hash` and `result_state_hash` are deterministic hashes of `ScheduledState`.
-The hashes support offline conflict detection, reproducibility tests, and audit.
-A stale `prior_state_hash` returns a conflict error; the client refetches state.
+## 7. Review events and replay
 
-Undo: only the immediately previous grade; compensating event with `compensates_event_id` set + recalculated state. Never deletes.
+Review events are immutable. Grade submission inserts the event and updates `card_schedule_state` in one transaction.
+
+`client_operation_id` is unique: duplicate submission returns the original result without another write.
+
+`prior_state_hash` / `result_state_hash` provide deterministic conflict detection and audit. A stale prior hash is rejected.
+
+Undo only compensates the immediately previous grade. It never deletes history: the effective event stream is replayed with the **current persisted profile scheduling policy**, and a compensating event records the lineage.
 
 ## 8. Due queue
 
-Order:
+Bounded queue: at most `max_review_batch`.
 
-1. relearning cards;
-2. significantly overdue review cards;
-3. due review cards by predicted forgetting risk (descending);
-4. due same-day learning cards;
-5. new cards within remaining daily budget.
+Priority:
 
-Batch size is at most `max_review_batch`.
-If another due card is available, do not place near-duplicates consecutively.
-The due-card query must use `ix_schedule_due`.
+1. due `relearning`;
+2. due mature `review` cards ordered by **ascending predicted retrievability** (lowest recall probability / highest forgetting risk first);
+3. due `learning`;
+4. `new` cards within the remaining effective daily budget, oldest admitted first.
+
+Due times still determine eligibility. Once mature cards are due, predicted forgetting risk is the ranking signal; an arbitrary separate “significantly overdue” tier is not used.
 
 ## 9. Backlog protection
 
-- Daily review time > 12 min for 2 consecutive study days → reduce new-card budget.
-- Overdue count > configured threshold → pause new cards.
-- Active recall < 70% for 2 consecutive study days → new cards −50%.
-- Backlog cleared → restore budget gradually, not instantly.
+The effective daily new-card budget is derived from real persisted history:
+
+- overdue review/relearning count > 50 → pause new cards;
+- review time > the profile's max_review_minutes on each of the two previous study days → halve;
+- active-recall success < 70% on each of the two previous study days → halve;
+- both pressure rules may stack;
+- after throttling/pausing, recovery is gradual: at most yesterday's effective budget + 1.
+
+Review time comes from completed `review_sessions`; recall comes from effective non-undone `review_events`. `review_daily_budget` persists one scalar effective budget per profile/local day solely to preserve recovery hysteresis. The remaining budget subtracts the appropriate same-day consumption counter.
 
 ## 10. Ineffective-card detection
 
-A card becomes a redesign candidate when any configured condition matches:
+A card becomes a redesign candidate on evidence such as repeated `Again`, repeated high-latency `Hard`, or strong review performance with real-life production failure.
 
-- `Again` count reaches the rolling-window threshold;
-- `Hard` count reaches its threshold and mean response time reaches the latency threshold;
-- the card fails while related cards succeed;
-- the learner reports an ambiguous prompt;
-- the card conflicts with another card;
-- review success coexists with spontaneous-production failure.
-
-The detector emits recommendations; it does not apply mutations.
-Actions: clarify prompt; add context; add accepted answer; split; switch modality; add contrast; suspend; replace with role-play practice.
+Actions are recommendations, not silent semantic mutations: clarify prompt, add context/accepted answer, split, switch modality, suspend, or replace repeated card drilling with live transfer practice.
 
 ## 11. Parameter sets
 
-- v1 ships reviewed defaults in `scheduler_parameter_sets` (`origin='default'`).
-Parameter optimization, when enabled, must:
+`scheduler_parameter_sets` is a forward-compatible persistence boundary.
 
-- define a minimum sample threshold;
-- exclude invalid and corrected events;
-- run outside the request path;
-- retain the previous parameter set;
-- record a dry-run comparison;
-- avoid mass rescheduling unless explicitly requested;
-- support rollback.
+Current v1 behavior:
+
+- FSRS uses `fsrs::DEFAULT_PARAMETERS`;
+- schedule state normally has no active optimized `parameter_set_id`;
+- no personalized-parameter claim is made.
+
+A future optimizer must have its own acceptance gate: minimum history threshold, corrected/invalid event exclusion, off-request execution, dry-run comparison, retained previous set, explicit activation, rollback, and no automatic mass rescheduling.

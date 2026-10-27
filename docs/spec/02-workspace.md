@@ -10,8 +10,7 @@ apps/
 └── web/                      # Leptos PWA
 
 crates/
-├── application/              # pure orchestration/planning
-├── learning-core/            # domain types/invariants
+├── learning-core/            # scalar enums, timestamps, pure rules/hashes
 ├── review-engine/            # native scheduling
 ├── adaptation/               # adaptive rules
 ├── language-pack-api/        # stable plugin contract
@@ -38,8 +37,7 @@ The repository root is a virtual Cargo workspace, so it intentionally has no roo
 
 | Component | Owns | Must not own |
 |---|---|---|
-| `learning-core` | language-neutral domain types and invariants | storage, transport, concrete packs |
-| `application` | use-case planning/orchestration | SQL, runtime transport |
+| `learning-core` | language-neutral scalar contracts and pure rules | retained entity records, storage, transport, concrete packs |
 | `review-engine` | native scheduling and workload calculations | language rules, persistence, browser code |
 | `language-pack-api` | stable typed pack contract | concrete language behavior |
 | concrete language pack | normalization, answer matching, taxonomy, tutor assets | SQLite, network, scheduling state |
@@ -51,7 +49,7 @@ The repository root is a virtual Cargo workspace, so it intentionally has no roo
 ## 3. Dependency direction
 
 ```text
-apps/local ─→ application ─→ learning-core
+apps/local ─→ learning-core
      │              └──────→ review-engine
      ├─────────────→ language-pack-registry ─→ language-pack-api
      └─────────────→ shared-schema / tutor-contract
@@ -69,6 +67,6 @@ Core crates do not depend on concrete language packs or runtime infrastructure. 
 | Application runtime | native Rust |
 | Database | SQLite |
 | Browser boundary | loopback static assets + `POST /rpc` + file downloads |
-| MCP | one in-process tool dispatcher through OpenAI Secure MCP Tunnel |
+| MCP | one in-process tool dispatcher through the built-in secure tunnel |
 | Remote MCP bridge | outbound OpenAI Secure MCP Tunnel protocol adapted from Rivet |
 | Service management | foreground `lingua-tutor run`; current directory selects workspace |

@@ -34,57 +34,55 @@ impl From<rusqlite::Error> for RepoError {
     }
 }
 
-/// Exact SQLite TEXT encoding for closed enums stored in schema columns.
-pub trait DbText: Sized {
-    /// Stable database representation.
-    fn as_db_text(&self) -> &'static str;
-    /// Parse the stable database representation.
-    fn from_db_text(value: &str) -> Option<Self>;
-}
-
-macro_rules! impl_db_text {
-    ($ty:path, { $($variant:ident => $text:literal),+ $(,)? }) => {
-        impl DbText for $ty {
-            fn as_db_text(&self) -> &'static str {
-                match self {
-                    $(Self::$variant => $text,)+
-                }
+// Explicit, statically dispatched SQLite TEXT passes; no trait implementation,
+// dynamic dispatch, or intermediate allocated text values.
+macro_rules! db_enum_passes {
+    ($type:path, $parse:ident, $format:ident, { $($variant:ident => $text:literal),+ $(,)? }) => {
+        /// Decode one closed SQLite TEXT value; invalid values are rejected.
+        #[must_use]
+        pub fn $parse(value: &str) -> Option<$type> {
+            use $type as Enum;
+            match value {
+                $($text => Some(Enum::$variant),)+
+                _ => None,
             }
+        }
 
-            fn from_db_text(value: &str) -> Option<Self> {
-                match value {
-                    $($text => Some(Self::$variant),)+
-                    _ => None,
-                }
+        /// Encode a closed enum directly into its stable SQLite TEXT spelling.
+        #[must_use]
+        pub fn $format(value: &$type) -> &'static str {
+            use $type as Enum;
+            match value {
+                $(Enum::$variant => $text,)+
             }
         }
     };
 }
 
-impl_db_text!(learning_core::ProfileStatus, {
+db_enum_passes!(learning_core::ProfileStatus, profile_status_from_db, profile_status_db, {
     Active => "active",
     Paused => "paused",
     Archived => "archived",
 });
-impl_db_text!(learning_core::LessonStatus, {
+db_enum_passes!(learning_core::LessonStatus, lesson_status_from_db, lesson_status_db, {
     Planned => "planned",
     Active => "active",
     Completed => "completed",
     Abandoned => "abandoned",
 });
-impl_db_text!(learning_core::LessonSource, {
+db_enum_passes!(learning_core::LessonSource, lesson_source_from_db, lesson_source_db, {
     Pwa => "pwa",
     Import => "import",
     Mcp => "mcp",
 });
-impl_db_text!(learning_core::LearningItemType, {
+db_enum_passes!(learning_core::LearningItemType, learning_item_type_from_db, learning_item_type_db, {
     Phrase => "phrase",
     Collocation => "collocation",
     Pattern => "pattern",
     Word => "word",
     ResponseFrame => "response_frame",
 });
-impl_db_text!(learning_core::LearningItemStatus, {
+db_enum_passes!(learning_core::LearningItemStatus, learning_item_status_from_db, learning_item_status_db, {
     Candidate => "candidate",
     Introduced => "introduced",
     Learning => "learning",
@@ -93,7 +91,7 @@ impl_db_text!(learning_core::LearningItemStatus, {
     Mastered => "mastered",
     Suspended => "suspended",
 });
-impl_db_text!(learning_core::EvidenceKind, {
+db_enum_passes!(learning_core::EvidenceKind, evidence_kind_from_db, evidence_kind_db, {
     Recognition => "recognition",
     Listening => "listening",
     PromptedProduction => "prompted_production",
@@ -101,13 +99,13 @@ impl_db_text!(learning_core::EvidenceKind, {
     Transfer => "transfer",
     Correction => "correction",
 });
-impl_db_text!(learning_core::ErrorTargetStatus, {
+db_enum_passes!(learning_core::ErrorTargetStatus, error_target_status_from_db, error_target_status_db, {
     Active => "active",
     Recheck => "recheck",
     Resolved => "resolved",
     Escalated => "escalated",
 });
-impl_db_text!(learning_core::CardStatus, {
+db_enum_passes!(learning_core::CardStatus, card_status_from_db, card_status_db, {
     Candidate => "candidate",
     New => "new",
     Learning => "learning",
@@ -116,12 +114,12 @@ impl_db_text!(learning_core::CardStatus, {
     Suspended => "suspended",
     Retired => "retired",
 });
-impl_db_text!(learning_core::CardActor, {
+db_enum_passes!(learning_core::CardActor, card_actor_from_db, card_actor_db, {
     Tutor => "tutor",
     User => "user",
     System => "system",
 });
-impl_db_text!(language_pack_api::CoreErrorCategory, {
+db_enum_passes!(language_pack_api::CoreErrorCategory, core_error_category_from_db, core_error_category_db, {
     Grammar => "grammar",
     Vocabulary => "vocabulary",
     WordOrder => "word_order",
@@ -130,13 +128,13 @@ impl_db_text!(language_pack_api::CoreErrorCategory, {
     Orthography => "orthography",
     Other => "other",
 });
-impl_db_text!(language_pack_api::CardIntent, {
+db_enum_passes!(language_pack_api::CardIntent, card_intent_from_db, card_intent_db, {
     Production => "production",
     Listening => "listening",
     Contrast => "contrast",
     Transfer => "transfer",
 });
-impl_db_text!(tutor_contract::MutationOperation, {
+db_enum_passes!(tutor_contract::MutationOperation, mutation_operation_from_db, mutation_operation_db, {
     Create => "create",
     Update => "update",
     Split => "split",
@@ -149,6 +147,14 @@ impl_db_text!(tutor_contract::MutationOperation, {
     AddListeningVariant => "add_listening_variant",
     Link => "link",
 });
+
+pub(crate) fn communicative_impact_db(value: &learning_core::CommunicativeImpact) -> &'static str {
+    match value {
+        learning_core::CommunicativeImpact::Low => "low",
+        learning_core::CommunicativeImpact::Medium => "medium",
+        learning_core::CommunicativeImpact::High => "high",
+    }
+}
 
 /// Unix seconds → RFC 3339 TEXT.
 #[must_use]
@@ -165,14 +171,31 @@ pub fn from_rfc3339(text: &str) -> Result<Timestamp, RepoError> {
         .map_err(|e| RepoError::CorruptRow(format!("timestamp '{text}': {e}")))
 }
 
-/// Parses a closed enum stored as SQLite TEXT.
-pub fn parse_enum<T: DbText>(column: &str, value: &str) -> Result<T, RepoError> {
-    T::from_db_text(value)
-        .ok_or_else(|| RepoError::CorruptRow(format!("{column}: invalid value '{value}'")))
-}
+#[cfg(test)]
+// Test fixtures intentionally fail fast and use compact tuple snapshots.
+#[allow(clippy::unwrap_used, clippy::type_complexity)]
+mod enum_contract_tests {
+    use super::*;
 
-/// Returns the stable SQLite TEXT encoding for a closed enum.
-#[must_use]
-pub fn enum_str<T: DbText>(value: &T) -> &'static str {
-    value.as_db_text()
+    #[test]
+    fn mutation_operations_preserve_all_database_spellings() {
+        use tutor_contract::MutationOperation as M;
+        for (value, text) in [
+            (M::Create, "create"),
+            (M::Update, "update"),
+            (M::Split, "split"),
+            (M::Merge, "merge"),
+            (M::Suspend, "suspend"),
+            (M::Restore, "restore"),
+            (M::Retire, "retire"),
+            (M::AddAcceptedAnswer, "add_accepted_answer"),
+            (M::RemoveAcceptedAnswer, "remove_accepted_answer"),
+            (M::AddListeningVariant, "add_listening_variant"),
+            (M::Link, "link"),
+        ] {
+            assert_eq!(mutation_operation_db(&value), text);
+            assert_eq!(mutation_operation_from_db(text), Some(value));
+        }
+        assert_eq!(mutation_operation_from_db("invalid-enum-variant"), None);
+    }
 }

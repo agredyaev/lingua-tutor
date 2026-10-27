@@ -3,6 +3,7 @@ name = "lingua-tutor-fuzz"
 version = "0.0.0"
 publish = false
 edition = "2021"
+license = "MIT"
 
 [package.metadata]
 cargo-fuzz = true
@@ -10,6 +11,7 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 tutor-contract = { path = "../crates/tutor-contract" }
+lingua-tutor-local = { path = "../apps/local", features = ["fuzzing"] }
 
 [[bin]]
 name = "lesson_result_parse"
@@ -21,3 +23,11 @@ bench = false
 # Fuzz binaries only; keep panic-abort profile cargo-fuzz expects.
 [profile.release]
 debug = 1
+
+
+[[bin]]
+name = "error_occurrence_soa"
+path = "fuzz_targets/error_occurrence_soa.rs"
+test = false
+doc = false
+bench = false

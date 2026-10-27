@@ -1,13 +1,11 @@
 # 07 — Tutor Contract
 
-Scope: `tutor-contract` + `adaptation` crates. Lesson-result schema, card mutations, card types, validation rules, recommendation rules.
+Scope: `tutor-contract` + `adaptation` crates. Lesson-result schema, card mutations, card types, quality rules, adaptive rules.
 Depends on: [03-domain-model.md](03-domain-model.md), [04-database.md](04-database.md), [05-review-engine.md](05-review-engine.md), [06-language-packs.md](06-language-packs.md).
 
 ## 1. Tutor role
 
-The tutor creates and maintains cards.
-The learner is not required to create cards, select phrases, copy data to another tool, maintain tags or schedules, deduplicate cards, or redesign cards.
-The UI exposes edit, suspend, restore, and delete controls.
+Tutor is primary author + maintainer of cards. Learner never required to: create cards, pick phrases, copy to another tool, maintain tags/scheduling, dedupe, redesign. Learner may edit/suspend/restore/delete via UI — optional controls only.
 
 ## 2. Lesson result
 
@@ -15,7 +13,7 @@ Versioned block returned by tutor (paste-import or MCP). Applied atomically with
 
 ```json
 {
-  "schema_version": "1",
+  "schema_version": "2",
   "client_operation_id": "op_01J...",
   "language_profile_id": "llp_01J...",
   "language_pack_id": "es-ES",
@@ -29,48 +27,70 @@ Versioned block returned by tutor (paste-import or MCP). Applied atomically with
   },
   "metrics": { "speaking_seconds": 540, "unaided_recall_count": 6,
                "aided_recall_count": 3, "listening_score": 0.7,
-               "avg_answer_millis": 2100, "long_pause_count": 2, "confidence": 0.6 },
+               "avg_answer_millis": 2100, "long_pause_count": 2,
+               "task_attempt_count": 3, "task_success_count": 2,
+               "task_success_rubric": "goal_completed_without_target_model_v1",
+               "confidence": 0.6 },
   "new_learning_items": [ { "client_item_key": "new-1", "item_type": "phrase",
                             "target_text": "…", "prompt_text": "…", "prompt_language": "ru" } ],
   "evidence": [ { "client_item_key": "new-1", "kind": "spontaneous_production",
                   "success": true, "context": "pharmacy:ask-for-remedy",
                   "context_family": "service.ask_help",
                   "assistance_level": 0, "response_millis": 1800,
-                  "probe_phase": "delayed_retrieval", "detail": null } ],
+                  "probe_phase": "diagnostic",
+                  "pronunciation_intelligible": true,
+                  "pronunciation_repeat_required": false, "detail": null } ],
+  "interventions": [ { "action": "fade_prompts", "client_item_key": "new-1",
+                       "target_capability": "spontaneous_production",
+                       "evidence_index": 0 } ],
   "error_occurrences": [ { "error_target_id": null,
-                           "core_category": "verb_form", "pack_error_code": "es.verb.ser_estar",
+                           "core_category": "grammar", "communicative_impact": "medium",
+                           "pack_error_code": "es.verb.ser_estar",
                            "original_production": "…", "corrected_production": "…",
                            "explanation": "…" } ],
   "listening_attempts": [ { "learning_item_id": "phr_01J...", "success": false,
-                            "source_reference": "lesson-audio-3", "transcript": "…" } ],
+                            "assistance_level": 0, "response_millis": 1500,
+                            "probe_phase": "diagnostic",
+                            "source_reference": "lesson-audio-3", "source_variant_id": "v3",
+                            "talker_key": "voice-b", "context_tag": "pharmacy",
+                            "transcript": "…" } ],
   "mastery_changes": [ { "learning_item_id": "phr_01J...", "new_status": "provisionally_mastered" } ],
   "card_mutations": [ { "operation": "create", "client_operation_id": "op_01J...x", "card": { } } ]
 }
 ```
 
-The server validates schema and size limits.
-Existing items use `learning_item_id`. An item introduced in the same result can use `client_item_key`.
-Productive evidence requires `context`. Transfer evidence also requires `context_family`.
-`assistance_level = 0` means unaided production. Missing assistance does not prove mastery.
-Assisted success is `prompted_production`; it is not `spontaneous_production` or `transfer`.
-Do not infer `response_millis` or `probe_phase` when they were not observed.
-Import flow: validate → preview → apply ([08-local-rpc.md](08-local-rpc.md) §2).
+Validation is server-side, schema- and size-bounded. Schema v2 makes lesson measurement part of completion rather than an optional annotation. Every selected evidence/listening probe must carry observed `assistance_level`, `response_millis`, `probe_phase`, and an explicit context (`context` for evidence, `context_tag` for listening); lesson completion requires at least two measured `diagnostic` probes. If a probe cannot be measured reliably, run another measurable probe instead of inventing a value. Productive probes additionally record `pronunciation_intelligible` and `pronunciation_repeat_required`; concrete recurring pronunciation problems remain normal `error_occurrences`. Existing items use `learning_item_id`; same-result items may use `client_item_key`. Transfer additionally requires a pack-owned canonical `context_family`. `assistance_level=0` means explicitly unaided; assisted success is `prompted_production`, never `spontaneous_production` or `transfer`.
+
+`interventions` records only pedagogically significant methods actually applied in the lesson. A planned `task_candidate` is not an intervention. Each intervention targets one item and capability and may point at one immediate evidence/listening outcome. Import flow: validate → preview → apply ([08-local-rpc.md](08-local-rpc.md) §2).
+
+### Communicative task success rubric
+
+When `task_attempt_count > 0`, `task_success_rubric` is mandatory and must be
+`goal_completed_without_target_model_v1`.
+
+One task attempt is one explicitly assigned communicative goal with an observable outcome
+(for example: obtain the bill, clarify a destination, request an item). Count success only
+when the learner completes that **same original goal** without the tutor supplying/modeling
+the target utterance before completion and without relaxing, replacing, or materially
+simplifying the goal. Natural self-correction, clarification, and interlocutor repair are
+allowed if the learner still achieves the original goal.
+
+Speaking time, grammatical perfection, confidence, or repetition after a model do not by
+themselves count as communicative-task success. Planner aggregation ignores task counts
+from rows that do not carry this exact rubric ID.
+
+Within one lesson result, evidence array order is observation order. For transfer mastery,
+the latest transfer attempt is decisive: a later failed/unqualified transfer blocks mastery,
+while a later unaided successful transfer supersedes an earlier failure. Persisted evidence
+stores `observation_order` so attempts sharing the same timestamp retain this semantics.
+
+For listening variability, `source_reference` is only a content reference and never proves
+a distinct acoustic/context variant. Variation is counted only from explicit
+`source_variant_id`, `talker_key`, and/or `context_tag` metadata.
 
 ## 3. Card mutations
 
-Supported operations:
-
-- `create`
-- `update`
-- `add_accepted_answer`
-- `remove_accepted_answer`
-- `add_listening_variant`
-- `split`
-- `merge`
-- `suspend`
-- `restore`
-- `retire`
-- `link`
+Operations: `create`, `update`, `add_accepted_answer`, `remove_accepted_answer`, `add_listening_variant`, `split`, `merge`, `suspend`, `restore`, `retire`, `link` (to phrase / error target / listening item / scenario).
 
 Create payload:
 
@@ -99,71 +119,34 @@ Create payload:
 
 ### Auto-apply rules
 
-Automatic application requires all conditions:
-
-- the mutation is non-destructive;
-- the tutor submitted lesson completion;
-- schema and validation rules pass;
-- the daily activation limit is not exceeded;
-- duplicate detection reports no conflict.
-
-Suspension, merge, semantic reset, and retirement require lesson-result preview or MCP write confirmation.
+Mutation applies automatically only when ALL hold: non-destructive; lesson completion explicitly submitted by tutor; schema + quality rules pass; daily activation limit respected; no duplicate conflict. Suspension, merge, semantic reset, retirement stay visible in lesson-result preview / MCP write confirmation.
 
 ## 4. Card quality rules
 
-Each card must:
-
-- test one recall target;
-- use a prompt with one expected task;
-- use a situational prompt when the target depends on a situation;
-- pass language-pack answer and regional-usage rules;
-- include an accepted alternative only when pack answer evaluation accepts it;
-- avoid testing unrelated unknown targets in one card;
-- include scenario or register context when omission changes the expected answer;
-- include `creation_reason`;
-- link to source evidence when source evidence exists;
-- duplicate an existing skill only when evidence shows a modality gap;
-- contain plain text or sanitized markup.
-
-Lesson appearance alone does not satisfy `creation_reason`.
+Every card must: test one primary recall target; have answerable unambiguous prompt; prefer situational prompt over literal translation; obey pack naturalness + regional rules; include accepted alternatives when genuinely valid; avoid multiple unrelated unknowns; carry enough context for register; record `creation_reason`; link to source evidence; avoid duplicate skill testing unless evidence shows modality gap; contain plain text or strictly sanitized markup. A phrase appearing in a lesson is NOT sufficient reason for a card.
 
 ### Evidence sources
 
-Evidence sources:
-
-- phrase selected by the lesson planner for introduction;
-- failed retrieval;
-- recurring error;
-- text recognition with failed listening evidence;
-- comprehension without production;
-- production with assistance but no unaided production;
-- scenario listed in learner priorities;
-- correction of a form rejected by language-pack evaluation;
-- learned phrase without transfer evidence.
+New high-value phrase; failed retrieval; recurring error; text-recognized-but-audio-missed; understood-but-not-produced; produced-only-with-hint; expected real scenario; useful correction replacing unnatural form; learned phrase needing transfer.
 
 ### Candidate scoring
 
-`priority_score` is an optional tutor-provided value in `0.0..=1.0`.
-The runtime stores the value but does not use an unspecified qualitative factor to bypass duplicate checks or the activation budget.
+Factors: real-life utility; frequency in expected situations; failure recurrence; communicative impact; transfer value; current priority; novelty; overlap with existing cards; cognitive load; review backlog. `priority_score` stored; deterministic rules control activation.
 
 ### Activation budget
 
-The lesson-result schema permits up to the configured payload limit of candidate mutations.
-The runtime activates at most the remaining daily new-card budget (default 8/day).
-Cards above the budget remain `candidate`.
+Tutor may propose unlimited candidates; app activates ≤ daily new-card budget (default 8/day). Over budget or backlog limits → cards stay `candidate`.
 
 ### Duplicate prevention
 
-Before create, compare normalized answer, intent, linked phrase, linked error target, and accepted answers.
-An exact retry with the same `client_operation_id` is idempotent.
-A duplicate conflict returns a warning or merge recommendation; it does not create another card.
+Compare before create: normalized answer; communicative function; intent; linked phrase; linked error target; active accepted answers. Exact retry (same `client_operation_id`) → idempotent no-op. Near-duplicate → tutor warning or merge recommendation, never silent create.
 
 ### Edit classification
 
 | Class | Definition | Schedule effect |
 |---|---|---|
 | cosmetic | punctuation, typo, formatting | preserved |
-| clarifying | prompt changed; tested answer unchanged | preserved; version recorded |
+| clarifying | better prompt, same tested answer | preserved; version recorded |
 | semantic | changed recall target or answer meaning | new card or explicit tutor-confirmed reset |
 | split | suspend original, create smaller cards | lineage via `parent_card_id` |
 | merge | one survivor, source histories preserved | lineage recorded |
@@ -174,11 +157,10 @@ A duplicate conflict returns a warning or merge recommendation; it does not crea
 |---|---|---|
 | `production` | Russian/situational prompt; optional context; optional hidden first-word hint | preferred answer; accepted alternatives; short explanation; pronunciation note |
 | `listening` | audio reference or tutor-spoken prompt; no transcript | transcript; meaning; expected response; pronunciation/linking note |
-| `contrast` | situation; competing incorrect form from learner evidence; request corrected form | correct form; one-sentence rule; two short contrast examples |
+| `contrast` | situation; learner's typical incorrect form when useful; request corrected form | correct form; one-sentence rule; two short contrast examples |
 | `transfer` | known phrase, new scenario | adapted usage |
 
-Listening stores a source reference and text; it does not store audio files.
-Transfer cards require a new scenario or semantic context family; lexical-only variation does not qualify.
+Listening: MVP uses browser speech or tutor audio in-lesson; stores source reference + text, never audio files. Transfer: sparing; no trivial variations the learner already generates.
 
 Intent separation: recognition ≠ production. Multiple cards per phrase only on evidenced modality gap (text-ok/listen-fail; listen-ok/produce-fail; prompted-ok/spontaneous-fail).
 
@@ -202,9 +184,9 @@ Explicit Rust in `adaptation`, unit-tested, table-driven. No interpreted rule la
 | Card review success + spontaneous speaking failure | schedule role-play transfer, not more reviews |
 | Repeated listening failure on known phrase | create/activate listening card |
 | Repeated prompted success + spontaneous failure | create transfer target |
-| Error occurrences = 3 | activate mini-target; add contrast only when error evidence contains a competing form |
+| Error occurrences = 3 | activate mini-target; contrast card when appropriate |
 | Unresolved error occurrences = 5 | require method change |
-| Explicitly unaided transfer in 3 distinct semantic `context_family` values | eligible for full mastery |
+| Explicitly unaided transfer in 3 distinct canonical semantic `context_family` values, and the latest observed transfer is not a failure (or is superseded by a new unaided successful transfer) | eligible for full mastery |
 | Failed 1/3/7-day recheck | target back to active practice |
 | Persistent `Hard` | redesign before frequency increase |
 | High review success + low real-life utility | consider retiring card |
@@ -214,29 +196,13 @@ Explicit Rust in `adaptation`, unit-tested, table-driven. No interpreted rule la
 Before each lesson the runtime derives a language-neutral plan from persisted evidence rather than copying the previous tutor goal.
 
 Inputs:
-- review pressure: due items, significantly overdue mature reviews, effective new-card budget;
+- review pressure: due items, mature reviews ranked by predicted forgetting risk, effective new-card budget;
 - unresolved errors, due 1/3/7-day rechecks, and method-change targets;
 - recent lesson metrics over a bounded window: speaking ratio, unaided-vs-aided recall, listening score, answer latency, confidence;
 - open adaptive recommendations;
 - learner preferences.
 
-Planner priorities are numeric:
-
-| Condition | Action | Score |
-|---|---|---:|
-| `method_change_errors > 0` | `change_method` | 100 |
-| `due_error_rechecks > 0` | `run_error_rechecks` | 96 |
-| `unaided_recall_rate < 0.60` | `reduce_prompt_dependence` | 92 |
-| `listening_score < 0.70` | `strengthen_listening` | 88 |
-| `avg_answer_millis > 5000` | `build_automaticity` | 84 |
-| `confidence < 0.55` | `stabilize_confidence` | 82 |
-| `speaking_ratio < 0.45` | `increase_speaking_share` | 80 |
-| `active_errors > 0` | `repair_recurring_errors` | 78 |
-| `overdue_reviews > 0` | `consolidate_overdue_material` | 76 |
-| `open_recommendations > 0` | `apply_adaptive_recommendations` | 72 |
-| `due_reviews > 0` | `retrieve_due_material` | 68 |
-| `max_new_items > 0` | `introduce_high_utility_material` | 55 |
-| no condition above matched | `diagnose_and_expand` | 50 |
+The deterministic priority order is: required method change → due error rechecks → prompt dependence → listening weakness → slow retrieval → low confidence → insufficient learner speaking → recurring errors → significant review backlog → open evidence-based recommendations → due retrieval → new high-utility material.
 
 The planner returns:
 - primary objective;
@@ -248,9 +214,7 @@ The planner returns:
 - recent signal summary;
 - priority scenarios.
 
-`max_new_items` is a ceiling, not a quota.
-Any overdue review, required method change, or zero effective new-card budget sets `max_new_items = 0`.
-When lesson evidence contradicts the pre-lesson plan, the tutor can choose another action and must record the resulting evidence and summary.
+The new-item count is a ceiling, never a quota. Backlog pressure is graded: small overdue sets reduce the ceiling; serious backlog or a required method change sets it to zero. The tutor may deviate from the plan when live evidence contradicts it, but the deviation must be reflected in lesson evidence and summary.
 
 Recognized optional profile preferences:
 - `max_new_items_per_lesson`: integer cap;
@@ -271,21 +235,7 @@ For each learning item it maintains separate estimates for:
 - spontaneous production;
 - transfer.
 
-Each estimate uses bounded per-item history and calendar-time decay.
-
-Tracked fields:
-
-- weighted success rate;
-- unaided success rate;
-- response latency;
-- evidence strength;
-- qualified-success streak;
-- contexts;
-- context families.
-
-Evidence weight decays with age.
-Missing assistance does not count as unaided evidence.
-`listening_attempts` is the listening source used by the projection.
+Each estimate uses a bounded per-item history and calendar-time decay. It tracks weighted success, explicitly unaided success, latency, evidence strength, qualified-success streak, concrete contexts, and semantic context families. Old evidence loses strength automatically; unknown assistance never counts as independence. `listening_attempts` is the canonical listening signal to prevent double counting.
 
 The planner then ranks concrete `TaskCandidate` actions such as:
 - `diagnostic_spontaneous`;
@@ -295,19 +245,13 @@ The planner then ranks concrete `TaskCandidate` actions such as:
 - `transfer_practice`;
 - `automaticity_drill`.
 
-`TaskCandidate` and tutor-focus state are planner inputs.
-The runtime merges them into one bounded `tutor_tasks` queue.
-Each task contains action, capability, priority, due/stage, context policy, rationale, and success criterion.
-The planner uses deterministic Rust rules; it does not use embeddings or a reinforcement-learning policy.
+`TaskCandidate` and tutor-focus state are internal planner inputs. They are merged into one bounded tutor-facing `tutor_tasks` queue containing action, capability, priority, due/stage, context policy, rationale, and success criterion. The tutor follows this single queue; no embeddings, opaque model score, or reinforcement-learning policy is required.
 
 ## 10. Spaced tutor-focus threads
 
 Problematic capabilities remain in a derived tutor-focus queue until consolidated. The queue applies Anki-like spacing to live tutoring without duplicating the card scheduler.
 
-Spacing stages use consecutive **qualified** successes after the last failure.
-Prompted production requires `assistance_level > 0`.
-Spontaneous production requires `assistance_level = 0`.
-Transfer requires `assistance_level = 0` and `context_family`:
+Spacing stages use consecutive **qualified** successes after the last failure. Productive success qualifies only when assistance is explicitly appropriate; transfer additionally requires a semantic `context_family`:
 
 | Stage | Next tutor probe |
 |---|---:|
@@ -317,17 +261,12 @@ Transfer requires `assistance_level = 0` and `context_family`:
 | 3 | +7 days |
 | 4 | +14 days |
 
-A failure or unqualified latest attempt resets the capability to stage 0.
-`candidate` learning items do not enter tutor focus.
-A thread is consolidated at these thresholds:
+A failure or unqualified latest attempt resets the capability to stage 0. `candidate` learning items never enter tutor focus. The thread remains active until evidence is strong enough for the capability:
+- listening: strong repeated comprehension;
+- spontaneous production: strong explicitly unaided production;
+- transfer: strong explicitly unaided production in at least three distinct semantic context families.
 
-- listening: weighted success ≥ 0.85 and evidence strength ≥ 0.65;
-- spontaneous production: weighted success ≥ 0.85, unaided success ≥ 0.80, evidence strength ≥ 0.70, qualified-success streak ≥ 2;
-- transfer: weighted success ≥ 0.80, unaided success ≥ 0.80, at least 3 successful context families, evidence strength ≥ 0.65, qualified-success streak ≥ 2.
-
-Focus threads expose successful contexts, context families, and next-context policy.
-The runtime merges focus threads and candidate scores into `tutor_tasks`.
-A task with `due_now = true` is scheduled before new material, after method-change and error-recheck priorities.
+Internal focus threads expose successful contexts/families and a next-context policy. They are merged with candidate scoring into `tutor_tasks`; `due_now=true` tasks are retrieval obligations before optional new material, subject to error-method-change priorities.
 
 ## 11. Planner history and calibration
 
@@ -339,12 +278,19 @@ At actual lesson start, the runtime persists one `planner_decisions` snapshot co
 - ranked task candidates;
 - tutor-focus threads.
 
-Reading tutor context does not write state.
-Lesson completion writes the observed outcome to the existing planner row: lesson metrics, evidence, errors, mastery proposals, scenario, and next goal.
+Reading tutor context alone has no side effects. On lesson completion the same row receives the observed outcome: lesson metrics, measured evidence/listening probes, actual interventions, errors, mastery proposals, scenario, and next goal.
 
-Tutor context includes bounded `planner_history` and `intervention_effectiveness`.
-`intervention_effectiveness` compares consecutive snapshots only after the configured minimum delay and only when the target item has newer evidence.
-It reports sample count, newly observed count, improved/stable/declined counts, and mean success delta by action and capability.
-It does not change thresholds.
+The next tutor receives a compact bounded `planner_history`, plus `intervention_effectiveness`. Calibration reads actual interventions from the completed lesson outcome, never `task_candidates_json`. It compares consecutive snapshots only after a minimum delay and only when newer evidence exists for the targeted item. Lessons without the required diagnostic measurement coverage are excluded. The summary reports samples/newly-observed/improved/stable/declined and mean success delta by action/capability; it does not auto-tune thresholds.
 
-The calibration chain is: `decision before lesson → intervention → delayed observable learner-state change`.
+The calibration chain is: `decision before lesson → actual intervention → delayed observable learner-state change`.
+
+
+## 13. Methodology calibration boundaries
+
+Exact capability half-lives, evidence-strength thresholds, tutor-focus intervals, error escalation counts, and the three-family mastery threshold are explicit v1 policy heuristics. They are deterministic and regression-tested, but are not universal scientific constants. Longitudinal calibration must compare these policy predictions against later unaided communicative-task and transfer outcomes before changing them.
+
+`communicative_impact` makes recurring-error escalation task-sensitive: high-impact errors escalate earlier, medium-impact errors retain the 3/5 defaults, and low-impact errors require more recurrence. The 1/3/7-day error recheck cadence remains a v1 heuristic subject to calibration.
+
+Lesson-level `confidence`, speaking share, and aggregate latency are diagnostic context. They do not outrank objective communicative-task success, item-level capability evidence, due rechecks, or recurring errors.
+
+`intervention_effectiveness` is intentionally item/intervention-level evidence consumed together with `tutor_tasks`; it is not collapsed into the profile-level planner score, because doing so would discard the item/capability identity needed to decide which teaching method actually worked.

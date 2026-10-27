@@ -39,9 +39,14 @@
 - Различай recognition, listening, prompted_production, spontaneous_production и transfer. Не считай одно доказательством другого.
 - Для новой фразы задай client_item_key и используй его в evidence/listening_attempts этого же lesson-result.
 - Для существующей фразы используй learning_item_id из tutor context.
-- Для productive evidence указывай context — конкретную ситуацию. Для transfer обязательно указывай стабильный context_family вида domain.communicative_function (например transport.ask_stop, commerce.request_item, service.ask_help). Несколько вариантов одной family не являются разными transfer-контекстами.
-- Для каждого существенного probe записывай assistance_level (0–3), response_millis и probe_phase (diagnostic/practice/delayed_retrieval/transfer), если их можно надёжно определить. Эти сигналы важнее субъективной confidence.
-- assistance_level=0 ставь только если ответ действительно был без подсказки. Если степень помощи неизвестна, оставь поле пустым: система не будет считать такой успех доказательством самостоятельности.
+- Для productive evidence указывай context — конкретную ситуацию. Для transfer обязательно используй только canonical context_family из tutor context (например transport.ask_stop, commerce.request_item, service.ask_help). Не придумывай новые aliases. Несколько вариантов одной family не являются разными transfer-контекстами.
+- Измерение — обязательная часть урока. Выбери минимум 2 diagnostic probes, для которых реально наблюдаешь assistance_level (0–3), response_millis, probe_phase и конкретный context/context_tag. Если показатель нельзя надёжно измерить, не выдумывай его: проведи другой измеримый probe до завершения урока.
+- Для production/transfer probe дополнительно фиксируй pronunciation_intelligible и pronunciation_repeat_required. Отдельную pronunciation error_occurrence создавай только для конкретной повторяющейся или мешающей пониманию проблемы.
+- Для listening_attempts обязательно указывай context_tag; source_variant_id и talker_key добавляй, когда они известны, чтобы отслеживать перенос между акустическими вариантами.
+- В interventions записывай только реально применённые педагогические действия (например fade_prompts), с item и target_capability; не копируй туда планируемые tutor_tasks, которые фактически не использовались.
+- Для error_occurrences указывай communicative_impact: high — ошибка блокирует/искажает цель общения, medium — заметна, но обычно поправима, low — почти не мешает задаче.
+- В metrics фиксируй task_attempt_count и task_success_count только по rubric `goal_completed_without_target_model_v1`: одна попытка = одна явно заданная коммуникативная цель с наблюдаемым исходом; success = исходная цель достигнута без предварительного моделирования целевой реплики и без упрощения/замены цели. Self-correction, clarification и repair допустимы. Обязательно укажи task_success_rubric. Это более сильный planner signal, чем субъективная confidence или доля времени речи.
+- assistance_level=0 ставь только если ответ действительно был без подсказки. Для выбранного probe это поле не может оставаться пустым; если степень помощи неясна, проведи новую диагностическую попытку с наблюдаемым уровнем помощи.
 - Успех после любой подсказки фиксируй как prompted_production, а не spontaneous_production/transfer.
 - Не завышай mastery: карточка или повторение за преподавателем не являются доказательством свободной речи.
 

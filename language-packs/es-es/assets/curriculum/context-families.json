@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "families": [
+    {
+      "id": "service.ask_help",
+      "title_ru": "Попросить помощь или обслуживание"
+    },
+    {
+      "id": "service.request_bill",
+      "title_ru": "Попросить счёт"
+    },
+    {
+      "id": "commerce.request_item",
+      "title_ru": "Попросить товар или предмет"
+    },
+    {
+      "id": "commerce.ask_price",
+      "title_ru": "Узнать цену"
+    },
+    {
+      "id": "navigation.ask_location",
+      "title_ru": "Узнать, где находится место"
+    },
+    {
+      "id": "navigation.ask_route",
+      "title_ru": "Узнать, как пройти или доехать"
+    },
+    {
+      "id": "transport.ask_stop",
+      "title_ru": "Уточнить остановку или место выхода"
+    },
+    {
+      "id": "transport.buy_ticket",
+      "title_ru": "Купить или запросить билет"
+    },
+    {
+      "id": "health.describe_symptom",
+      "title_ru": "Описать симптом"
+    },
+    {
+      "id": "health.request_remedy",
+      "title_ru": "Попросить средство или помощь по здоровью"
+    },
+    {
+      "id": "social.greet",
+      "title_ru": "Поздороваться"
+    },
+    {
+      "id": "social.introduce_self",
+      "title_ru": "Представиться"
+    },
+    {
+      "id": "communication.clarify",
+      "title_ru": "Попросить уточнить"
+    },
+    {
+      "id": "communication.confirm",
+      "title_ru": "Подтвердить понимание или договорённость"
+    },
+    {
+      "id": "communication.repair",
+      "title_ru": "Исправить недопонимание"
+    },
+    {
+      "id": "time.ask_schedule",
+      "title_ru": "Узнать время или расписание"
+    },
+    {
+      "id": "quantity.request_amount",
+      "title_ru": "Уточнить или попросить количество"
+    },
+    {
+      "id": "accommodation.check_in",
+      "title_ru": "Заселиться или зарегистрироваться"
+    },
+    {
+      "id": "accommodation.request_service",
+      "title_ru": "Попросить услугу в жилье"
+    }
+  ]
+}

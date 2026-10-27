@@ -1,29 +1,43 @@
 name: e2e
 
-# Browser suite (12-testing.md §7): out of the default PR gate; runs on main
-# pushes and manual dispatch.
+# Browser suite (12-testing.md §7): required on pull requests and main.
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: 1.98.1
 
 jobs:
   playwright:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@v2
         with:
           tool: trunk@0.21.14
-      - name: build web
+      - name: Build web
         working-directory: apps/web
         run: trunk build --release --cargo-profile wasm-release
-      - name: build native server
-        run: cargo build -p lingua-tutor-local --bin lingua-tutor
-      - run: npm ci --ignore-scripts
+      - name: Build native server
+        run: cargo build --locked -p lingua-tutor-local --bin lingua-tutor
+      - name: Install Playwright package
         working-directory: tests/e2e
-      - run: npx playwright install --with-deps chromium
+        run: npm ci --ignore-scripts
+      - name: Install Chromium
         working-directory: tests/e2e
-      - run: npx playwright test
+        run: npx playwright install --with-deps chromium
+      - name: Run browser E2E
         working-directory: tests/e2e
+        run: npx playwright test

@@ -1,10 +1,6 @@
 //! `review_sessions`, `review_events`, `card_schedule_state` repositories
 //! (WBS 5.4). Event + state write = one batch (04-database.md §1).
 
-use super::{RepoError, from_rfc3339, to_rfc3339};
-use review_engine::{ScheduledState, Timestamp};
-use serde::{Deserialize, Serialize};
-
 /// Insert a review session.
 pub const INSERT_SESSION: &str = "INSERT INTO review_sessions
     (id, learner_language_profile_id, started_at, source, card_count, created_at)
@@ -124,11 +120,15 @@ pub const COUNT_OVERDUE: &str = "SELECT COUNT(*) AS n
  WHERE c.learner_language_profile_id = ?1
    AND c.status IN ('review','relearning') AND s.due_at < ?2";
 
-/// Counts cards whose first grade was recorded today.
-///
-/// `cards::COUNT_ACTIVATED_TODAY` counts card creation. This query counts
-/// first review events. Cards start with `review_count = 0`; the first grade
-/// sets `review_count = 1`, and no transition returns the card to `New`.
+/// New cards introduced (graded for the first time) today — the *session*
+/// admission budget. Deliberately distinct from `cards::COUNT_ACTIVATED_TODAY`
+/// (which counts by creation date): a card minted `New` today hasn't been
+/// shown in a queue yet, so charging it against creation date would
+/// double-spend the same budget and exclude it from the very session meant
+/// to introduce it. `review_count = 1` identifies a card graded exactly
+/// once ever (all cards start at `New` with `review_count = 0` and any
+/// grade moves them off `New` for good), so this counts first-ever grades
+/// whose event landed today, regardless of when the card was created.
 pub const COUNT_NEW_CARDS_INTRODUCED_TODAY: &str = "SELECT COUNT(*) AS n
  FROM review_events e
  JOIN cards c ON c.id = e.card_id
@@ -137,111 +137,6 @@ pub const COUNT_NEW_CARDS_INTRODUCED_TODAY: &str = "SELECT COUNT(*) AS n
    AND e.compensates_event_id IS NULL AND s.review_count = 1";
 
 /// `card_schedule_state` row, column-shaped.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScheduleStateRow {
-    /// `card_id`.
-    pub card_id: String,
-    /// `algorithm`.
-    pub algorithm: String,
-    /// `algorithm_version`.
-    pub algorithm_version: String,
-    /// `parameter_set_id`.
-    pub parameter_set_id: Option<String>,
-    /// `difficulty`.
-    pub difficulty: Option<f64>,
-    /// `stability`.
-    pub stability: Option<f64>,
-    /// `last_review_at` RFC 3339.
-    pub last_review_at: Option<String>,
-    /// `due_at` RFC 3339.
-    pub due_at: Option<String>,
-    /// `scheduled_interval_seconds`.
-    pub scheduled_interval_seconds: Option<i64>,
-    /// `lapse_count`.
-    pub lapse_count: u32,
-    /// `review_count`.
-    pub review_count: u32,
-    /// `state_version`.
-    pub state_version: u32,
-    /// `state_hash`.
-    pub state_hash: String,
-}
-
-impl ScheduleStateRow {
-    pub(crate) fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
-        Ok(Self {
-            card_id: row.get("card_id")?,
-            algorithm: row.get("algorithm")?,
-            algorithm_version: row.get("algorithm_version")?,
-            parameter_set_id: row.get("parameter_set_id")?,
-            difficulty: row.get("difficulty")?,
-            stability: row.get("stability")?,
-            last_review_at: row.get("last_review_at")?,
-            due_at: row.get("due_at")?,
-            scheduled_interval_seconds: row.get("scheduled_interval_seconds")?,
-            lapse_count: row.get("lapse_count")?,
-            review_count: row.get("review_count")?,
-            state_version: row.get("state_version")?,
-            state_hash: row.get("state_hash")?,
-        })
-    }
-}
-
-impl ScheduleStateRow {
-    /// Column row → scheduler state.
-    ///
-    /// # Errors
-    ///
-    /// [`RepoError::CorruptRow`] on invalid timestamp text.
-    pub fn into_state(self) -> Result<ScheduledState, RepoError> {
-        Ok(ScheduledState {
-            algorithm: self.algorithm,
-            algorithm_version: self.algorithm_version,
-            parameter_set_id: self.parameter_set_id,
-            difficulty: self.difficulty,
-            stability: self.stability,
-            last_review_at: self
-                .last_review_at
-                .as_deref()
-                .map(|t| from_rfc3339(t).map(|ts| Timestamp(ts.0)))
-                .transpose()?,
-            due_at: self
-                .due_at
-                .as_deref()
-                .map(|t| from_rfc3339(t).map(|ts| Timestamp(ts.0)))
-                .transpose()?,
-            scheduled_interval_seconds: self.scheduled_interval_seconds,
-            lapse_count: self.lapse_count,
-            review_count: self.review_count,
-            state_version: self.state_version,
-        })
-    }
-
-    /// Scheduler state → column row. `state_hash` recomputed here.
-    #[must_use]
-    pub fn from_state(card_id: &str, state: &ScheduledState) -> Self {
-        Self {
-            card_id: card_id.to_owned(),
-            algorithm: state.algorithm.clone(),
-            algorithm_version: state.algorithm_version.clone(),
-            parameter_set_id: state.parameter_set_id.clone(),
-            difficulty: state.difficulty,
-            stability: state.stability,
-            last_review_at: state
-                .last_review_at
-                .map(|t| to_rfc3339(learning_core::Timestamp(t.0))),
-            due_at: state
-                .due_at
-                .map(|t| to_rfc3339(learning_core::Timestamp(t.0))),
-            scheduled_interval_seconds: state.scheduled_interval_seconds,
-            lapse_count: state.lapse_count,
-            review_count: state.review_count,
-            state_version: state.state_version,
-            state_hash: state.state_hash(),
-        }
-    }
-}
-
 /// Last-window effective grades per card touched in a session (window
 /// function — one query for all cards, 16-rust-guidelines.md §5).
 pub const SELECT_SESSION_CARD_SIGNALS: &str = "SELECT w.card_id, w.grade, w.response_millis

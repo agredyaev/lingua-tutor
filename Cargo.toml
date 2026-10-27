@@ -6,7 +6,6 @@ members = [
     "apps/web",
     "apps/local",
     "crates/adaptation",
-    "crates/application",
     "crates/language-pack-api",
     "crates/language-pack-registry",
     "crates/learning-core",
@@ -35,7 +34,6 @@ test-support = { path = "crates/test-support" }
 review-engine = { path = "crates/review-engine" }
 learning-core = { path = "crates/learning-core" }
 tutor-contract = { path = "crates/tutor-contract" }
-application = { path = "crates/application" }
 adaptation = { path = "crates/adaptation" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

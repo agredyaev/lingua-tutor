@@ -38,9 +38,11 @@ lingua-tutor
        ChatGPT
 ```
 
-The runtime binds HTTP to `127.0.0.1`. It does not open a public listener.
+There is no public application listener. The UI stays loopback-only.
 
 The tunnel wire/policy implementation is adapted from Rivet. No `tunnel-client`, cloudflared, LaunchAgent, or second MCP process is required.
+
+The built-in client implements the base OpenAI tunnel wire contract on `/v1/tunnels/...`: wire version `2026-08-25`, process-stable client instance ID, bounded polling, response deadlines anchored at HTTP response start, bounded retry jitter with `Retry-After` handling, opaque command shard-token echo, and forward-compatible unknown-command dropping. It intentionally does **not** advertise optional `X-Tunnel-Client-Capabilities: wrong-cluster-v1`; routing correction requires additional poll-placement state and response-header handling and must not be claimed until that behavior is implemented end to end. Services therefore use the documented legacy polling behavior for this client.
 
 ## Tunnel credentials
 
@@ -69,14 +71,12 @@ lingua-tutor backup
 lingua-tutor where
 ```
 
-`lingua-tutor backup` writes the backup under the project state directory and runs SQLite integrity and foreign-key checks.
+Backups are written next to the active project database under the project state directory and validated by SQLite integrity/foreign-key checks.
 
-## Install and update
+## Install/update
 
-Install the executable from [GitHub Releases](https://github.com/agredyaev/lingua-tutor/releases/latest).
+```sh
+cargo install --path apps/local --bin lingua-tutor --locked
+```
 
-Each release archive contains one file named `lingua-tutor`. Running the binary does not require Rust or Cargo.
-
-Use [installation.md](installation.md) for supported targets, checksum verification, macOS Gatekeeper handling, updates, uninstall, and troubleshooting.
-
-No service manager, installer wrapper, separate web bundle, or separate tunnel executable is required.
+The CLI is installed directly by Cargo. No installer script or service wrapper is required.

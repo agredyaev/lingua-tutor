@@ -1,4 +1,4 @@
-//! In-process MCP JSON-RPC dispatch for OpenAI Secure MCP Tunnel.
+//! In-process MCP JSON-RPC dispatch used by the built-in secure tunnel.
 
 use crate::{Env, mcp_tools};
 
@@ -13,7 +13,7 @@ pub enum DirectDispatch {
 /// Dispatch one bounded MCP JSON-RPC message in-process.
 pub fn dispatch_jsonrpc(
     env: &Env,
-    registry: &language_pack_registry::LanguagePackRegistry,
+    registry: &crate::BuiltInPackRegistry,
     input: &[u8],
 ) -> Result<DirectDispatch, String> {
     if input.len() > 512 * 1024 {
@@ -86,7 +86,8 @@ pub fn dispatch_jsonrpc(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::panic)]
+// Test fixtures intentionally fail fast and use compact tuple snapshots.
+#[allow(clippy::unwrap_used, clippy::panic, clippy::type_complexity)]
 mod tests {
     use super::*;
     use crate::storage;

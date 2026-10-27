@@ -6,26 +6,28 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use review_engine::{
-    FsrsScheduler, Grade, InitialReviewInput, ReviewEventInput, ReviewScheduler, SchedulerSettings,
-    Timestamp, replay,
+    FSRS_ID, Grade, ReviewEventInput, SchedulerSettings, Timestamp, apply_review, initial_state,
+    new_scheduler_scratch, replay,
 };
 
 const CREATED: Timestamp = Timestamp(1_780_000_000);
 
 #[test]
 fn zero_event_replay_reproduces_activation_state() {
-    let scheduler = FsrsScheduler::new().unwrap();
-    let original = scheduler
-        .initial_state(InitialReviewInput { now: CREATED })
-        .unwrap();
-    let replayed = replay(&scheduler, CREATED, &[], &SchedulerSettings::default()).unwrap();
-    assert_eq!(replayed.state_hash(), original.state_hash());
+    let scheduler = FSRS_ID;
+    let original = initial_state(scheduler, CREATED).unwrap();
+    let replayed = replay(scheduler, CREATED, &[], &SchedulerSettings::default()).unwrap();
+    assert_eq!(
+        review_engine::state_hash(&replayed),
+        review_engine::state_hash(&original)
+    );
     assert_eq!(replayed, original);
 }
 
 #[test]
 fn replay_matches_sequential_application() {
-    let scheduler = FsrsScheduler::new().unwrap();
+    let scheduler = FSRS_ID;
+    let scratch = new_scheduler_scratch(scheduler).unwrap();
     let settings = SchedulerSettings::default();
     let events = [
         ReviewEventInput {
@@ -41,26 +43,27 @@ fn replay_matches_sequential_application() {
             answered_at: Timestamp(CREATED.0 + 200_000),
         },
     ];
-    let mut expected = scheduler
-        .initial_state(InitialReviewInput { now: CREATED })
-        .unwrap();
+    let mut expected = initial_state(scheduler, CREATED).unwrap();
     for event in &events {
-        expected = scheduler.apply_review(&expected, event, &settings).unwrap();
+        expected = apply_review(scheduler, &scratch, &expected, event, &settings).unwrap();
     }
-    let replayed = replay(&scheduler, CREATED, &events, &settings).unwrap();
-    assert_eq!(replayed.state_hash(), expected.state_hash());
+    let replayed = replay(scheduler, CREATED, &events, &settings).unwrap();
+    assert_eq!(
+        review_engine::state_hash(&replayed),
+        review_engine::state_hash(&expected)
+    );
     assert_eq!(replayed, expected);
 }
 
 #[test]
 fn replay_is_a_pure_function_of_its_inputs() {
-    let scheduler = FsrsScheduler::new().unwrap();
+    let scheduler = FSRS_ID;
     let settings = SchedulerSettings::default();
     let events = [ReviewEventInput {
         grade: Grade::Hard,
         answered_at: Timestamp(CREATED.0 + 3600),
     }];
-    let first = replay(&scheduler, CREATED, &events, &settings).unwrap();
-    let second = replay(&scheduler, CREATED, &events, &settings).unwrap();
+    let first = replay(scheduler, CREATED, &events, &settings).unwrap();
+    let second = replay(scheduler, CREATED, &events, &settings).unwrap();
     assert_eq!(first, second);
 }

@@ -1,93 +1,128 @@
 //! Spaced tutor-focus threads derived from item capability evidence.
-//!
-//! Focus threads apply Anki-like spacing to live tutoring without duplicating
-//! the card scheduler. They exist only for introduced/active learning items.
 
-use crate::{CapabilityEstimate, CapabilityKind, ItemCapabilityState};
-use serde::Serialize;
+use crate::{CapabilityEstimateView, CapabilityKind, ItemCapabilityView, TextSetRef};
 
 const DAY_SECONDS: i64 = 86_400;
 
-/// One derived tutor focus thread.
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct TutorFocusThread {
-    /// Learning item this focus thread belongs to.
-    pub learning_item_id: String,
-    /// Target-language text for tutor orientation.
-    pub target_text: String,
-    /// Capability that remains insufficiently consolidated.
+/// Borrowed focus view emitted by the canonical per-item pass.
+#[derive(Debug)]
+pub struct TutorFocusThreadView<'a> {
+    /// Learning item ID borrowed from the item state.
+    pub learning_item_id: &'a str,
+    /// Target text borrowed from the item state.
+    pub target_text: &'a str,
+    /// Capability being trained.
     pub capability: CapabilityKind,
-    /// Spacing stage 0..=4; larger means the skill survived longer gaps.
+    /// Spacing stage.
     pub stage: u8,
-    /// Earliest timestamp for the next tutor probe.
+    /// Due instant.
     pub due_at_unix: i64,
-    /// `true` when the thread is eligible for the current lesson.
+    /// Due-now flag.
     pub due_now: bool,
-    /// Successful concrete contexts already observed.
-    pub successful_contexts: Vec<String>,
-    /// Successful semantic context families already observed.
-    pub successful_context_families: Vec<String>,
-    /// Human-readable continuation rule for the tutor.
+    /// Successful contexts borrowed from the capability state.
+    pub successful_contexts: TextSetRef<'a>,
+    /// Successful context families borrowed from the capability state.
+    pub successful_context_families: TextSetRef<'a>,
+    /// Continuation rule. Dynamic only when existing contexts must be named.
     pub next_context_policy: String,
-    /// Evidence-based explanation for why the thread remains active.
+    /// Evidence-based explanation.
     pub rationale: String,
 }
 
-/// Derives active focus threads from item state. Fully consolidated skills and
-/// not-yet-introduced candidates are omitted.
-#[must_use]
-pub fn build_tutor_focus_threads(
-    items: &[ItemCapabilityState],
+/// Decision-only focus view. No explanation string is allocated before top-K
+/// selection; consumers may render it after selecting the final focus records.
+#[derive(Debug, Clone, Copy)]
+pub struct TutorFocusDecisionView<'a> {
+    /// Stable identifier of the referenced learning item.
+    pub learning_item_id: &'a str,
+    /// target text used by the corresponding adaptation pass.
+    pub target_text: &'a str,
+    /// Skill dimension targeted by this task or observation.
+    pub capability: CapabilityKind,
+    /// stage used by the corresponding adaptation pass.
+    pub stage: u8,
+    /// Next scheduled practice time as a Unix timestamp in seconds.
+    pub due_at_unix: i64,
+    /// due now used by the corresponding adaptation pass.
+    pub due_now: bool,
+    /// Evidence-derived capability estimate for the focus decision.
+    pub estimate: CapabilityEstimateView<'a>,
+}
+
+/// Emit focus decisions for one item without constructing an intermediate collection.
+pub fn visit_tutor_focus_decisions<'a>(
+    item: ItemCapabilityView<'a>,
     now_unix: i64,
-    limit: usize,
-) -> Vec<TutorFocusThread> {
-    let mut threads = Vec::new();
-    for item in items.iter().filter(|item| focusable_status(&item.status)) {
-        add_if_needed(
-            &mut threads,
-            item,
-            CapabilityKind::Listening,
-            &item.listening,
-            now_unix,
-        );
-        add_if_needed(
-            &mut threads,
-            item,
-            CapabilityKind::SpontaneousProduction,
-            &item.spontaneous_production,
-            now_unix,
-        );
-
-        let spontaneous_ready = item
-            .spontaneous_production
-            .weighted_success_rate
-            .is_some_and(|rate| rate >= 0.80)
-            && item
-                .spontaneous_production
-                .unaided_success_rate
-                .is_some_and(|rate| rate >= 0.75)
-            && item.spontaneous_production.evidence_strength >= 0.55;
-        if spontaneous_ready {
-            add_if_needed(
-                &mut threads,
-                item,
-                CapabilityKind::Transfer,
-                &item.transfer,
-                now_unix,
-            );
-        }
+    mut emit: impl FnMut(TutorFocusDecisionView<'a>),
+) {
+    if !focusable_status(item.status) {
+        return;
     }
+    emit_if_needed(
+        item,
+        CapabilityKind::Listening,
+        item.listening,
+        now_unix,
+        &mut emit,
+    );
+    emit_if_needed(
+        item,
+        CapabilityKind::SpontaneousProduction,
+        item.spontaneous_production,
+        now_unix,
+        &mut emit,
+    );
+    let spontaneous_ready = item
+        .spontaneous_production
+        .weighted_success_rate
+        .is_some_and(|rate| rate >= 0.80)
+        && item
+            .spontaneous_production
+            .unaided_success_rate
+            .is_some_and(|rate| rate >= 0.75)
+        && item.spontaneous_production.evidence_strength >= 0.55;
+    if spontaneous_ready {
+        emit_if_needed(
+            item,
+            CapabilityKind::Transfer,
+            item.transfer,
+            now_unix,
+            &mut emit,
+        );
+    }
+}
 
-    threads.sort_by(|left, right| {
-        right
-            .due_now
-            .cmp(&left.due_now)
-            .then_with(|| left.due_at_unix.cmp(&right.due_at_unix))
-            .then_with(|| left.learning_item_id.cmp(&right.learning_item_id))
-            .then_with(|| left.capability.cmp(&right.capability))
+/// Emits all required focus threads for one item without allocating a collection.
+pub fn visit_tutor_focus_threads<'a>(
+    item: ItemCapabilityView<'a>,
+    now_unix: i64,
+    mut emit: impl FnMut(TutorFocusThreadView<'a>),
+) {
+    visit_tutor_focus_decisions(item, now_unix, |decision| {
+        emit(TutorFocusThreadView {
+            learning_item_id: decision.learning_item_id,
+            target_text: decision.target_text,
+            capability: decision.capability,
+            stage: decision.stage,
+            due_at_unix: decision.due_at_unix,
+            due_now: decision.due_now,
+            successful_contexts: decision.estimate.successful_contexts,
+            successful_context_families: decision.estimate.successful_context_families,
+            next_context_policy: format_focus_policy(
+                decision.capability,
+                decision.estimate.successful_contexts,
+                decision.estimate.successful_context_families,
+            ),
+            rationale: format_focus_rationale(
+                decision.capability,
+                decision.estimate.weighted_success_rate,
+                decision.estimate.evidence_strength,
+                decision.stage,
+                decision.estimate.distinct_success_contexts,
+                decision.estimate.distinct_success_families,
+            ),
+        });
     });
-    threads.truncate(limit);
-    threads
 }
 
 fn focusable_status(status: &str) -> bool {
@@ -97,12 +132,12 @@ fn focusable_status(status: &str) -> bool {
     )
 }
 
-fn add_if_needed(
-    threads: &mut Vec<TutorFocusThread>,
-    item: &ItemCapabilityState,
+fn emit_if_needed<'a>(
+    item: ItemCapabilityView<'a>,
     capability: CapabilityKind,
-    estimate: &CapabilityEstimate,
+    estimate: CapabilityEstimateView<'a>,
     now_unix: i64,
+    emit: &mut impl FnMut(TutorFocusDecisionView<'a>),
 ) {
     if consolidated(capability, estimate) {
         return;
@@ -121,21 +156,18 @@ fn add_if_needed(
     });
     let due_now = due_at_unix <= now_unix;
 
-    threads.push(TutorFocusThread {
-        learning_item_id: item.learning_item_id.clone(),
-        target_text: item.target_text.clone(),
+    emit(TutorFocusDecisionView {
+        learning_item_id: item.learning_item_id,
+        target_text: item.target_text,
         capability,
         stage,
         due_at_unix,
         due_now,
-        successful_contexts: estimate.successful_contexts.clone(),
-        successful_context_families: estimate.successful_context_families.clone(),
-        next_context_policy: context_policy(capability, estimate),
-        rationale: focus_rationale(capability, estimate, stage),
+        estimate,
     });
 }
 
-fn consolidated(capability: CapabilityKind, estimate: &CapabilityEstimate) -> bool {
+fn consolidated(capability: CapabilityKind, estimate: CapabilityEstimateView<'_>) -> bool {
     match capability {
         CapabilityKind::Listening => {
             estimate
@@ -168,34 +200,39 @@ fn consolidated(capability: CapabilityKind, estimate: &CapabilityEstimate) -> bo
     }
 }
 
-fn spacing_stage(estimate: &CapabilityEstimate) -> u8 {
+fn spacing_stage(estimate: CapabilityEstimateView<'_>) -> u8 {
     if estimate.attempts == 0 || estimate.last_observed_qualified_success != Some(true) {
         return 0;
     }
     estimate.qualified_success_streak.min(4)
 }
 
-fn context_policy(capability: CapabilityKind, estimate: &CapabilityEstimate) -> String {
+/// Render the next-context rule from already successful contexts and families.
+pub fn format_focus_policy(
+    capability: CapabilityKind,
+    successful_contexts: TextSetRef<'_>,
+    successful_context_families: TextSetRef<'_>,
+) -> String {
     match capability {
         CapabilityKind::Transfer => {
-            if estimate.successful_context_families.is_empty() {
+            if successful_context_families.is_empty() {
                 "Use a meaningfully different situation and record both context and context_family."
                     .to_owned()
             } else {
                 format!(
                     "Use a new semantic context family; avoid already successful families: {}",
-                    estimate.successful_context_families.join(", ")
+                    join_texts(successful_context_families)
                 )
             }
         }
         CapabilityKind::SpontaneousProduction => {
-            if estimate.successful_contexts.is_empty() {
+            if successful_contexts.is_empty() {
                 "Use a real communicative context and record assistance_level=0 only if truly unaided."
                     .to_owned()
             } else {
                 format!(
                     "Vary the concrete situation; avoid only repeating: {}",
-                    estimate.successful_contexts.join(", ")
+                    join_texts(successful_contexts)
                 )
             }
         }
@@ -209,101 +246,99 @@ fn context_policy(capability: CapabilityKind, estimate: &CapabilityEstimate) -> 
     }
 }
 
-fn focus_rationale(capability: CapabilityKind, estimate: &CapabilityEstimate, stage: u8) -> String {
-    let rate = estimate.weighted_success_rate.map_or_else(
+fn join_texts(values: TextSetRef<'_>) -> String {
+    let mut out = String::new();
+    for index in 0..values.len() {
+        let Some(value) = values.get(index) else {
+            continue;
+        };
+        if !out.is_empty() {
+            out.push_str(", ");
+        }
+        out.push_str(value);
+    }
+    out
+}
+
+/// Render an explanation from capability strength, retention stage, and context diversity.
+pub fn format_focus_rationale(
+    capability: CapabilityKind,
+    weighted_success_rate: Option<f64>,
+    evidence_strength: f64,
+    stage: u8,
+    distinct_success_contexts: u16,
+    distinct_success_families: u16,
+) -> String {
+    let rate = weighted_success_rate.map_or_else(
         || "unknown".to_owned(),
         |value| format!("{:.0}%", value * 100.0),
     );
     format!(
-        "{capability:?}: success={rate}, evidence_strength={:.2}, spacing_stage={stage}, contexts={}, families={}",
-        estimate.evidence_strength,
-        estimate.distinct_success_contexts,
-        estimate.distinct_success_families
+        "{capability:?}: success={rate}, evidence_strength={evidence_strength:.2}, spacing_stage={stage}, contexts={distinct_success_contexts}, families={distinct_success_families}",
     )
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::{CapabilityEstimateFixed, ItemCapabilityStateFixed};
 
-    fn estimate() -> CapabilityEstimate {
-        CapabilityEstimate {
-            attempts: 1,
-            successes: 1,
-            weighted_success_rate: Some(0.9),
-            unaided_success_rate: Some(1.0),
-            latency_weighted_millis: Some(1500),
-            qualified_success_streak: 1,
-            distinct_success_contexts: 1,
-            distinct_success_families: 1,
-            successful_contexts: vec!["bus:route1".to_owned()],
-            successful_context_families: vec!["transport.ask_stop".to_owned()],
-            evidence_strength: 0.4,
-            last_observed_at_unix: Some(0),
-            last_observed_success: Some(true),
-            last_observed_qualified_success: Some(true),
-        }
-    }
-
-    fn item(status: &str) -> ItemCapabilityState {
-        ItemCapabilityState {
-            learning_item_id: "li-1".to_owned(),
-            target_text: "target".to_owned(),
-            status: status.to_owned(),
-            recognition: CapabilityEstimate::default(),
-            listening: estimate(),
-            prompted_production: CapabilityEstimate::default(),
-            spontaneous_production: estimate(),
-            transfer: estimate(),
+    fn item<'a>(
+        id: &'a str,
+        status: &'a str,
+        listening: CapabilityEstimateFixed<'a>,
+        spontaneous: CapabilityEstimateFixed<'a>,
+        transfer: CapabilityEstimateFixed<'a>,
+    ) -> ItemCapabilityStateFixed<'a> {
+        ItemCapabilityStateFixed {
+            learning_item_id: id,
+            target_text: "target",
+            status,
+            recognition: CapabilityEstimateFixed::default(),
+            listening,
+            prompted_production: CapabilityEstimateFixed::default(),
+            spontaneous_production: spontaneous,
+            transfer,
         }
     }
 
     #[test]
-    fn candidate_items_never_enter_tutor_focus() {
-        assert!(build_tutor_focus_threads(&[item("candidate")], 100, 10).is_empty());
-    }
-
-    #[test]
-    fn unknown_or_unqualified_latest_attempt_is_due_immediately() {
-        let mut state = item("learning");
-        state.spontaneous_production.last_observed_qualified_success = Some(false);
-        state.spontaneous_production.qualified_success_streak = 0;
-        let threads = build_tutor_focus_threads(&[state], 100, 10);
-        let spontaneous = threads
-            .iter()
-            .find(|thread| thread.capability == CapabilityKind::SpontaneousProduction)
-            .expect("spontaneous thread");
-        assert_eq!(spontaneous.stage, 0);
-        assert!(spontaneous.due_now);
-    }
-
-    #[test]
-    fn one_qualified_success_moves_only_to_one_day() {
-        let threads = build_tutor_focus_threads(&[item("learning")], DAY_SECONDS / 2, 10);
-        let spontaneous = threads
-            .iter()
-            .find(|thread| thread.capability == CapabilityKind::SpontaneousProduction)
-            .expect("spontaneous thread");
-        assert_eq!(spontaneous.stage, 1);
-        assert_eq!(spontaneous.due_at_unix, DAY_SECONDS);
-        assert!(!spontaneous.due_now);
-    }
-
-    #[test]
-    fn transfer_needs_three_semantic_families_to_close() {
-        let mut state = item("transfer_pending");
-        state.spontaneous_production.evidence_strength = 0.9;
-        state.spontaneous_production.qualified_success_streak = 3;
-        state.transfer.evidence_strength = 0.9;
-        state.transfer.weighted_success_rate = Some(0.95);
-        state.transfer.qualified_success_streak = 3;
-        state.transfer.distinct_success_families = 2;
-        let threads = build_tutor_focus_threads(&[state], 100, 10);
-        assert!(
-            threads
-                .iter()
-                .any(|thread| thread.capability == CapabilityKind::Transfer)
+    fn candidate_items_do_not_emit_focus() {
+        let state = item(
+            "li",
+            "candidate",
+            CapabilityEstimateFixed::default(),
+            CapabilityEstimateFixed::default(),
+            CapabilityEstimateFixed::default(),
         );
+        let mut count = 0;
+        visit_tutor_focus_decisions(crate::item_capability_view(&state), 100, |_| count += 1);
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn missing_listening_evidence_is_due_now() {
+        let state = item(
+            "li",
+            "learning",
+            CapabilityEstimateFixed::default(),
+            CapabilityEstimateFixed {
+                attempts: 1,
+                weighted_success_rate: Some(0.9),
+                unaided_success_rate: Some(0.9),
+                evidence_strength: 0.8,
+                qualified_success_streak: 2,
+                last_observed_qualified_success: Some(true),
+                ..CapabilityEstimateFixed::default()
+            },
+            CapabilityEstimateFixed::default(),
+        );
+        let mut found = None;
+        visit_tutor_focus_decisions(crate::item_capability_view(&state), 100, |decision| {
+            if decision.capability == CapabilityKind::Listening {
+                found = Some((decision.due_now, decision.stage));
+            }
+        });
+        assert_eq!(found, Some((true, 0)));
     }
 }

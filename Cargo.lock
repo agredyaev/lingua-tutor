@@ -7,6 +7,7 @@ name = "adaptation"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -43,20 +44,6 @@ name = "anyhow"
 version = "1.0.102"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
-
-[[package]]
-name = "application"
-version = "0.1.0"
-dependencies = [
- "language-pack-api",
- "learning-core",
- "review-engine",
- "semver",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tutor-contract",
-]
 
 [[package]]
 name = "async-lock"
@@ -1076,6 +1063,7 @@ dependencies = [
  "lingua-tutor-local",
  "review-engine",
  "rusqlite",
+ "serde_json",
  "synthetic-test-pack",
 ]
 
@@ -1149,6 +1137,7 @@ name = "language-pack-registry"
 version = "0.1.0"
 dependencies = [
  "language-pack-api",
+ "serde",
  "serde_json",
  "thiserror 2.0.18",
 ]
@@ -1158,7 +1147,6 @@ name = "learning-core"
 version = "0.1.0"
 dependencies = [
  "language-pack-api",
- "semver",
  "serde",
  "serde_json",
 ]
@@ -1348,10 +1336,9 @@ dependencies = [
 
 [[package]]
 name = "lingua-tutor-local"
-version = "0.1.1"
+version = "0.1.0"
 dependencies = [
  "adaptation",
- "application",
  "axum",
  "chrono",
  "hex",
@@ -2025,10 +2012,6 @@ name = "semver"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
-dependencies = [
- "serde",
- "serde_core",
-]
 
 [[package]]
 name = "send_wrapper"
@@ -2466,9 +2449,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.54.1"
+version = "1.53.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
+checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
 dependencies = [
  "bytes",
  "libc",

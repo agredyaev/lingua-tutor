@@ -1,10 +1,10 @@
 # 00 — Overview
 
-Lingua Tutor is a local language-learning application.
+Lingua Tutor is a local-first language-learning application.
 
 ## Product goal
 
-Support spoken-language practice while storing learner state, review history, tutor evidence, and scheduling state in one local database.
+Help a learner start speaking quickly while preserving durable learner state, review history, tutor evidence, and adaptive scheduling in one local system of record.
 
 ## Runtime stack
 
@@ -12,16 +12,13 @@ Support spoken-language practice while storing learner state, review history, tu
 - Leptos CSR PWA.
 - Native `lingua-tutor` CLI/runtime.
 - One SQLite database.
-- FSRS-compatible review scheduler behind an application-owned interface.
+- FSRS-compatible review scheduling through explicit integer-selected processing passes; no scheduler behavior interface.
 - Versioned language packs.
 - ChatGPT integration through bounded MCP tools and an in-process OpenAI Secure MCP Tunnel transport adapted from Rivet.
 
 ## Topology
 
-One runtime serves the PWA and JSON-RPC on `127.0.0.1:8787`.
-The runtime dispatches MCP in-process through OpenAI Secure MCP Tunnel.
-The runtime accesses the same SQLite database.
-The application has no remote deployment or secondary database.
+One local runtime serves the PWA and browser JSON-RPC boundary on `127.0.0.1:8787`, dispatches MCP in-process through the built-in secure tunnel, and accesses the same SQLite database. There is no remote application deployment or secondary database.
 
 ## Core invariants
 
@@ -34,11 +31,4 @@ The application has no remote deployment or secondary database.
 
 ## v1 surface
 
-- Dashboard and lesson history.
-- Learner state, evidence, and errors.
-- Tutor-generated cards and review sessions.
-- Deterministic spaced repetition and review history.
-- Recommendations derived from evidence.
-- PWA installation and bounded offline behavior.
-- JSON/CSV export.
-- Localhost UI and MCP tutor integration.
+Dashboard; lesson history and lifecycle; learner state; tutor-generated cards; card lifecycle; review sessions; deterministic spaced repetition; review history; listening/speaking/error evidence; adaptive recommendations; PWA installation; bounded offline behavior; JSON/CSV export; localhost UI; MCP tutor integration.

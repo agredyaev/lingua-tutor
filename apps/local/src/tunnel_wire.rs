@@ -1,6 +1,6 @@
 //! Pure OpenAI tunnel wire decoding helpers.
 //!
-//! Owns no I/O or retained state. Fuzz tests call these parsing functions directly.
+//! This module owns no I/O and retains no state. Keep it suitable for fuzzing.
 
 use serde::Deserialize;
 use serde_json::{Value, value::RawValue};
@@ -105,7 +105,8 @@ pub(crate) fn valid_tunnel_id(value: &str) -> bool {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+// Test fixtures intentionally fail fast and use compact tuple snapshots.
+#[allow(clippy::unwrap_used, clippy::type_complexity)]
 mod tests {
     use super::*;
 

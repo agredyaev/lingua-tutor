@@ -8,6 +8,11 @@ pub mod assets;
 pub mod handlers;
 pub mod mcp;
 pub mod mcp_tools;
+/// Explicit data-oriented operation passes; public only for the fuzz harness.
+#[cfg(feature = "fuzzing")]
+pub mod operations_v2;
+#[cfg(not(feature = "fuzzing"))]
+pub(crate) mod operations_v2;
 pub mod repositories;
 pub mod server;
 pub mod storage;
@@ -15,10 +20,12 @@ pub mod tunnel;
 mod tunnel_policy;
 mod tunnel_wire;
 
+/// Concrete language pack composition used by the native runtime.
+pub type BuiltInPackRegistry =
+    language_pack_registry::LanguagePackRegistry<language_pack_es_es::EsEsPack>;
+
 /// Build the immutable production language-pack registry at process startup.
-pub fn built_in_language_packs() -> std::result::Result<
-    language_pack_registry::LanguagePackRegistry,
-    language_pack_registry::RegistryError,
-> {
-    language_pack_registry::LanguagePackRegistry::new([language_pack_es_es::register()])
+pub fn built_in_language_packs()
+-> std::result::Result<BuiltInPackRegistry, language_pack_registry::RegistryError> {
+    language_pack_registry::build_registry([language_pack_es_es::register()])
 }

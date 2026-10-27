@@ -11,6 +11,7 @@ description = "Cross-crate integration tests (02-workspace.md §1)"
 rusqlite = { version = "0.37", features = ["bundled"] }
 
 [dev-dependencies]
+serde_json = { workspace = true }
 review-engine = { workspace = true }
 adaptation = { workspace = true }
 learning-core = { workspace = true }

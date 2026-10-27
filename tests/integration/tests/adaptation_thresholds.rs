@@ -6,14 +6,15 @@
 #[test]
 fn escalation_thresholds_stay_in_sync() {
     assert_eq!(
-        adaptation::error_escalation("t", learning_core::ERROR_ESCALATION_THRESHOLD)[0].action,
-        "activate_mini_target"
+        adaptation::error_escalation_action(learning_core::ERROR_ESCALATION_THRESHOLD),
+        Some("activate_mini_target")
     );
     assert_eq!(
-        adaptation::error_escalation("t", learning_core::ERROR_METHOD_CHANGE_THRESHOLD)[0].action,
-        "require_method_change"
+        adaptation::error_escalation_action(learning_core::ERROR_METHOD_CHANGE_THRESHOLD),
+        Some("require_method_change")
     );
     assert!(
-        adaptation::error_escalation("t", learning_core::ERROR_ESCALATION_THRESHOLD - 1).is_empty()
+        adaptation::error_escalation_action(learning_core::ERROR_ESCALATION_THRESHOLD - 1)
+            .is_none()
     );
 }

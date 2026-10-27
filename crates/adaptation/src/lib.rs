@@ -10,22 +10,28 @@ mod queue;
 mod rules;
 mod tasks;
 
-pub use calibration::{CalibrationSnapshot, InterventionEffect, summarize_intervention_effects};
+pub use calibration::{InterventionEffect, summarize_intervention_history};
 pub use capability::{
-    CapabilityEstimate, CapabilityKind, EvidenceObservation, ItemCapabilityState,
-    project_item_capabilities,
+    CapabilityEstimateFixed, CapabilityEstimateView, CapabilityKind, ContextSetView,
+    ItemCapabilityStateFixed, ItemCapabilityView, MAX_CAPABILITY_OBSERVATIONS, TextSetRef,
+    capability_estimate_view, context_set_slice, item_capability_view,
+    project_item_capabilities_columns,
 };
-pub use focus::{TutorFocusThread, build_tutor_focus_threads};
+pub use focus::{
+    TutorFocusDecisionView, TutorFocusThreadView, format_focus_policy, format_focus_rationale,
+    visit_tutor_focus_decisions, visit_tutor_focus_threads,
+};
 pub use planner::{
-    AdaptiveLessonPlan, LessonPlannerInput, PlanPriority, PlannerPreferences,
-    RecentLearningSignals, plan_next_lesson,
+    AdaptiveLessonPlanFixed, LessonPlannerInputView, PlanPriorityFixed, PlannerPreferencesView,
+    RecentLearningSignals, plan_diagnostic_probe, plan_diagnostic_probe_count,
+    plan_next_lesson_fixed, plan_priorities, plan_success_criteria,
 };
-pub use queue::{TutorTask, build_tutor_task_queue};
+pub use queue::{TutorTask, criterion, default_action, default_focus_score, evidence_capability};
 pub use rules::{
-    CardSignals, GRADE_WINDOW, Recommendation, error_escalation, evaluate_card_rules,
-    recheck_failed,
+    CardSignalView, GRADE_WINDOW, RecommendationView, error_escalation_action,
+    recheck_failed_fields, visit_card_rules,
 };
-pub use tasks::{TaskCandidate, score_task_candidates};
+pub use tasks::{TaskCandidateView, visit_task_candidates};
 
 /// One study day's signals, most recent first.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -38,8 +44,6 @@ pub struct DailySignal {
 
 /// Overdue-card count above which new cards pause (05 §9). Design decision.
 pub const OVERDUE_PAUSE_THRESHOLD: u32 = 50;
-/// Daily review minutes above which budget shrinks.
-pub const REVIEW_MINUTES_LIMIT: u16 = 12;
 /// Recall rate below which budget halves.
 pub const RECALL_RATE_FLOOR: f64 = 0.70;
 
@@ -54,6 +58,7 @@ pub fn new_card_budget(
     base_budget: u8,
     yesterday_budget: u8,
     overdue_count: u32,
+    review_minutes_limit: u16,
     last_two_days: Option<(DailySignal, DailySignal)>,
 ) -> u8 {
     if overdue_count > OVERDUE_PAUSE_THRESHOLD {
@@ -61,7 +66,7 @@ pub fn new_card_budget(
     }
     let mut budget = base_budget;
     if let Some((a, b)) = last_two_days {
-        if a.review_minutes > REVIEW_MINUTES_LIMIT && b.review_minutes > REVIEW_MINUTES_LIMIT {
+        if a.review_minutes > review_minutes_limit && b.review_minutes > review_minutes_limit {
             budget /= 2;
         }
         if a.recall_rate < RECALL_RATE_FLOOR && b.recall_rate < RECALL_RATE_FLOOR {
@@ -95,36 +100,36 @@ mod tests {
 
     #[test]
     fn overdue_backlog_pauses_new_cards() {
-        assert_eq!(new_card_budget(8, 8, 51, Some((CALM, CALM))), 0);
+        assert_eq!(new_card_budget(8, 8, 51, 12, Some((CALM, CALM))), 0);
     }
 
     #[test]
     fn two_heavy_days_halve_budget() {
-        assert_eq!(new_card_budget(8, 8, 0, Some((HEAVY, HEAVY))), 4);
+        assert_eq!(new_card_budget(8, 8, 0, 12, Some((HEAVY, HEAVY))), 4);
         // One heavy day is not enough.
-        assert_eq!(new_card_budget(8, 8, 0, Some((HEAVY, CALM))), 8);
+        assert_eq!(new_card_budget(8, 8, 0, 12, Some((HEAVY, CALM))), 8);
     }
 
     #[test]
     fn two_weak_recall_days_halve_budget_and_stack_with_time() {
-        assert_eq!(new_card_budget(8, 8, 0, Some((WEAK, WEAK))), 4);
+        assert_eq!(new_card_budget(8, 8, 0, 12, Some((WEAK, WEAK))), 4);
         let both = DailySignal {
             review_minutes: 15,
             recall_rate: 0.6,
         };
-        assert_eq!(new_card_budget(8, 8, 0, Some((both, both))), 2);
+        assert_eq!(new_card_budget(8, 8, 0, 12, Some((both, both))), 2);
     }
 
     #[test]
     fn restore_is_gradual_not_instant() {
         // Yesterday paused (0) → today at most 1, even if signals are calm.
-        assert_eq!(new_card_budget(8, 0, 0, Some((CALM, CALM))), 1);
-        assert_eq!(new_card_budget(8, 3, 0, Some((CALM, CALM))), 4);
-        assert_eq!(new_card_budget(8, 8, 0, Some((CALM, CALM))), 8);
+        assert_eq!(new_card_budget(8, 0, 0, 12, Some((CALM, CALM))), 1);
+        assert_eq!(new_card_budget(8, 3, 0, 12, Some((CALM, CALM))), 4);
+        assert_eq!(new_card_budget(8, 8, 0, 12, Some((CALM, CALM))), 8);
     }
 
     #[test]
     fn no_history_means_base_budget_capped_by_gradual_restore() {
-        assert_eq!(new_card_budget(8, 8, 0, None), 8);
+        assert_eq!(new_card_budget(8, 8, 0, 12, None), 8);
     }
 }

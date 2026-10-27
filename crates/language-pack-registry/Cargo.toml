@@ -9,6 +9,7 @@ description = "Pack registration, ID lookup, contract-version check (06-language
 
 [dependencies]
 language-pack-api = { workspace = true }
+serde = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
