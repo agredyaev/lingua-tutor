@@ -21,6 +21,7 @@ allow = [
     "MPL-2.0",
     "CC0-1.0",
     "BSL-1.0", # xxhash-rust, transitive via leptos hashing
+    "NCSA", # libfuzzer-sys / LLVM libFuzzer runtime
 ]
 
 [bans]

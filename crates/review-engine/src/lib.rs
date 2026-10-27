@@ -1,12 +1,9 @@
-//! Spaced-repetition subsystem: `ReviewScheduler` trait, FSRS adapter,
+//! Spaced-repetition subsystem: explicit FSRS/fallback processing passes,
 //! deterministic fallback (05-review-engine.md). Language-neutral; no IO;
 //! third-party scheduler types never cross this crate's boundary.
 
 mod fallback;
 mod fsrs_adapter;
-
-pub use fallback::FallbackScheduler;
-pub use fsrs_adapter::FsrsScheduler;
 
 /// Minimum interval after any review: 10 minutes.
 pub const MIN_INTERVAL_SECONDS: i64 = 600;
@@ -23,11 +20,11 @@ pub struct Timestamp(pub i64);
 pub enum Grade {
     /// Not recalled correctly before reveal.
     Again = 1,
-    /// Correct after hesitation or self-correction.
+    /// Correct with substantial effort.
     Hard = 2,
-    /// Correct after at most a short pause, without answer reveal.
+    /// Correct with normal effort.
     Good = 3,
-    /// Immediate correct answer without self-correction.
+    /// Immediate, confident, fully correct.
     Easy = 4,
 }
 
@@ -54,7 +51,7 @@ pub struct ScheduledState {
     pub algorithm: String,
     /// Exact algorithm/crate version producing this state.
     pub algorithm_version: String,
-    /// Active parameter set; assigned by `application` on persist, not here.
+    /// Active parameter set; assigned by the native review write pass on persist, not here.
     pub parameter_set_id: Option<String>,
     /// FSRS difficulty; `None` before first review or for fallback.
     pub difficulty: Option<f64>,
@@ -74,50 +71,41 @@ pub struct ScheduledState {
     pub state_version: u32,
 }
 
-impl ScheduledState {
-    /// Deterministic hash for conflict detection, reproducibility tests and
-    /// audit (`prior_state_hash` / `result_state_hash`, 05-review-engine.md §7).
-    /// Floats hashed by exact bit pattern — no formatting ambiguity.
-    ///
-    /// # Invariants
-    ///
-    /// Equal states hash equal; any field change changes the hash (FNV-1a 64).
-    #[must_use]
-    pub fn state_hash(&self) -> String {
-        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-        let mut eat = |bytes: &[u8]| {
-            for b in bytes {
-                hash ^= u64::from(*b);
-                hash = hash.wrapping_mul(0x100_0000_01b3);
-            }
-            hash ^= 0xff; // field separator
+/// Deterministic hash for conflict detection, reproducibility tests and
+/// audit (`prior_state_hash` / `result_state_hash`, 05-review-engine.md §7).
+/// Floats hashed by exact bit pattern — no formatting ambiguity.
+///
+/// # Invariants
+///
+/// Equal states hash equal; any field change changes the hash (FNV-1a 64).
+#[must_use]
+pub fn state_hash(state: &ScheduledState) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |bytes: &[u8]| {
+        for b in bytes {
+            hash ^= u64::from(*b);
             hash = hash.wrapping_mul(0x100_0000_01b3);
-        };
-        eat(self.algorithm.as_bytes());
-        eat(self.algorithm_version.as_bytes());
-        eat(self.parameter_set_id.as_deref().unwrap_or("-").as_bytes());
-        eat(&self.difficulty.map_or([0xff; 8], f64::to_be_bytes));
-        eat(&self.stability.map_or([0xff; 8], f64::to_be_bytes));
-        eat(&self.last_review_at.map_or([0xff; 8], |t| t.0.to_be_bytes()));
-        eat(&self.due_at.map_or([0xff; 8], |t| t.0.to_be_bytes()));
-        eat(&self
-            .scheduled_interval_seconds
-            .map_or([0xff; 8], i64::to_be_bytes));
-        eat(&self.lapse_count.to_be_bytes());
-        eat(&self.review_count.to_be_bytes());
-        eat(&self.state_version.to_be_bytes());
-        format!("{hash:016x}")
-    }
+        }
+        hash ^= 0xff; // field separator
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    };
+    eat(state.algorithm.as_bytes());
+    eat(state.algorithm_version.as_bytes());
+    eat(state.parameter_set_id.as_deref().unwrap_or("-").as_bytes());
+    eat(&state.difficulty.map_or([0xff; 8], f64::to_be_bytes));
+    eat(&state.stability.map_or([0xff; 8], f64::to_be_bytes));
+    eat(&state
+        .last_review_at
+        .map_or([0xff; 8], |t| t.0.to_be_bytes()));
+    eat(&state.due_at.map_or([0xff; 8], |t| t.0.to_be_bytes()));
+    eat(&state
+        .scheduled_interval_seconds
+        .map_or([0xff; 8], i64::to_be_bytes));
+    eat(&state.lapse_count.to_be_bytes());
+    eat(&state.review_count.to_be_bytes());
+    eat(&state.state_version.to_be_bytes());
+    format!("{hash:016x}")
 }
-
-/// Input to [`ReviewScheduler::initial_state`].
-#[derive(Debug, Clone, Copy)]
-pub struct InitialReviewInput {
-    /// Introduction instant; the card becomes due immediately — "second
-    /// daily session or next practical window" (05-review-engine.md §5).
-    pub now: Timestamp,
-}
-
 /// One graded review to apply.
 #[derive(Debug, Clone, Copy)]
 pub struct ReviewEventInput {
@@ -141,7 +129,7 @@ pub struct SchedulerSettings {
     pub max_review_batch: u16,
     /// Interval ceiling.
     pub max_interval_days: u32,
-    /// IANA timezone name; day-boundary logic lives in `application`.
+    /// IANA timezone name; day-boundary logic lives in the native review processing pass.
     pub timezone: String,
 }
 
@@ -152,7 +140,7 @@ impl Default for SchedulerSettings {
             max_new_cards_per_day: 8,
             target_review_minutes: (8, 12),
             max_review_batch: 50,
-            max_interval_days: 1825, // 5 years
+            max_interval_days: 36_500, // 100 years; scheduler, not cap pressure, controls mature intervals
             timezone: "Europe/Madrid".to_owned(),
         }
     }
@@ -175,58 +163,115 @@ pub enum ScheduleError {
     InvalidState(String),
 }
 
-/// Application-owned scheduling contract (05-review-engine.md §1).
-pub trait ReviewScheduler: Send {
-    /// State for a freshly introduced card; due immediately.
-    ///
-    /// # Errors
-    ///
-    /// [`ScheduleError`] when the algorithm cannot produce a valid state.
-    fn initial_state(&self, input: InitialReviewInput) -> Result<ScheduledState, ScheduleError>;
+/// Stable integer algorithm IDs used only in request-local dispatch.
+pub const FSRS_ID: u32 = 0;
+/// Deterministic offline-safe fallback algorithm.
+pub const FALLBACK_ID: u32 = 1;
 
-    /// Applies one graded review, returning the successor state.
-    ///
-    /// # Errors
-    ///
-    /// [`ScheduleError::InvalidInterval`] when the produced interval is
-    /// non-finite, non-positive, or absurd; [`ScheduleError::InvalidState`]
-    /// when `current` is inconsistent.
-    fn apply_review(
-        &self,
-        current: &ScheduledState,
-        event: &ReviewEventInput,
-        settings: &SchedulerSettings,
-    ) -> Result<ScheduledState, ScheduleError>;
-
-    /// Predicted recall probability at `at`.
-    ///
-    /// # Errors
-    ///
-    /// [`ScheduleError::InvalidState`] when the state has no review history.
-    fn predicted_retrievability(
-        &self,
-        state: &ScheduledState,
-        at: Timestamp,
-    ) -> Result<f64, ScheduleError>;
+/// Request-local FSRS computation resource; no domain object graph is retained.
+pub struct SchedulerScratch {
+    fsrs: Option<fsrs::FSRS>,
 }
 
-/// Recomputes a card's state by replaying `events` from the card's
-/// activation instant (05-review-engine.md §7 undo). Pure function of its
-/// inputs — it must NOT observe the wall clock, so a replay run at any later
-/// time reproduces the exact pre-event state and hash.
+/// Prepare scratch once per stream of graded events.
 ///
 /// # Errors
+/// Returns an error when the external FSRS engine rejects its pinned parameters.
+pub fn new_scheduler_scratch(id: u32) -> Result<SchedulerScratch, ScheduleError> {
+    let fsrs = match id {
+        FSRS_ID => Some(fsrs_adapter::init_fsrs()?),
+        FALLBACK_ID => None,
+        _ => {
+            return Err(ScheduleError::InvalidState(format!(
+                "unknown scheduler id {id}"
+            )));
+        }
+    };
+    Ok(SchedulerScratch { fsrs })
+}
+
+/// Convert the database algorithm name to its stable integer ID.
+#[must_use]
+pub fn algorithm_id(name: &str) -> Option<u32> {
+    match name {
+        "fsrs" => Some(FSRS_ID),
+        "fallback" => Some(FALLBACK_ID),
+        _ => None,
+    }
+}
+
+/// Construct the first state without allocating a scheduler object.
 ///
-/// Propagates [`ScheduleError`] from the underlying scheduler.
+/// # Errors
+/// Rejects an unknown algorithm ID.
+pub fn initial_state(id: u32, at: Timestamp) -> Result<ScheduledState, ScheduleError> {
+    match id {
+        FSRS_ID => Ok(fsrs_adapter::initial_state(at)),
+        FALLBACK_ID => Ok(fallback::initial_state(at)),
+        _ => Err(ScheduleError::InvalidState(format!(
+            "unknown scheduler id {id}"
+        ))),
+    }
+}
+
+/// Advance one graded review over the supplied current state.
+///
+/// # Errors
+/// Propagates invalid FSRS states, interval errors and unrecognized IDs.
+pub fn apply_review(
+    id: u32,
+    scratch: &SchedulerScratch,
+    state: &ScheduledState,
+    event: &ReviewEventInput,
+    settings: &SchedulerSettings,
+) -> Result<ScheduledState, ScheduleError> {
+    match id {
+        FSRS_ID => {
+            let engine = scratch
+                .fsrs
+                .as_ref()
+                .ok_or_else(|| ScheduleError::InvalidState("missing FSRS scratch".to_owned()))?;
+            fsrs_adapter::apply_review(engine, state, event, settings)
+        }
+        FALLBACK_ID => fallback::apply_review(state, event, settings),
+        _ => Err(ScheduleError::InvalidState(format!(
+            "unknown scheduler id {id}"
+        ))),
+    }
+}
+
+/// Predict recall probability using the selected scheduling pass.
+///
+/// # Errors
+/// Propagates invalid state and unrecognized algorithm ID.
+pub fn predicted_retrievability(
+    id: u32,
+    state: &ScheduledState,
+    at: Timestamp,
+) -> Result<f64, ScheduleError> {
+    match id {
+        FSRS_ID => fsrs_adapter::predicted_retrievability(state, at),
+        FALLBACK_ID => fallback::predicted_retrievability(state, at),
+        _ => Err(ScheduleError::InvalidState(format!(
+            "unknown scheduler id {id}"
+        ))),
+    }
+}
+
+/// Replay effective events deterministically from a card's activation instant.
+///
+/// # Errors
+/// Propagates errors from the chosen pass.
 pub fn replay(
-    scheduler: &dyn ReviewScheduler,
+    id: u32,
     activated_at: Timestamp,
     events: &[ReviewEventInput],
     settings: &SchedulerSettings,
 ) -> Result<ScheduledState, ScheduleError> {
-    let mut state = scheduler.initial_state(InitialReviewInput { now: activated_at })?;
+    let scratch = new_scheduler_scratch(id)?;
+    let mut state = initial_state(id, activated_at)?;
     for event in events {
-        state = scheduler.apply_review(&state, event, settings)?;
+        state = apply_review(id, &scratch, &state, event, settings)?;
     }
     Ok(state)
 }

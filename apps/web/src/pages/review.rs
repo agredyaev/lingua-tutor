@@ -41,7 +41,17 @@ pub fn ReviewPage() -> impl IntoView {
     let offline_mode = RwSignal::new(false);
     let session = LocalResource::new(move || {
         let id = active.id();
+        let default_lookup_network_failed = active.default_lookup_network_failed();
         async move {
+            if id.is_none() && default_lookup_network_failed {
+                return crate::offline::cached_queue().map_or_else(
+                    || Err(ApiError::Network("offline, no prefetched batch".to_owned())),
+                    |cached| {
+                        offline_mode.set(true);
+                        Ok(Some(cached))
+                    },
+                );
+            }
             let Some(id) = id else { return Ok(None) };
             let report = crate::offline::replay().await;
             if report.interrupted
@@ -89,8 +99,8 @@ pub fn ReviewPage() -> impl IntoView {
     let position = RwSignal::new(0_usize);
     let revealed = RwSignal::new(false);
 
-    // Reveal instant, for measured response latency (non-reactive handle).
-    let revealed_at_ms = StoredValue::new(0_u64);
+    // Presentation instant is recorded when the card becomes visible.
+    let presented_at_ms = StoredValue::new(0_u64);
 
     let submit: SubmitAction = Action::new_local(move |input: &(String, u8, Option<String>)| {
         let (card_id, grade, prior_hash) = input.clone();
@@ -98,15 +108,17 @@ pub fn ReviewPage() -> impl IntoView {
         async move {
             let op = format!("op-{card_id}-{grade}-{}", now_ms());
             let response_millis =
-                u32::try_from(now_ms().saturating_sub(revealed_at_ms.get_value()))
+                u32::try_from(now_ms().saturating_sub(presented_at_ms.get_value()))
                     .unwrap_or(0)
                     .min(600_000);
+            let presented_at = rfc3339_at_ms(presented_at_ms.get_value());
+            let answered_at = now_rfc3339();
             let body = serde_json::json!({
                 "client_operation_id": op,
                 "card_id": card_id,
                 "grade": grade,
-                "presented_at": now_rfc3339(),
-                "answered_at": now_rfc3339(),
+                "presented_at": presented_at,
+                "answered_at": answered_at,
                 "response_millis": response_millis,
                 "answer_revealed": true,
                 "prior_state_hash": prior_hash.clone().unwrap_or_default(),
@@ -126,8 +138,8 @@ pub fn ReviewPage() -> impl IntoView {
                         client_operation_id: op,
                         card_id: card_id.clone(),
                         grade,
-                        presented_at: now_rfc3339(),
-                        answered_at: now_rfc3339(),
+                        presented_at,
+                        answered_at,
                         response_millis,
                         prior_state_hash: prior_hash.unwrap_or_default(),
                     });
@@ -180,7 +192,6 @@ pub fn ReviewPage() -> impl IntoView {
         match event.key().as_str() {
             " " => {
                 event.prevent_default();
-                revealed_at_ms.set_value(now_ms());
                 revealed.set(true);
             }
             g @ ("1" | "2" | "3" | "4") if revealed.get_untracked() => {
@@ -212,7 +223,7 @@ pub fn ReviewPage() -> impl IntoView {
                                                 index=index
                                                 total=total
                                                 revealed=revealed
-                                                revealed_at_ms=revealed_at_ms
+                                                presented_at_ms=presented_at_ms
                                                 submit=submit
                                                 undo=undo
                                             />
@@ -267,10 +278,11 @@ fn CardView(
     index: usize,
     total: usize,
     revealed: RwSignal<bool>,
-    revealed_at_ms: StoredValue<u64>,
+    presented_at_ms: StoredValue<u64>,
     submit: SubmitAction,
     undo: UndoAction,
 ) -> impl IntoView {
+    presented_at_ms.set_value(now_ms());
     let handle = StoredValue::new((card.card_id.clone(), card.prior_state_hash.clone()));
     let accepted = card.accepted_answers.clone();
     view! {
@@ -285,7 +297,7 @@ fn CardView(
                         <button
                             class="btn-primary"
                             on:click=move |_| {
-                                revealed_at_ms.set_value(now_ms());
+                                // Timer starts at presentation, not reveal.
                                 revealed.set(true);
                             }
                         >
@@ -535,6 +547,14 @@ fn now_rfc3339() -> String {
         .to_iso_string()
         .as_string()
         .unwrap_or_default()
+}
+
+fn rfc3339_at_ms(epoch_millis: u64) -> String {
+    let date = js_sys::Date::new_0();
+    #[allow(clippy::cast_precision_loss)]
+    // Unix milliseconds fit exactly in f64 until year 287396.
+    date.set_time(epoch_millis as f64);
+    date.to_iso_string().as_string().unwrap_or_default()
 }
 
 fn now_ms() -> u64 {

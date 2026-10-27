@@ -6,8 +6,8 @@
 
 use integration_tests::{migrated_connection, seed_profile_and_pack};
 use review_engine::{
-    FsrsScheduler, Grade, InitialReviewInput, ReviewEventInput, ReviewScheduler, SchedulerSettings,
-    Timestamp,
+    FSRS_ID, Grade, ReviewEventInput, SchedulerSettings, Timestamp, apply_review, initial_state,
+    new_scheduler_scratch,
 };
 
 /// Repository-boundary conversion (04-database.md §1): unix seconds → RFC 3339.
@@ -36,22 +36,22 @@ fn review_event_persists_next_due_date() {
     )
     .unwrap();
 
-    let scheduler = FsrsScheduler::new().unwrap();
+    let scheduler = FSRS_ID;
+    let scratch = new_scheduler_scratch(scheduler).unwrap();
     let settings = SchedulerSettings::default();
     let t0 = Timestamp(1_780_000_000);
-    let prior = scheduler
-        .initial_state(InitialReviewInput { now: t0 })
-        .unwrap();
-    let result = scheduler
-        .apply_review(
-            &prior,
-            &ReviewEventInput {
-                grade: Grade::Good,
-                answered_at: t0,
-            },
-            &settings,
-        )
-        .unwrap();
+    let prior = initial_state(scheduler, t0).unwrap();
+    let result = apply_review(
+        scheduler,
+        &scratch,
+        &prior,
+        &ReviewEventInput {
+            grade: Grade::Good,
+            answered_at: t0,
+        },
+        &settings,
+    )
+    .unwrap();
 
     // Event + schedule state in one transaction (04-database.md §1).
     let tx = conn.unchecked_transaction().unwrap();
@@ -64,8 +64,8 @@ fn review_event_persists_next_due_date() {
                  '2026-07-12T00:00:05Z', 3, 5000, 1, ?1, ?2, ?3, 'online',
                  '2026-07-12T00:00:05Z')",
         rusqlite::params![
-            prior.state_hash(),
-            result.state_hash(),
+            review_engine::state_hash(&prior),
+            review_engine::state_hash(&result),
             result.algorithm_version
         ],
     )
@@ -88,7 +88,7 @@ fn review_event_persists_next_due_date() {
             result.lapse_count,
             result.review_count,
             result.state_version,
-            result.state_hash(),
+            review_engine::state_hash(&result),
         ],
     )
     .unwrap();
@@ -109,5 +109,9 @@ fn review_event_persists_next_due_date() {
         rfc3339(result.due_at.unwrap()),
         "next due date persisted"
     );
-    assert_eq!(hash, result.state_hash(), "state hash round-trips");
+    assert_eq!(
+        hash,
+        review_engine::state_hash(&result),
+        "state hash round-trips"
+    );
 }

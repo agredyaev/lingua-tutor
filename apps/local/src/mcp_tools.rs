@@ -4,7 +4,6 @@
 
 use crate::handlers;
 use crate::{Env, Result};
-use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 
 pub(crate) struct ToolDef {
     pub name: &'static str,
@@ -70,7 +69,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "complete_lesson",
-        description: "Submit the finished lesson: the full lesson-result document (schema_version 1) with evidence, errors, metrics, card mutations. Applied atomically; safe to retry (client_operation_id).",
+        description: "Submit the finished lesson: the full lesson-result document (schema_version 2) with evidence, errors, metrics, card mutations. Applied atomically; safe to retry (client_operation_id).",
         required: &[],
     },
     ToolDef {
@@ -85,7 +84,7 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "log_error_occurrence",
-        description: "Record one recurring-error occurrence outside a lesson; creates the error target and 1/3/7-day rechecks when new.",
+        description: "Record one recurring-error occurrence outside a lesson; optional communicative_impact=low|medium|high controls escalation timing; creates 1/3/7-day rechecks when new.",
         required: &[
             "language_profile_id",
             "core_category",
@@ -138,7 +137,7 @@ fn input_schema(tool: &ToolDef) -> serde_json::Value {
                 "lesson_result".to_owned(),
                 serde_json::json!({
                     "type": "object",
-                    "description": "The full lesson-result document, schema_version \"1\"."
+                    "description": "The full lesson-result document, schema_version \"2\"."
                 }),
             );
             required.push("lesson_result");
@@ -227,20 +226,10 @@ fn optional_arg<'a>(arguments: &'a serde_json::Value, name: &str) -> Option<&'a 
         .filter(|value| !value.is_empty())
 }
 
-fn pack_version_of(
-    registry: &language_pack_registry::LanguagePackRegistry,
-    pack_id: &str,
-) -> String {
-    registry.get(pack_id).map_or_else(
-        || "0.0.0".to_owned(),
-        |pack| pack.manifest().version.clone(),
-    )
-}
-
 fn upsert_cards(
     arguments: &serde_json::Value,
     env: &Env,
-    registry: &language_pack_registry::LanguagePackRegistry,
+    registry: &crate::BuiltInPackRegistry,
 ) -> Result<serde_json::Value> {
     let Some(raw) = arguments.get("card_mutations") else {
         return crate::api::operation_error(400, "invalid_arguments", "card_mutations required");
@@ -253,193 +242,144 @@ fn upsert_cards(
         return crate::api::operation_error(400, "invalid_arguments", "1-20 mutations allowed");
     }
 
-    let mut database = env.connection()?;
-    let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let profile_id = arg(arguments, "language_profile_id");
-    let Some(profile_row) = handlers::profiles::fetch_profile(&transaction, profile_id)? else {
-        return crate::api::operation_error(404, "not_found", "unknown profile");
-    };
-    let Ok(profile) = profile_row.into_domain() else {
-        return crate::api::operation_error(500, "corrupt_row", "stored profile is invalid");
-    };
-    let context = application::LessonCompletionContext {
-        profile,
-        now: crate::api::now(),
-        existing_lesson: None,
-        duplicate_import: false,
-        items_by_normalized: Vec::new(),
-        normalized_new_items: Vec::new(),
-        known_item_ids: Vec::new(),
-        error_targets: Vec::new(),
-        evidence_for_mastery: Vec::new(),
-    };
-    let mutation_ctx =
-        handlers::lessons::build_mutation_context(&transaction, &mutations, &context)?;
-    let planned = application::plan_card_mutations(&mutations, &mutation_ctx);
-    let pack_version = pack_version_of(registry, &context.profile.language_pack_id.0);
-    let at = crate::repositories::to_rfc3339(context.now);
-    let summary = handlers::lessons::apply_card_mutations(
-        &transaction,
+    crate::operations_v2::upsert_cards::upsert_cards(
+        registry,
+        env,
+        arg(arguments, "language_profile_id"),
         &mutations,
-        &pack_version,
-        &context,
-        &planned,
-        &mutation_ctx,
-        None,
-        &at,
-    )?;
-    transaction.commit()?;
-    crate::json(&serde_json::json!({ "card_mutations": summary }))
+    )
 }
 
 fn suspend_cards(arguments: &serde_json::Value, env: &Env) -> Result<ToolOutcome> {
-    let ids: Vec<String> = arguments
-        .get("card_ids")
-        .and_then(|value| serde_json::from_value(value.clone()).ok())
-        .unwrap_or_default();
-    if ids.is_empty() || ids.len() > 20 {
-        return invalid_arguments("'card_ids' (1-20 strings) is required");
+    match crate::operations_v2::suspend_cards::suspend_cards_json(
+        env,
+        arguments
+            .get("card_ids")
+            .unwrap_or(&serde_json::Value::Null),
+        optional_arg(arguments, "reason"),
+    ) {
+        Ok(value) => Ok(ToolOutcome {
+            body: value.to_string(),
+            is_error: false,
+        }),
+        Err(crate::Error::Operation {
+            code,
+            message,
+            details,
+            ..
+        }) => Ok(ToolOutcome {
+            body: serde_json::json!({
+                "error": code,
+                "message": message,
+                "details": details,
+            })
+            .to_string(),
+            is_error: true,
+        }),
+        Err(error) => Err(error),
     }
-
-    let mut database = env.connection()?;
-    let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let reason = optional_arg(arguments, "reason");
-    let mut results = Vec::with_capacity(ids.len());
-    for id in &ids {
-        let result = handlers::cards::set_status_on(
-            &transaction,
-            id,
-            learning_core::CardStatus::Suspended,
-            reason,
-        )?;
-        results.push(result);
-    }
-    transaction.commit()?;
-    Ok(ToolOutcome {
-        body: serde_json::json!({ "results": results }).to_string(),
-        is_error: false,
-    })
 }
 
 fn log_error_occurrence(
     arguments: &serde_json::Value,
     env: &Env,
-    registry: &language_pack_registry::LanguagePackRegistry,
+    registry: &crate::BuiltInPackRegistry,
 ) -> Result<ToolOutcome> {
-    use crate::repositories::records as records_repo;
-
-    let mut database = env.connection()?;
-    let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let profile_id = arg(arguments, "language_profile_id");
-    let Some(profile_row) = handlers::profiles::fetch_profile(&transaction, profile_id)? else {
-        return invalid_arguments("unknown language_profile_id");
-    };
-    let Ok(profile) = profile_row.into_domain() else {
-        return invalid_arguments("stored profile is invalid");
-    };
     let Ok(core_category) = serde_json::from_value::<learning_core::CoreErrorCategory>(
         serde_json::json!(arg(arguments, "core_category")),
     ) else {
         return invalid_arguments("unknown core_category");
     };
 
-    let now = crate::api::now();
-    let at = crate::repositories::to_rfc3339(now);
-    let target_id = match optional_arg(arguments, "error_target_id") {
-        Some(existing_id) => {
-            let row = transaction
-                .query_row(
-                    records_repo::SELECT_ERROR_TARGET,
-                    params![existing_id],
-                    records_repo::ErrorTargetRow::from_row,
-                )
-                .optional()?;
-            let Some(target) = row.and_then(|row| row.into_domain().ok()) else {
-                return invalid_arguments("unknown error_target_id");
+    let communicative_impact = match optional_arg(arguments, "communicative_impact") {
+        Some(value) => {
+            let Ok(impact) = serde_json::from_value::<learning_core::CommunicativeImpact>(
+                serde_json::json!(value),
+            ) else {
+                return invalid_arguments("unknown communicative_impact");
             };
-            transaction.execute(
-                records_repo::UPDATE_ERROR_TARGET,
-                params![
-                    target.id.0,
-                    target.occurrence_count + 1,
-                    u8::from(target.occurrence_count + 1 >= 3),
-                    "recheck",
-                    at,
-                ],
-            )?;
-            target.id.0
+            impact
         }
-        None => {
-            let target_id = crate::api::new_id("et");
-            transaction.execute(
-                records_repo::INSERT_ERROR_TARGET,
-                params![
-                    target_id,
-                    profile.id.0,
-                    profile.language_pack_id.0,
-                    pack_version_of(registry, &profile.language_pack_id.0),
-                    crate::repositories::enum_str(&core_category),
-                    optional_arg(arguments, "pack_error_code"),
-                    arg(arguments, "original_production"),
-                    arg(arguments, "corrected_production"),
-                    optional_arg(arguments, "explanation"),
-                    1_u32,
-                    0_u8,
-                    "active",
-                    at,
-                ],
-            )?;
-            handlers::lessons::insert_rechecks(&transaction, &target_id, now)?;
-            target_id
-        }
+        None => learning_core::CommunicativeImpact::Medium,
     };
-    transaction.execute(
-        records_repo::INSERT_ERROR_OCCURRENCE,
-        params![
-            crate::api::new_id("eo"),
-            target_id,
-            Option::<String>::None,
-            Option::<String>::None,
-            at,
-        ],
-    )?;
-    transaction.commit()?;
-    Ok(ToolOutcome {
-        body: serde_json::json!({ "error_target_id": target_id }).to_string(),
-        is_error: false,
-    })
+
+    let outcome = crate::operations_v2::log_error::log_error_occurrence(
+        registry,
+        env,
+        crate::operations_v2::log_error::LogErrorOccurrenceInput {
+            language_profile_id: arg(arguments, "language_profile_id").to_owned(),
+            core_category,
+            original_production: arg(arguments, "original_production").to_owned(),
+            corrected_production: arg(arguments, "corrected_production").to_owned(),
+            pack_error_code: optional_arg(arguments, "pack_error_code").map(str::to_owned),
+            explanation: optional_arg(arguments, "explanation").map(str::to_owned),
+            error_target_id: optional_arg(arguments, "error_target_id").map(str::to_owned),
+            communicative_impact,
+        },
+    );
+
+    match outcome {
+        Ok(error_target_id) => Ok(ToolOutcome {
+            body: serde_json::json!({ "error_target_id": error_target_id }).to_string(),
+            is_error: false,
+        }),
+        Err(crate::Error::Operation {
+            code,
+            message,
+            details,
+            ..
+        }) => Ok(ToolOutcome {
+            body: serde_json::json!({
+                "error": code,
+                "message": message,
+                "details": details,
+            })
+            .to_string(),
+            is_error: true,
+        }),
+        Err(error) => Err(error),
+    }
 }
 
 fn correct_lesson_record(arguments: &serde_json::Value, env: &Env) -> Result<ToolOutcome> {
-    let database = env.connection()?;
     let duration = arguments
         .get("duration_seconds")
-        .and_then(serde_json::Value::as_i64)
-        .filter(|duration| (0..=86_400).contains(duration));
-    let changed = database.execute(
-        crate::repositories::lessons::CORRECT_LESSON_RECORD,
-        params![
-            arg(arguments, "lesson_id"),
-            optional_arg(arguments, "tutor_summary"),
-            optional_arg(arguments, "next_goal"),
-            duration,
-            crate::repositories::to_rfc3339(crate::api::now()),
-        ],
-    )?;
-    if changed == 0 {
-        return invalid_arguments("unknown lesson_id or lesson not completed");
+        .and_then(serde_json::Value::as_i64);
+
+    match crate::operations_v2::lesson_correction::correct_lesson_record(
+        env,
+        arg(arguments, "lesson_id"),
+        optional_arg(arguments, "tutor_summary"),
+        optional_arg(arguments, "next_goal"),
+        duration,
+    ) {
+        Ok(value) => Ok(ToolOutcome {
+            body: value.to_string(),
+            is_error: false,
+        }),
+        Err(crate::Error::Operation {
+            code,
+            message,
+            details,
+            ..
+        }) => Ok(ToolOutcome {
+            body: serde_json::json!({
+                "error": code,
+                "message": message,
+                "details": details,
+            })
+            .to_string(),
+            is_error: true,
+        }),
+        Err(error) => Err(error),
     }
-    Ok(ToolOutcome {
-        body: serde_json::json!({ "status": "corrected" }).to_string(),
-        is_error: false,
-    })
 }
 
 pub(crate) fn call(
     tool: &ToolDef,
     arguments: &serde_json::Value,
     env: &Env,
-    registry: &language_pack_registry::LanguagePackRegistry,
+    registry: &crate::BuiltInPackRegistry,
 ) -> Result<ToolOutcome> {
     if let Some(name) = missing_argument(tool, arguments) {
         return Ok(ToolOutcome {
@@ -489,7 +429,7 @@ pub(crate) fn call(
                 env,
                 arg(arguments, "language_profile_id"),
             ),
-            "start_lesson" => handlers::lessons::start_lesson_operation(
+            "start_lesson" => crate::operations_v2::start_lesson::start_lesson(
                 registry,
                 env,
                 arg(arguments, "language_profile_id"),
@@ -515,7 +455,7 @@ pub(crate) fn call(
                         )
                     })?;
                 let result = handlers::lessons::validate_lesson_result(result)?;
-                handlers::lessons::complete_from_result(registry, env, &result)
+                crate::operations_v2::complete_lesson::complete_lesson(registry, env, &result)
             }
             "upsert_cards" => upsert_cards(arguments, env, registry),
             other => crate::api::operation_error(
@@ -547,7 +487,13 @@ pub(crate) fn call(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+// Test fixtures intentionally fail fast and use compact tuple snapshots.
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::type_complexity
+)]
 mod tests {
     use super::*;
 

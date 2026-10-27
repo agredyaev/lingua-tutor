@@ -1,7 +1,7 @@
-//! `LanguagePack` trait and every boundary type of the plugin contract
-//! (06-language-packs.md §2). Core owns all request/response types; packs
-//! never expose implementation types across this boundary. Packs must not
-//! touch persistence, network, secrets, scheduling state, or review events.
+//! Data-only boundary types shared by language-pack processing passes.
+//! Core owns all request/response types. Pack processing code receives only
+//! explicit inputs and must not touch persistence, network, secrets,
+//! scheduling state, or review events.
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -38,7 +38,7 @@ pub struct LanguagePackManifest {
     pub capabilities: Vec<Capability>,
 }
 
-/// Closed capability set declared by a pack.
+/// Closed capability set a pack may declare.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Capability {
@@ -67,11 +67,11 @@ pub enum NormalizationMode {
     Comparison,
 }
 
-/// Output of [`LanguagePack::normalize_target_text`].
+/// Output of a target-text normalization pass.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NormalizedText(pub String);
 
-/// Input to [`LanguagePack::evaluate_answer`].
+/// Input to an answer-evaluation pass.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnswerEvaluationRequest {
     /// Card's primary answer.
@@ -96,7 +96,7 @@ pub enum AnswerVerdict {
     Incorrect,
 }
 
-/// Output of [`LanguagePack::evaluate_answer`]. Evaluation must be bounded:
+/// Output of an answer-evaluation pass. Evaluation must be bounded:
 /// cost proportional to input size, no unbounded computation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnswerEvaluation {
@@ -108,7 +108,7 @@ pub struct AnswerEvaluation {
     pub feedback: Option<String>,
 }
 
-/// Input to [`LanguagePack::classify_error`].
+/// Input to an error-classification pass.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LanguageErrorClassificationRequest {
     /// What the learner said/wrote.
@@ -136,11 +136,11 @@ pub enum CoreErrorCategory {
     Pronunciation,
     /// Spelling, diacritics, punctuation.
     Orthography,
-    /// Pack metadata not represented by typed fields.
+    /// Anything the pack cannot place more precisely.
     Other,
 }
 
-/// Output of [`LanguagePack::classify_error`].
+/// Output of an error-classification pass.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LanguageErrorClassification {
     /// Core category (`error_targets.core_category`).
@@ -165,99 +165,48 @@ pub enum CardIntent {
     Transfer,
 }
 
-/// One pack-provided card template (06-language-packs.md §7).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CardTemplate {
+/// Borrowed card-template view over pack-owned column storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct CardTemplateView<'a> {
     /// Stable template ID, unique within the pack.
-    pub template_id: String,
+    pub template_id: &'a str,
     /// Intent this template produces.
     pub intent: CardIntent,
-    /// Prompt template text; placeholders are pack-defined.
-    pub prompt_template: String,
-    /// Evaluation mode identifier written to `cards.answer_evaluation_mode`.
-    pub answer_evaluation_mode: String,
+    /// Prompt template text.
+    pub prompt_template: &'a str,
+    /// Evaluation mode identifier.
+    pub answer_evaluation_mode: &'a str,
 }
 
-/// Learner profile view the pack receives. Boundary type owned here —
-/// distinct from the `learning-core` domain type; `application` maps between
-/// them (02-workspace.md §3 dependency direction).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LearnerLanguageProfile {
-    /// Source (instruction) language, BCP 47.
-    pub source_language: String,
-    /// Target locale, BCP 47.
-    pub target_locale: String,
-    /// Estimated level in the pack's framework, e.g. `A2`.
-    pub estimated_level: Option<String>,
-}
-
-/// Output of [`LanguagePack::tutor_instructions`].
+/// Output of a tutor-instructions pass.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TutorInstructionBundle {
     /// Prompt fragments injected into tutor context.
     pub instructions: String,
-    /// Correction presentation rules for the tutor.
+    /// How the tutor should present corrections.
     pub correction_conventions: String,
 }
 
-/// One communicative scenario in the pack curriculum.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Scenario {
+/// Borrowed communicative-scenario view over pack-owned column storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct ScenarioView<'a> {
     /// Stable scenario ID.
-    pub id: String,
+    pub id: &'a str,
     /// Learner-facing title.
-    pub title: String,
-    /// Level code in the pack's framework.
-    pub level: String,
+    pub title: &'a str,
+    /// Level code in the pack framework.
+    pub level: &'a str,
 }
 
-/// One seed phrase for the initial curriculum (06-language-packs.md §7).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PhraseSeed {
+/// Borrowed seed-phrase view over pack-owned column storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct PhraseSeedView<'a> {
     /// Target-language phrase.
-    pub target_text: String,
-    /// Learner-facing prompt in the source language.
-    pub prompt: String,
-    /// Scenario this seed belongs to.
-    pub scenario_id: String,
-}
-
-/// Pack curriculum (06-language-packs.md §7).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CurriculumCatalog {
-    /// Scenarios in recommended order.
-    pub scenarios: Vec<Scenario>,
-    /// Seed phrases feeding early lessons via the tutor context.
-    #[serde(default)]
-    pub seeds: Vec<PhraseSeed>,
-}
-
-/// The plugin contract (06-language-packs.md §2). All target-language
-/// behavior enters the system through this trait.
-pub trait LanguagePack: Send + Sync {
-    /// Pack self-description; `id` and `contract_version` drive registration.
-    fn manifest(&self) -> &LanguagePackManifest;
-
-    /// Deterministic normalization of target-language text.
-    fn normalize_target_text(&self, input: &str, mode: NormalizationMode) -> NormalizedText;
-
-    /// Bounded matching of a learner answer against expected/accepted answers.
-    fn evaluate_answer(&self, request: &AnswerEvaluationRequest) -> AnswerEvaluation;
-
-    /// Maps a correction to the core error category set with a stable pack code.
-    fn classify_error(
-        &self,
-        request: &LanguageErrorClassificationRequest,
-    ) -> LanguageErrorClassification;
-
-    /// Card templates this pack provides; must cover declared card capabilities.
-    fn card_templates(&self) -> &[CardTemplate];
-
-    /// Tutor prompt fragments for the given learner profile.
-    fn tutor_instructions(&self, learner: &LearnerLanguageProfile) -> TutorInstructionBundle;
-
-    /// Scenario/level catalog.
-    fn curriculum_catalog(&self) -> &CurriculumCatalog;
+    pub target_text: &'a str,
+    /// Learner-facing prompt.
+    pub prompt: &'a str,
+    /// Dense scenario relation resolved back to its boundary ID.
+    pub scenario_id: &'a str,
 }
 
 fn u32_from_string_or_number<'de, D: Deserializer<'de>>(de: D) -> Result<u32, D::Error> {

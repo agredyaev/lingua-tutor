@@ -1,10 +1,10 @@
 //! Item-level capability projections derived from immutable learning evidence.
 //!
-//! Capability values are derived from persisted evidence and are not persisted.
-//! recomputed from bounded recent evidence whenever the tutor needs a plan.
+//! SQLite/wire text stays at the boundary. The projection pass consumes parallel
+//! evidence columns and returns one bounded borrowed state; it does not retain an
+//! owned entity graph or a second source of truth.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
 
 const DAY_SECONDS: f64 = 86_400.0;
 
@@ -24,114 +24,236 @@ pub enum CapabilityKind {
     Transfer,
 }
 
-/// One normalized evidence observation used by the projection.
-#[derive(Debug, Clone, PartialEq)]
-pub struct EvidenceObservation {
-    /// Capability demonstrated by this observation.
-    pub capability: CapabilityKind,
-    /// Whether the attempt succeeded.
-    pub success: bool,
-    /// Assistance level from 0 (unaided) to 3 (model/reveal), when known.
-    pub assistance_level: Option<u8>,
-    /// Response latency in milliseconds, when observed.
-    pub response_millis: Option<u32>,
-    /// Stable concrete communicative context key, when applicable.
-    pub context_key: Option<String>,
-    /// Stable semantic transfer family, supplied by the language pack/tutor.
-    pub context_family: Option<String>,
-    /// Observation time as a Unix timestamp in seconds.
-    pub recorded_at_unix: i64,
+/// Maximum recent observations retained per item × capability projection.
+pub const MAX_CAPABILITY_OBSERVATIONS: usize = 12;
+
+/// Fixed sorted set of borrowed context strings.
+#[derive(Debug, Clone, Copy)]
+pub struct ContextSetView<'a> {
+    values: [&'a str; MAX_CAPABILITY_OBSERVATIONS],
+    len: usize,
 }
 
-/// Compact estimate for one item × capability cell.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct CapabilityEstimate {
-    /// Number of observations represented by the estimate.
-    pub attempts: u32,
-    /// Number of successful observations.
-    pub successes: u32,
-    /// Recency- and age-weighted success rate.
-    pub weighted_success_rate: Option<f64>,
-    /// Success rate among attempts explicitly recorded as unaided.
-    pub unaided_success_rate: Option<f64>,
-    /// Recency- and age-weighted response latency.
-    pub latency_weighted_millis: Option<u32>,
-    /// Number of most recent consecutive qualified successful observations.
-    pub qualified_success_streak: u8,
-    /// Number of distinct successful concrete contexts.
-    pub distinct_success_contexts: u16,
-    /// Number of distinct successful semantic context families.
-    pub distinct_success_families: u16,
-    /// Successful concrete context keys retained for tutor continuity.
-    pub successful_contexts: Vec<String>,
-    /// Successful semantic families retained for transfer planning.
-    pub successful_context_families: Vec<String>,
-    /// Evidence quantity + freshness confidence from 0 to 1.
-    pub evidence_strength: f64,
-    /// Most recent observation timestamp.
-    pub last_observed_at_unix: Option<i64>,
-    /// Outcome of the most recent observation.
-    pub last_observed_success: Option<bool>,
-    /// Whether the most recent observation is a qualified success.
-    pub last_observed_qualified_success: Option<bool>,
-}
-
-/// Item-level learner state used by task scoring.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ItemCapabilityState {
-    /// Persistent learning-item ID.
-    pub learning_item_id: String,
-    /// Target-language text shown to the tutor.
-    pub target_text: String,
-    /// Current learning-item lifecycle status.
-    pub status: String,
-    /// Recognition capability estimate.
-    pub recognition: CapabilityEstimate,
-    /// Listening capability estimate.
-    pub listening: CapabilityEstimate,
-    /// Prompted-production capability estimate.
-    pub prompted_production: CapabilityEstimate,
-    /// Spontaneous-production capability estimate.
-    pub spontaneous_production: CapabilityEstimate,
-    /// Cross-context transfer capability estimate.
-    pub transfer: CapabilityEstimate,
-}
-
-/// Builds one item state from a bounded evidence history.
-#[must_use]
-pub fn project_item_capabilities(
-    learning_item_id: impl Into<String>,
-    target_text: impl Into<String>,
-    status: impl Into<String>,
-    evidence: &[EvidenceObservation],
-    now_unix: i64,
-) -> ItemCapabilityState {
-    ItemCapabilityState {
-        learning_item_id: learning_item_id.into(),
-        target_text: target_text.into(),
-        status: status.into(),
-        recognition: estimate(evidence, CapabilityKind::Recognition, now_unix),
-        listening: estimate(evidence, CapabilityKind::Listening, now_unix),
-        prompted_production: estimate(evidence, CapabilityKind::PromptedProduction, now_unix),
-        spontaneous_production: estimate(evidence, CapabilityKind::SpontaneousProduction, now_unix),
-        transfer: estimate(evidence, CapabilityKind::Transfer, now_unix),
+impl<'a> Default for ContextSetView<'a> {
+    fn default() -> Self {
+        Self {
+            values: [""; MAX_CAPABILITY_OBSERVATIONS],
+            len: 0,
+        }
     }
 }
 
-fn estimate(
-    evidence: &[EvidenceObservation],
-    capability: CapabilityKind,
-    now_unix: i64,
-) -> CapabilityEstimate {
-    let mut samples: Vec<&EvidenceObservation> = evidence
-        .iter()
-        .filter(|sample| sample.capability == capability)
-        .collect();
-    samples.sort_by_key(|sample| std::cmp::Reverse(sample.recorded_at_unix));
+fn context_set_insert<'a>(set: &mut ContextSetView<'a>, value: Option<&'a str>) {
+    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+        return;
+    };
+    if set.values[..set.len].contains(&value) || set.len == MAX_CAPABILITY_OBSERVATIONS {
+        return;
+    }
+    let mut position = set.len;
+    while position > 0 && set.values[position - 1] > value {
+        set.values[position] = set.values[position - 1];
+        position -= 1;
+    }
+    set.values[position] = value;
+    set.len += 1;
+}
 
-    let attempts = u32::try_from(samples.len()).unwrap_or(u32::MAX);
-    let successes =
-        u32::try_from(samples.iter().filter(|sample| sample.success).count()).unwrap_or(u32::MAX);
+/// Borrow the populated sorted context values.
+#[must_use]
+pub fn context_set_slice<'store, 'text>(
+    set: &'store ContextSetView<'text>,
+) -> &'store [&'text str] {
+    &set.values[..set.len]
+}
+
+impl Serialize for ContextSetView<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        context_set_slice(self).serialize(serializer)
+    }
+}
+
+/// Allocation-free estimate borrowing context strings from the evidence buffer.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct CapabilityEstimateFixed<'a> {
+    /// Number of observations included in the estimate.
+    pub attempts: u32,
+    /// Number of successful observations.
+    pub successes: u32,
+    /// Recency-weighted success rate.
+    pub weighted_success_rate: Option<f64>,
+    /// Success rate among explicitly unaided attempts.
+    pub unaided_success_rate: Option<f64>,
+    /// Recency-weighted response latency.
+    pub latency_weighted_millis: Option<u32>,
+    /// Qualified-success streak from the newest observation backwards.
+    pub qualified_success_streak: u8,
+    /// Number of distinct successful contexts.
+    pub distinct_success_contexts: u16,
+    /// Number of distinct successful semantic families.
+    pub distinct_success_families: u16,
+    /// Successful concrete contexts.
+    pub successful_contexts: ContextSetView<'a>,
+    /// Successful semantic context families.
+    pub successful_context_families: ContextSetView<'a>,
+    /// Normalized evidence strength.
+    pub evidence_strength: f64,
+    /// Newest observation time.
+    pub last_observed_at_unix: Option<i64>,
+    /// Newest observation success.
+    pub last_observed_success: Option<bool>,
+    /// Whether the newest observation is a qualified success.
+    pub last_observed_qualified_success: Option<bool>,
+}
+
+impl Default for CapabilityEstimateFixed<'_> {
+    fn default() -> Self {
+        Self {
+            attempts: 0,
+            successes: 0,
+            weighted_success_rate: None,
+            unaided_success_rate: None,
+            latency_weighted_millis: None,
+            qualified_success_streak: 0,
+            distinct_success_contexts: 0,
+            distinct_success_families: 0,
+            successful_contexts: ContextSetView::default(),
+            successful_context_families: ContextSetView::default(),
+            evidence_strength: 0.0,
+            last_observed_at_unix: None,
+            last_observed_success: None,
+            last_observed_qualified_success: None,
+        }
+    }
+}
+
+/// Allocation-free item capability state borrowing item/evidence text.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ItemCapabilityStateFixed<'a> {
+    /// Stable persisted ID borrowed from the SQLite boundary.
+    pub learning_item_id: &'a str,
+    /// Target-language text.
+    pub target_text: &'a str,
+    /// Current lifecycle status.
+    pub status: &'a str,
+    /// Recognition estimate.
+    pub recognition: CapabilityEstimateFixed<'a>,
+    /// Listening estimate.
+    pub listening: CapabilityEstimateFixed<'a>,
+    /// Prompted-production estimate.
+    pub prompted_production: CapabilityEstimateFixed<'a>,
+    /// Spontaneous-production estimate.
+    pub spontaneous_production: CapabilityEstimateFixed<'a>,
+    /// Transfer estimate.
+    pub transfer: CapabilityEstimateFixed<'a>,
+}
+
+/// Project one item directly from parallel evidence columns.
+#[allow(clippy::too_many_arguments)]
+#[must_use]
+pub fn project_item_capabilities_columns<'a>(
+    learning_item_id: &'a str,
+    target_text: &'a str,
+    status: &'a str,
+    len: usize,
+    capability: &[CapabilityKind],
+    success: &[bool],
+    assistance_level: &[u8],
+    assistance_present: &[bool],
+    response_millis: &[u32],
+    response_present: &[bool],
+    context_key: &[Option<&'a str>],
+    context_family: &[Option<&'a str>],
+    recorded_at_unix: &[i64],
+    now_unix: i64,
+) -> ItemCapabilityStateFixed<'a> {
+    let estimate = |kind| {
+        estimate_columns(
+            len,
+            kind,
+            capability,
+            success,
+            assistance_level,
+            assistance_present,
+            response_millis,
+            response_present,
+            context_key,
+            context_family,
+            recorded_at_unix,
+            now_unix,
+        )
+    };
+    ItemCapabilityStateFixed {
+        learning_item_id,
+        target_text,
+        status,
+        recognition: estimate(CapabilityKind::Recognition),
+        listening: estimate(CapabilityKind::Listening),
+        prompted_production: estimate(CapabilityKind::PromptedProduction),
+        spontaneous_production: estimate(CapabilityKind::SpontaneousProduction),
+        transfer: estimate(CapabilityKind::Transfer),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn estimate_columns<'a>(
+    len: usize,
+    kind: CapabilityKind,
+    capability: &[CapabilityKind],
+    success: &[bool],
+    assistance_level: &[u8],
+    assistance_present: &[bool],
+    response_millis: &[u32],
+    response_present: &[bool],
+    context_key: &[Option<&'a str>],
+    context_family: &[Option<&'a str>],
+    recorded_at_unix: &[i64],
+    now_unix: i64,
+) -> CapabilityEstimateFixed<'a> {
+    let available = len
+        .min(capability.len())
+        .min(success.len())
+        .min(assistance_level.len())
+        .min(assistance_present.len())
+        .min(response_millis.len())
+        .min(response_present.len())
+        .min(context_key.len())
+        .min(context_family.len())
+        .min(recorded_at_unix.len());
+
+    let mut samples = [0usize; MAX_CAPABILITY_OBSERVATIONS];
+    let mut sample_len = 0usize;
+    for source in 0..available {
+        if capability[source] != kind {
+            continue;
+        }
+        if sample_len == MAX_CAPABILITY_OBSERVATIONS
+            && recorded_at_unix[samples[sample_len - 1]] >= recorded_at_unix[source]
+        {
+            continue;
+        }
+        let mut position = sample_len.min(MAX_CAPABILITY_OBSERVATIONS - 1);
+        while position > 0 && recorded_at_unix[samples[position - 1]] < recorded_at_unix[source] {
+            samples[position] = samples[position - 1];
+            position -= 1;
+        }
+        samples[position] = source;
+        if sample_len < MAX_CAPABILITY_OBSERVATIONS {
+            sample_len += 1;
+        }
+    }
+
+    let attempts = u32::try_from(sample_len).unwrap_or(u32::MAX);
+    let successes = u32::try_from(
+        samples[..sample_len]
+            .iter()
+            .filter(|index| success[**index])
+            .count(),
+    )
+    .unwrap_or(u32::MAX);
 
     let mut weighted_total = 0.0;
     let mut weighted_success = 0.0;
@@ -139,75 +261,79 @@ fn estimate(
     let mut weighted_latency = 0.0;
     let mut unaided_attempts = 0_u32;
     let mut unaided_successes = 0_u32;
-    let mut contexts = BTreeSet::new();
-    let mut families = BTreeSet::new();
+    let mut contexts = ContextSetView::default();
+    let mut families = ContextSetView::default();
+    let mut streak = 0_u8;
+    let mut streak_open = true;
 
-    let qualified_success_streak = u8::try_from(
-        samples
-            .iter()
-            .take_while(|sample| qualified_success(sample, capability))
-            .count()
-            .min(usize::from(u8::MAX)),
-    )
-    .unwrap_or(u8::MAX);
+    for (order, source) in samples[..sample_len].iter().copied().enumerate() {
+        let qualified = qualified_success(
+            kind,
+            success[source],
+            assistance_present[source].then_some(assistance_level[source]),
+            context_family[source],
+        );
+        if streak_open {
+            if qualified {
+                streak = streak.saturating_add(1);
+            } else {
+                streak_open = false;
+            }
+        }
 
-    for (index, sample) in samples.iter().enumerate() {
-        let order_weight = 0.90_f64.powi(i32::try_from(index).unwrap_or(i32::MAX));
-        let age_seconds = now_unix.saturating_sub(sample.recorded_at_unix).max(0) as f64;
-        let age_days = age_seconds / DAY_SECONDS;
-        let age_weight = 0.5_f64.powf(age_days / half_life_days(capability));
+        let order_weight = 0.90_f64.powi(i32::try_from(order).unwrap_or(i32::MAX));
+        let age_seconds = now_unix.saturating_sub(recorded_at_unix[source]).max(0) as f64;
+        let age_weight = 0.5_f64.powf((age_seconds / DAY_SECONDS) / half_life_days(kind));
         let weight = order_weight * age_weight;
 
         weighted_total += weight;
-        if sample.success {
+        if success[source] {
             weighted_success += weight;
-            if let Some(context) = non_empty(sample.context_key.as_deref()) {
-                contexts.insert(context.to_owned());
-            }
-            if let Some(family) = non_empty(sample.context_family.as_deref()) {
-                families.insert(family.to_owned());
-            }
+            context_set_insert(&mut contexts, context_key[source]);
+            context_set_insert(&mut families, context_family[source]);
         }
-
-        // Unknown assistance is not proof of independence.
-        if sample.assistance_level == Some(0) {
+        if assistance_present[source] && assistance_level[source] == 0 {
             unaided_attempts = unaided_attempts.saturating_add(1);
-            if sample.success {
+            if success[source] {
                 unaided_successes = unaided_successes.saturating_add(1);
             }
         }
-
-        if let Some(latency) = sample.response_millis {
+        if response_present[source] {
             weighted_latency_total += weight;
-            weighted_latency += weight * f64::from(latency);
+            weighted_latency += weight * f64::from(response_millis[source]);
         }
     }
 
-    let weighted_success_rate = (weighted_total > 0.0).then_some(weighted_success / weighted_total);
-    let unaided_success_rate = (unaided_attempts > 0)
-        .then_some(f64::from(unaided_successes) / f64::from(unaided_attempts));
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let latency_weighted_millis = (weighted_latency_total > 0.0)
         .then_some((weighted_latency / weighted_latency_total).round() as u32);
+    let first = samples.first().copied().filter(|_| sample_len > 0);
 
-    CapabilityEstimate {
+    CapabilityEstimateFixed {
         attempts,
         successes,
-        weighted_success_rate,
-        unaided_success_rate,
+        weighted_success_rate: (weighted_total > 0.0).then_some(weighted_success / weighted_total),
+        unaided_success_rate: (unaided_attempts > 0)
+            .then_some(f64::from(unaided_successes) / f64::from(unaided_attempts)),
         latency_weighted_millis,
-        qualified_success_streak,
-        distinct_success_contexts: u16::try_from(contexts.len()).unwrap_or(u16::MAX),
-        distinct_success_families: u16::try_from(families.len()).unwrap_or(u16::MAX),
-        successful_contexts: contexts.into_iter().collect(),
-        successful_context_families: families.into_iter().collect(),
-        // Four fresh observations saturate confidence. Old evidence naturally fades.
+        qualified_success_streak: streak,
+        distinct_success_contexts: u16::try_from(context_set_slice(&contexts).len())
+            .unwrap_or(u16::MAX),
+        distinct_success_families: u16::try_from(context_set_slice(&families).len())
+            .unwrap_or(u16::MAX),
+        successful_contexts: contexts,
+        successful_context_families: families,
         evidence_strength: (weighted_total / 4.0).min(1.0),
-        last_observed_at_unix: samples.first().map(|sample| sample.recorded_at_unix),
-        last_observed_success: samples.first().map(|sample| sample.success),
-        last_observed_qualified_success: samples
-            .first()
-            .map(|sample| qualified_success(sample, capability)),
+        last_observed_at_unix: first.map(|index| recorded_at_unix[index]),
+        last_observed_success: first.map(|index| success[index]),
+        last_observed_qualified_success: first.map(|index| {
+            qualified_success(
+                kind,
+                success[index],
+                assistance_present[index].then_some(assistance_level[index]),
+                context_family[index],
+            )
+        }),
     }
 }
 
@@ -225,20 +351,115 @@ fn half_life_days(capability: CapabilityKind) -> f64 {
     }
 }
 
-fn qualified_success(sample: &EvidenceObservation, capability: CapabilityKind) -> bool {
-    if !sample.success {
+fn qualified_success(
+    capability: CapabilityKind,
+    success: bool,
+    assistance: Option<u8>,
+    family: Option<&str>,
+) -> bool {
+    if !success {
         return false;
     }
     match capability {
         CapabilityKind::Recognition | CapabilityKind::Listening => true,
-        CapabilityKind::PromptedProduction => {
-            sample.assistance_level.is_some_and(|level| level > 0)
-        }
-        CapabilityKind::SpontaneousProduction => sample.assistance_level == Some(0),
-        CapabilityKind::Transfer => {
-            sample.assistance_level == Some(0)
-                && non_empty(sample.context_family.as_deref()).is_some()
-        }
+        CapabilityKind::PromptedProduction => assistance.is_some_and(|level| level > 0),
+        CapabilityKind::SpontaneousProduction => assistance == Some(0),
+        CapabilityKind::Transfer => assistance == Some(0) && non_empty(family).is_some(),
+    }
+}
+
+/// Borrowed text set used by downstream passes.
+pub type TextSetRef<'a> = &'a [&'a str];
+
+/// Borrowed capability estimate consumed by scoring/focus passes.
+#[derive(Debug, Clone, Copy)]
+pub struct CapabilityEstimateView<'a> {
+    /// Number of observations.
+    pub attempts: u32,
+    /// Successful observations.
+    pub successes: u32,
+    /// Weighted success rate.
+    pub weighted_success_rate: Option<f64>,
+    /// Explicitly unaided success rate.
+    pub unaided_success_rate: Option<f64>,
+    /// Weighted latency.
+    pub latency_weighted_millis: Option<u32>,
+    /// Qualified success streak.
+    pub qualified_success_streak: u8,
+    /// Distinct successful contexts.
+    pub distinct_success_contexts: u16,
+    /// Distinct successful context families.
+    pub distinct_success_families: u16,
+    /// Successful contexts.
+    pub successful_contexts: TextSetRef<'a>,
+    /// Successful context families.
+    pub successful_context_families: TextSetRef<'a>,
+    /// Evidence strength.
+    pub evidence_strength: f64,
+    /// Newest observation time.
+    pub last_observed_at_unix: Option<i64>,
+    /// Newest observation success.
+    pub last_observed_success: Option<bool>,
+    /// Newest observation qualification.
+    pub last_observed_qualified_success: Option<bool>,
+}
+
+/// Project one fixed estimate into its borrowed downstream view.
+#[must_use]
+pub fn capability_estimate_view<'a>(
+    value: &'a CapabilityEstimateFixed<'a>,
+) -> CapabilityEstimateView<'a> {
+    CapabilityEstimateView {
+        attempts: value.attempts,
+        successes: value.successes,
+        weighted_success_rate: value.weighted_success_rate,
+        unaided_success_rate: value.unaided_success_rate,
+        latency_weighted_millis: value.latency_weighted_millis,
+        qualified_success_streak: value.qualified_success_streak,
+        distinct_success_contexts: value.distinct_success_contexts,
+        distinct_success_families: value.distinct_success_families,
+        successful_contexts: context_set_slice(&value.successful_contexts),
+        successful_context_families: context_set_slice(&value.successful_context_families),
+        evidence_strength: value.evidence_strength,
+        last_observed_at_unix: value.last_observed_at_unix,
+        last_observed_success: value.last_observed_success,
+        last_observed_qualified_success: value.last_observed_qualified_success,
+    }
+}
+
+/// Borrowed item capability view consumed by adaptation passes.
+#[derive(Debug, Clone, Copy)]
+pub struct ItemCapabilityView<'a> {
+    /// Persisted item ID borrowed from the boundary.
+    pub learning_item_id: &'a str,
+    /// Target text.
+    pub target_text: &'a str,
+    /// Lifecycle status.
+    pub status: &'a str,
+    /// Recognition estimate.
+    pub recognition: CapabilityEstimateView<'a>,
+    /// Listening estimate.
+    pub listening: CapabilityEstimateView<'a>,
+    /// Prompted-production estimate.
+    pub prompted_production: CapabilityEstimateView<'a>,
+    /// Spontaneous-production estimate.
+    pub spontaneous_production: CapabilityEstimateView<'a>,
+    /// Transfer estimate.
+    pub transfer: CapabilityEstimateView<'a>,
+}
+
+/// Project one fixed item state into the borrowed view consumed by scoring passes.
+#[must_use]
+pub fn item_capability_view<'a>(value: &'a ItemCapabilityStateFixed<'a>) -> ItemCapabilityView<'a> {
+    ItemCapabilityView {
+        learning_item_id: value.learning_item_id,
+        target_text: value.target_text,
+        status: value.status,
+        recognition: capability_estimate_view(&value.recognition),
+        listening: capability_estimate_view(&value.listening),
+        prompted_production: capability_estimate_view(&value.prompted_production),
+        spontaneous_production: capability_estimate_view(&value.spontaneous_production),
+        transfer: capability_estimate_view(&value.transfer),
     }
 }
 
@@ -247,202 +468,110 @@ fn qualified_success(sample: &EvidenceObservation, capability: CapabilityKind) -
 mod tests {
     use super::*;
 
-    const NOW: i64 = 100 * 86_400;
-
-    fn obs(
-        capability: CapabilityKind,
-        success: bool,
-        assistance: Option<u8>,
-        latency: Option<u32>,
-        context: Option<&str>,
-        family: Option<&str>,
-        age_days: i64,
-    ) -> EvidenceObservation {
-        EvidenceObservation {
-            capability,
-            success,
-            assistance_level: assistance,
-            response_millis: latency,
-            context_key: context.map(str::to_owned),
-            context_family: family.map(str::to_owned),
-            recorded_at_unix: NOW - age_days * 86_400,
-        }
-    }
-
     #[test]
-    fn unknown_assistance_never_counts_as_unaided() {
-        let state = project_item_capabilities(
+    fn column_projection_tracks_unaided_transfer_contexts() {
+        let capability = [
+            CapabilityKind::Transfer,
+            CapabilityKind::Transfer,
+            CapabilityKind::SpontaneousProduction,
+        ];
+        let success = [true, true, false];
+        let assistance = [0, 0, 0];
+        let assistance_present = [true, true, true];
+        let millis = [1200, 1400, 2000];
+        let millis_present = [true, true, true];
+        let contexts = [Some("c2"), Some("c1"), None];
+        let families = [Some("family-b"), Some("family-a"), None];
+        let at = [300, 200, 100];
+
+        let state = project_item_capabilities_columns(
             "li-1",
             "hola",
             "learning",
-            &[obs(
-                CapabilityKind::SpontaneousProduction,
-                true,
-                None,
-                Some(1500),
-                Some("c1"),
-                Some("greeting"),
-                0,
-            )],
-            NOW,
+            3,
+            &capability,
+            &success,
+            &assistance,
+            &assistance_present,
+            &millis,
+            &millis_present,
+            &contexts,
+            &families,
+            &at,
+            400,
+        );
+        assert_eq!(state.transfer.attempts, 2);
+        assert_eq!(state.transfer.qualified_success_streak, 2);
+        assert_eq!(
+            context_set_slice(&state.transfer.successful_context_families),
+            ["family-a", "family-b"]
+        );
+    }
+
+    #[test]
+    fn newest_twelve_are_selected() {
+        let capability = [CapabilityKind::Listening; 18];
+        let mut success = [false; 18];
+        for value in &mut success[6..] {
+            *value = true;
+        }
+        let assistance = [0; 18];
+        let present = [false; 18];
+        let millis = [0; 18];
+        let contexts = [None; 18];
+        let families = [None; 18];
+        let mut at = [0_i64; 18];
+        for (index, value) in at.iter_mut().enumerate() {
+            *value = index as i64;
+        }
+        let state = project_item_capabilities_columns(
+            "li",
+            "x",
+            "learning",
+            18,
+            &capability,
+            &success,
+            &assistance,
+            &present,
+            &millis,
+            &present,
+            &contexts,
+            &families,
+            &at,
+            20,
+        );
+        assert_eq!(state.listening.attempts, 12);
+        assert_eq!(state.listening.successes, 12);
+    }
+
+    #[test]
+    fn unknown_assistance_is_not_unaided() {
+        let capability = [CapabilityKind::SpontaneousProduction];
+        let success = [true];
+        let assistance = [0];
+        let assistance_present = [false];
+        let millis = [0];
+        let response_present = [false];
+        let contexts = [None];
+        let families = [None];
+        let at = [1];
+        let state = project_item_capabilities_columns(
+            "li",
+            "x",
+            "learning",
+            1,
+            &capability,
+            &success,
+            &assistance,
+            &assistance_present,
+            &millis,
+            &response_present,
+            &contexts,
+            &families,
+            &at,
+            2,
         );
         assert_eq!(state.spontaneous_production.unaided_success_rate, None);
         assert_eq!(state.spontaneous_production.qualified_success_streak, 0);
-    }
-
-    #[test]
-    fn old_evidence_loses_strength_with_calendar_time() {
-        let fresh = project_item_capabilities(
-            "fresh",
-            "hola",
-            "learning",
-            &[
-                obs(
-                    CapabilityKind::SpontaneousProduction,
-                    true,
-                    Some(0),
-                    None,
-                    Some("c1"),
-                    Some("greeting"),
-                    0,
-                ),
-                obs(
-                    CapabilityKind::SpontaneousProduction,
-                    true,
-                    Some(0),
-                    None,
-                    Some("c2"),
-                    Some("greeting"),
-                    1,
-                ),
-                obs(
-                    CapabilityKind::SpontaneousProduction,
-                    true,
-                    Some(0),
-                    None,
-                    Some("c3"),
-                    Some("greeting"),
-                    2,
-                ),
-            ],
-            NOW,
-        );
-        let stale = project_item_capabilities(
-            "stale",
-            "hola",
-            "learning",
-            &[
-                obs(
-                    CapabilityKind::SpontaneousProduction,
-                    true,
-                    Some(0),
-                    None,
-                    Some("c1"),
-                    Some("greeting"),
-                    180,
-                ),
-                obs(
-                    CapabilityKind::SpontaneousProduction,
-                    true,
-                    Some(0),
-                    None,
-                    Some("c2"),
-                    Some("greeting"),
-                    181,
-                ),
-                obs(
-                    CapabilityKind::SpontaneousProduction,
-                    true,
-                    Some(0),
-                    None,
-                    Some("c3"),
-                    Some("greeting"),
-                    182,
-                ),
-            ],
-            NOW,
-        );
-        assert!(
-            fresh.spontaneous_production.evidence_strength
-                > stale.spontaneous_production.evidence_strength * 10.0
-        );
-    }
-
-    #[test]
-    fn transfer_requires_semantic_family_for_qualified_success() {
-        let without_family = project_item_capabilities(
-            "li-1",
-            "target",
-            "learning",
-            &[obs(
-                CapabilityKind::Transfer,
-                true,
-                Some(0),
-                None,
-                Some("bus:route1"),
-                None,
-                0,
-            )],
-            NOW,
-        );
-        assert_eq!(without_family.transfer.qualified_success_streak, 0);
-
-        let with_family = project_item_capabilities(
-            "li-1",
-            "target",
-            "learning",
-            &[obs(
-                CapabilityKind::Transfer,
-                true,
-                Some(0),
-                None,
-                Some("bus:route1"),
-                Some("transport.ask_stop"),
-                0,
-            )],
-            NOW,
-        );
-        assert_eq!(with_family.transfer.qualified_success_streak, 1);
-        assert_eq!(with_family.transfer.distinct_success_families, 1);
-    }
-
-    #[test]
-    fn recent_evidence_has_more_weight_than_old_evidence() {
-        let state = project_item_capabilities(
-            "li-1",
-            "hola",
-            "learning",
-            &[
-                obs(
-                    CapabilityKind::SpontaneousProduction,
-                    false,
-                    Some(0),
-                    None,
-                    Some("c1"),
-                    Some("greeting"),
-                    5,
-                ),
-                obs(
-                    CapabilityKind::SpontaneousProduction,
-                    true,
-                    Some(0),
-                    None,
-                    Some("c2"),
-                    Some("greeting"),
-                    2,
-                ),
-                obs(
-                    CapabilityKind::SpontaneousProduction,
-                    true,
-                    Some(0),
-                    None,
-                    Some("c3"),
-                    Some("greeting"),
-                    0,
-                ),
-            ],
-            NOW,
-        );
-        assert!(state.spontaneous_production.weighted_success_rate.unwrap() > 2.0 / 3.0);
     }
 }

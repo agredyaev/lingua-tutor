@@ -5,13 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Language-neutral domain types and rules (03-domain-model.md)"
+description = "Language-neutral scalar contracts and pure rules"
 
 [dependencies]
 language-pack-api = { workspace = true }
 serde = { workspace = true }
+
+[dev-dependencies]
 serde_json = { workspace = true }
-semver = { version = "1", features = ["serde"] }
 
 [lints]
 workspace = true

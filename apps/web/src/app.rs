@@ -6,7 +6,7 @@ use leptos::prelude::*;
 use leptos_router::components::{Route, Router, Routes};
 use leptos_router::hooks::use_location;
 use leptos_router::path;
-use shared_schema::LanguageProfileDto;
+use shared_schema::{ApiError, LanguageProfileDto};
 
 /// Active language profile shared app-wide via context (09 §2).
 /// Explicit user choice wins; otherwise the server default — a derived
@@ -16,6 +16,7 @@ pub struct ActiveProfile {
     /// User selection from /languages.
     pub chosen: RwSignal<Option<LanguageProfileDto>>,
     default_from_server: Signal<Option<LanguageProfileDto>>,
+    default_lookup_network_failed: Signal<bool>,
 }
 
 impl ActiveProfile {
@@ -27,6 +28,13 @@ impl ActiveProfile {
     /// Effective profile ID.
     pub fn id(&self) -> Option<String> {
         self.current().map(|p| p.id)
+    }
+
+    /// Whether resolving the server-default profile failed because the local
+    /// runtime is unreachable. Review uses this to distinguish an offline
+    /// reload from "no profile selected" without issuing a duplicate RPC.
+    pub fn default_lookup_network_failed(&self) -> bool {
+        self.default_lookup_network_failed.get()
     }
 }
 
@@ -50,9 +58,12 @@ pub fn App() -> impl IntoView {
             })
         })
     });
+    let default_lookup_network_failed =
+        Signal::derive(move || matches!(profiles.get(), Some(Err(ApiError::Network(_)))));
     provide_context(ActiveProfile {
         chosen: RwSignal::new(None),
         default_from_server,
+        default_lookup_network_failed,
     });
 
     view! {

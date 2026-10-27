@@ -13,58 +13,19 @@ Depends on: all component files 03–09.
 
 ## 2. Review events
 
-Test cases:
-
-- duplicate submission and idempotent result;
-- offline replay;
-- immediate undo through a compensating event;
-- stale prior-state hash → 409;
-- concurrent submission;
-- event/state atomicity;
-- immutable event history;
-- corrected-event recalculation.
+Duplicate submission (idempotent); offline replay; immediate undo (compensating event); stale prior-state hash → 409; concurrent submission; event/state atomicity; history immutability; corrected-event recalculation.
 
 ## 3. Tutor cards
 
-Test cases:
-
-- idempotent create;
-- exact duplicate detection;
-- near-duplicate warning;
-- cosmetic edit preserves schedule;
-- semantic edit resets or replaces schedule state;
-- split and merge lineage;
-- activation budget enforcement;
-- ambiguous prompt rejection;
-- missing `creation_reason` rejection;
-- confirmation for destructive mutation.
+Idempotent create; exact duplicate detection; near-duplicate warning; cosmetic edit preserves schedule; semantic edit resets/replaces; split lineage; merge lineage; activation budget enforcement; invalid ambiguous prompt rejected; missing `creation_reason` rejected; destructive mutation requires confirmation.
 
 ## 4. Adaptive rules (`adaptation`)
 
-Table-driven cases cover:
-
-- unaided recall below threshold;
-- overdue review backlog;
-- repeated listening failure;
-- prompted/spontaneous mismatch;
-- 3-occurrence mini-target;
-- 5-occurrence method change;
-- redesign thresholds;
-- mastery evidence.
+Table-driven: low recall; backlog; repeated listening failure; prompted/spontaneous mismatch; 3-occurrence mini-target; 5-occurrence method change; redesign candidates; mastery evidence.
 
 ## 5. Pack conformance (shared suite, `test-support`)
 
-Every pack test suite checks:
-
-- manifest validity;
-- contract-version compatibility;
-- deterministic normalization;
-- bounded answer evaluation;
-- stable error codes;
-- card-template validation;
-- no secret or network access;
-- asset schema validation;
-- historical version attribution.
+Every pack: manifest validity; contract-version compatibility; deterministic normalization; bounded answer evaluation; stable error codes; card-template validation; no secret/network access; asset schema validation; historical version attribution.
 
 Core CI runs the suite against `synthetic-test-pack` — proves core independence from Spanish.
 
@@ -74,25 +35,17 @@ Apply all migrations to scratch SQLite in CI; schema matches [04-database.md](04
 
 ## 7. End-to-end (Playwright)
 
-Playwright covers:
-
-- lesson-result import and card creation;
-- MCP-equivalent lesson completion through the shared handler path;
-- daily review;
-- offline review sync;
-- dashboard update;
-- card suspend and restore;
-- full export and restore.
+Lesson-result import creates cards; MCP-equivalent lesson completion through the shared handler path; daily review; offline review sync; dashboard update; card suspend + restore; full export snapshot validity; verified SQLite backup restore.
 
 ## 8. Performance targets (one learner)
 
-- Dashboard operation target: < 500 ms. A performance result is invalid unless it records the dataset size and query parameters.
-- Review operation target: < 300 ms. A performance result is invalid unless it records the dataset size and operation parameters.
-- Next-card transition reads from the prefetched client queue; it must not wait for a network round-trip.
+- Dashboard operation < 500 ms normal load.
+- Review operation response < 300 ms online.
+- Next-card transition feels immediate (queue prefetched client-side).
 - Offline review independent of server latency.
 - Due-card query uses `ix_schedule_due`.
 - Bounded review batches.
-- Capacity claims require a recorded event count, card count, and measured operation latencies.
+- Capacity: tens of thousands of review events, several thousand cards, no redesign.
 - Compressed frontend payload ≤ 3 MB (CI-reported).
 
 ## 9. Acceptance commands

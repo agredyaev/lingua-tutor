@@ -12,8 +12,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
         with:
-          workspaces: fuzz
+          tool: cargo-deny@0.20.2
+      - name: supply-chain policy
+        run: cargo deny --locked --manifest-path fuzz/Cargo.toml --config deny.toml check
       - run: cargo install cargo-fuzz --locked
       - name: fuzz lesson_result_parse (120s)
         run: cargo +nightly fuzz run lesson_result_parse -- -max_total_time=120

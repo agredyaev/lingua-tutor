@@ -1,88 +1,75 @@
-//! Shared language-pack conformance suite (06-language-packs.md §8,
-//! 12-testing.md §5). Every pack's test suite calls [`assert_conformance`].
+//! Shared language-pack conformance checks for explicit processing passes.
 //! Used only as a dev-dependency; never ships in production builds.
-//!
-//! Checks not expressible here: "no secret/network access" is enforced by
-//! the trait boundary itself (no IO capability in `language-pack-api`), and
-//! historical version attribution is a core-side concern (04-database.md §1).
 
-// Test-support code: panicking on violation is the contract of an assert helper.
 #![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
 
 use language_pack_api::{
-    AnswerEvaluationRequest, CONTRACT_VERSION, Capability, CardIntent,
-    LanguageErrorClassificationRequest, LanguagePack, NormalizationMode,
+    AnswerEvaluation, AnswerEvaluationRequest, CONTRACT_VERSION, Capability, CardIntent,
+    CardTemplateView, LanguageErrorClassification, LanguageErrorClassificationRequest,
+    LanguagePackManifest, NormalizationMode, NormalizedText,
 };
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestRng, TestRunner};
 
-/// Runs the full conformance suite; panics with a precise message on the
-/// first violation.
-///
-/// # Panics
-///
-/// On any conformance violation — this is the assertion helper for pack
-/// test suites.
-pub fn assert_conformance(pack: &dyn LanguagePack) {
-    manifest_valid(pack);
-    contract_compatible(pack);
-    normalization_deterministic_and_idempotent(pack);
-    evaluation_bounded_and_deterministic(pack);
-    error_codes_stable(pack);
-    card_templates_valid(pack);
-}
-
-fn manifest_valid(pack: &dyn LanguagePack) {
-    let m = pack.manifest();
+/// Validate manifest fields, contract compatibility, and template capabilities.
+pub fn assert_manifest_conformance<'a>(
+    manifest: &LanguagePackManifest,
+    template_count: usize,
+    template_at: impl Fn(u32) -> Option<CardTemplateView<'a>>,
+) {
     for (field, value) in [
-        ("id", &m.id),
-        ("package", &m.package),
-        ("display_name", &m.display_name),
-        ("target_language", &m.target_language),
-        ("target_locale", &m.target_locale),
-        ("level_framework", &m.level_framework),
+        ("id", &manifest.id),
+        ("package", &manifest.package),
+        ("display_name", &manifest.display_name),
+        ("target_language", &manifest.target_language),
+        ("target_locale", &manifest.target_locale),
+        ("level_framework", &manifest.level_framework),
     ] {
         assert!(!value.trim().is_empty(), "manifest.{field} empty");
     }
-    let semver_ok = {
-        let parts: Vec<&str> = m.version.split('.').collect();
-        parts.len() == 3 && parts.iter().all(|p| p.parse::<u32>().is_ok())
-    };
+
+    let parts: Vec<&str> = manifest.version.split('.').collect();
     assert!(
-        semver_ok,
+        parts.len() == 3 && parts.iter().all(|part| part.parse::<u32>().is_ok()),
         "manifest.version '{}' is not MAJOR.MINOR.PATCH",
-        m.version
+        manifest.version
     );
     assert!(
-        m.target_locale.starts_with(&m.target_language),
+        manifest
+            .target_locale
+            .starts_with(&manifest.target_language),
         "target_locale '{}' does not extend target_language '{}'",
-        m.target_locale,
-        m.target_language
+        manifest.target_locale,
+        manifest.target_language
     );
     assert!(
-        m.supported_source_languages
-            .contains(&m.default_source_language),
+        manifest
+            .supported_source_languages
+            .contains(&manifest.default_source_language),
         "default_source_language '{}' not in supported_source_languages",
-        m.default_source_language
+        manifest.default_source_language
     );
-    let mut caps = m.capabilities.clone();
-    caps.dedup();
-    assert_eq!(caps.len(), m.capabilities.len(), "duplicate capabilities");
-}
 
-fn contract_compatible(pack: &dyn LanguagePack) {
+    let mut capabilities = manifest.capabilities.clone();
+    capabilities.dedup();
     assert_eq!(
-        pack.manifest().contract_version,
-        CONTRACT_VERSION,
-        "pack '{}' contract_version mismatch",
-        pack.manifest().id
+        capabilities.len(),
+        manifest.capabilities.len(),
+        "duplicate capabilities"
     );
+    assert_eq!(
+        manifest.contract_version, CONTRACT_VERSION,
+        "pack '{}' contract_version mismatch",
+        manifest.id
+    );
+
+    assert_card_templates_conformance(manifest, template_count, template_at);
 }
 
-/// Property check: for arbitrary unicode input, normalization is
-/// deterministic (same output twice) and idempotent (fixed point after one
-/// application). Fixed RNG seed — deterministic CI (16-rust-guidelines.md §6).
-fn normalization_deterministic_and_idempotent(pack: &dyn LanguagePack) {
+/// Verify deterministic and idempotent normalization across generated inputs.
+pub fn assert_normalization_conformance(
+    normalize: impl Fn(&str, NormalizationMode) -> NormalizedText,
+) {
     let mut runner = TestRunner::new_with_rng(
         Config {
             cases: 256,
@@ -94,10 +81,10 @@ fn normalization_deterministic_and_idempotent(pack: &dyn LanguagePack) {
     runner
         .run(&any::<String>(), |input| {
             for mode in [NormalizationMode::Canonical, NormalizationMode::Comparison] {
-                let once = pack.normalize_target_text(&input, mode);
-                let again = pack.normalize_target_text(&input, mode);
+                let once = normalize(&input, mode);
+                let again = normalize(&input, mode);
                 prop_assert_eq!(&once, &again, "non-deterministic normalization");
-                let twice = pack.normalize_target_text(&once.0, mode);
+                let twice = normalize(&once.0, mode);
                 prop_assert_eq!(&twice, &once, "non-idempotent normalization");
             }
             Ok(())
@@ -105,57 +92,73 @@ fn normalization_deterministic_and_idempotent(pack: &dyn LanguagePack) {
         .expect("normalization property violated");
 }
 
-fn evaluation_bounded_and_deterministic(pack: &dyn LanguagePack) {
-    let long_input = "palabra ".repeat(1_250); // ~10k chars: must return promptly, no panic
+/// Verify bounded answer evaluation remains deterministic for a large input.
+pub fn assert_evaluation_conformance(
+    evaluate: impl Fn(&AnswerEvaluationRequest) -> AnswerEvaluation,
+) {
     let request = AnswerEvaluationRequest {
         expected_answer: "respuesta".to_owned(),
         accepted_answers: vec!["variante uno".to_owned(), "variante dos".to_owned()],
-        learner_answer: long_input,
+        learner_answer: "palabra ".repeat(1_250),
         evaluation_mode: "exact".to_owned(),
     };
-    let first = pack.evaluate_answer(&request);
-    let second = pack.evaluate_answer(&request);
+    let first = evaluate(&request);
+    let second = evaluate(&request);
     assert_eq!(first, second, "non-deterministic answer evaluation");
 }
 
-fn error_codes_stable(pack: &dyn LanguagePack) {
+/// Verify error classification remains deterministic for a stable correction.
+pub fn assert_classification_conformance(
+    classify: impl Fn(&LanguageErrorClassificationRequest) -> LanguageErrorClassification,
+) {
     let request = LanguageErrorClassificationRequest {
         original_production: "forma incorrecta".to_owned(),
         corrected_production: "forma correcta".to_owned(),
         context: None,
     };
-    let first = pack.classify_error(&request);
-    let second = pack.classify_error(&request);
+    let first = classify(&request);
+    let second = classify(&request);
     assert_eq!(first, second, "unstable error classification");
 }
 
-fn card_templates_valid(pack: &dyn LanguagePack) {
-    let templates = pack.card_templates();
-    let mut ids: Vec<&str> = templates.iter().map(|t| t.template_id.as_str()).collect();
-    ids.sort_unstable();
-    ids.dedup();
-    assert_eq!(ids.len(), templates.len(), "duplicate template_id");
-    for t in templates {
+fn assert_card_templates_conformance<'a>(
+    manifest: &LanguagePackManifest,
+    template_count: usize,
+    template_at: impl Fn(u32) -> Option<CardTemplateView<'a>>,
+) {
+    let mut ids = Vec::with_capacity(template_count);
+    for index in 0..template_count {
+        let index = u32::try_from(index).expect("template count fits u32");
+        let template = template_at(index).expect("dense template index exists");
+        ids.push(template.template_id);
         assert!(
-            !t.prompt_template.trim().is_empty(),
+            !template.prompt_template.trim().is_empty(),
             "{}: empty prompt_template",
-            t.template_id
+            template.template_id
         );
         assert!(
-            !t.answer_evaluation_mode.trim().is_empty(),
+            !template.answer_evaluation_mode.trim().is_empty(),
             "{}: empty answer_evaluation_mode",
-            t.template_id
+            template.template_id
         );
     }
-    let caps = &pack.manifest().capabilities;
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), template_count, "duplicate template_id");
+
     for (capability, intent) in [
         (Capability::ProductionCards, CardIntent::Production),
         (Capability::ListeningCards, CardIntent::Listening),
         (Capability::ContrastCards, CardIntent::Contrast),
         (Capability::TransferCards, CardIntent::Transfer),
     ] {
-        let has_template = templates.iter().any(|t| t.intent == intent);
-        let declared = caps.contains(&capability);
+        let has_template = (0..template_count).any(|index| {
+            let index = u32::try_from(index).expect("template count fits u32");
+            template_at(index)
+                .map(|template| template.intent == intent)
+                .unwrap_or(false)
+        });
+        let declared = manifest.capabilities.contains(&capability);
         assert!(
             !declared || has_template,
             "capability {capability:?} declared but no {intent:?} template"

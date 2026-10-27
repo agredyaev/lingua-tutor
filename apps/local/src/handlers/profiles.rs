@@ -1,111 +1,60 @@
 //! Language-pack and learner-profile operations.
 
-use crate::api::{new_id, now, operation_error};
-use crate::repositories::{packs, parse_enum, profiles, to_rfc3339};
+use crate::api::operation_error;
+use crate::repositories::profiles;
 use crate::{Env, Result};
-use application::validate_profile_creation;
-use rusqlite::{OptionalExtension as _, params};
 use serde::Deserialize;
 
-pub(crate) fn list_packs(
-    registry: &language_pack_registry::LanguagePackRegistry,
-) -> Result<serde_json::Value> {
-    let manifests: Vec<_> = registry.manifests().collect();
+pub(crate) fn list_packs(registry: &crate::BuiltInPackRegistry) -> Result<serde_json::Value> {
+    let manifests: Vec<_> = language_pack_registry::manifests(registry).collect();
     crate::json(&manifests)
 }
 
 pub(crate) fn get_pack(
-    registry: &language_pack_registry::LanguagePackRegistry,
+    registry: &crate::BuiltInPackRegistry,
     pack_id: &str,
 ) -> Result<serde_json::Value> {
-    match registry.get(pack_id) {
-        Some(pack) => crate::json(pack.manifest()),
+    match language_pack_registry::manifest(registry, pack_id) {
+        Some(manifest) => crate::json(&manifest),
         None => operation_error(404, "not_found", "unknown language pack"),
     }
+}
+
+// Streaming SQLite -> JSON without an intermediate row/domain graph.
+fn project_profile_wire(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<serde_json::Value>> {
+    let status: String = row.get("status")?;
+    let preferences_text: String = row.get("preferences_json")?;
+    let (Ok(_), Ok(preferences)) = (
+        serde_json::from_value::<learning_core::ProfileStatus>(serde_json::json!(status)),
+        serde_json::from_str::<serde_json::Value>(&preferences_text),
+    ) else {
+        return Ok(None);
+    };
+    Ok(Some(serde_json::json!({
+        "id": row.get::<_, String>("id")?,
+        "learner_id": row.get::<_, String>("learner_id")?,
+        "language_pack_id": row.get::<_, String>("language_pack_id")?,
+        "source_language": row.get::<_, String>("source_language")?,
+        "target_locale": row.get::<_, String>("target_locale")?,
+        "estimated_level": row.get::<_, Option<String>>("estimated_level")?,
+        "current_lesson_number": row.get::<_, u32>("current_lesson_number")?,
+        "status": status,
+        "is_default": row.get::<_, u8>("is_default")? != 0,
+        "preferences": preferences,
+    })))
 }
 
 pub(crate) fn list_profiles(env: &Env) -> Result<serde_json::Value> {
     let connection = env.connection()?;
     let mut statement = connection.prepare(profiles::SELECT_LANGUAGE_PROFILES)?;
-    let rows = statement
-        .query_map([], profiles::LanguageProfileRow::from_row)?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
-    let domain: Vec<_> = rows
-        .into_iter()
-        .filter_map(|row| row.into_domain().ok())
-        .collect();
-    crate::json(&domain)
-}
-
-pub(crate) fn create_profile(
-    registry: &language_pack_registry::LanguagePackRegistry,
-    env: &Env,
-    language_pack_id: &str,
-    source_language: &str,
-) -> Result<serde_json::Value> {
-    let Some(pack) = registry.get(language_pack_id) else {
-        return operation_error(404, "not_found", "unknown language pack");
-    };
-    let manifest = pack.manifest();
-    if let Err(error) = validate_profile_creation(manifest, source_language) {
-        return operation_error(409, "pack_incompatible", &error.to_string());
-    }
-
-    let at = to_rfc3339(now());
-    let learner_id = "learner-1";
-    let pack_row = packs::PackRow::from_manifest(manifest)
-        .map_err(|error| crate::Error::RustError(error.to_string()))?;
-    let profile_id = new_id("llp");
-
-    let mut connection = env.connection()?;
-    let transaction =
-        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let result = (|| -> rusqlite::Result<()> {
-        transaction.execute(
-            packs::UPSERT_PACK,
-            params![
-                pack_row.id,
-                pack_row.package_name,
-                pack_row.version,
-                pack_row.contract_version,
-                pack_row.target_language,
-                pack_row.target_locale,
-                pack_row.display_name,
-                pack_row.capabilities_json,
-                at,
-            ],
-        )?;
-        transaction.execute(
-            profiles::UPSERT_LEARNER,
-            params![learner_id, "Europe/Madrid", 2, 20, 8, 0.90, 12, at],
-        )?;
-        transaction.execute(
-            profiles::INSERT_LANGUAGE_PROFILE,
-            params![
-                profile_id,
-                learner_id,
-                manifest.id,
-                source_language,
-                manifest.target_locale,
-                Option::<String>::None,
-                0,
-                "active",
-                1,
-                "{}",
-                at,
-            ],
-        )?;
-        Ok(())
-    })();
-    if let Err(error) = result {
-        let text = error.to_string();
-        if text.contains("UNIQUE") {
-            return operation_error(409, "profile_exists", "active profile for this pack exists");
+    let mut rows = statement.query([])?;
+    let mut output = Vec::new();
+    while let Some(row) = rows.next()? {
+        if let Some(wire) = project_profile_wire(row)? {
+            output.push(wire);
         }
-        return Err(error.into());
     }
-    transaction.commit()?;
-    crate::json(&serde_json::json!({ "id": profile_id }))
+    crate::json(&output)
 }
 
 #[derive(Deserialize)]
@@ -116,58 +65,51 @@ pub(crate) struct PatchProfileParams {
     pub preferences: Option<serde_json::Value>,
 }
 
-pub(crate) fn patch_profile(
-    env: &Env,
-    profile_id: &str,
-    body: PatchProfileParams,
-) -> Result<serde_json::Value> {
-    let connection = env.connection()?;
-    let Some(row) = fetch_profile(&connection, profile_id)? else {
-        return operation_error(404, "not_found", "unknown profile");
-    };
-    let Ok(mut domain) = row.into_domain() else {
-        return operation_error(500, "corrupt_row", "stored profile is invalid");
-    };
-    if let Some(level) = body.estimated_level {
-        domain.estimated_level = Some(level);
+#[cfg(test)]
+// Test fixtures intentionally fail fast and use compact tuple snapshots.
+#[allow(clippy::unwrap_used, clippy::type_complexity)]
+mod dod_profile_projection_tests {
+    use super::*;
+
+    const PROFILE_ROW: &str = "SELECT 'llp-1' AS id, 'learner-1' AS learner_id,
+        'es-ES' AS language_pack_id, 'ru' AS source_language, 'es-ES' AS target_locale,
+        'A1' AS estimated_level, 7 AS current_lesson_number,
+        'active' AS status, 1 AS is_default,
+        '{\"priority_scenarios\":[\"pharmacy\"]}' AS preferences_json";
+
+    #[test]
+    fn profile_sql_projection_matches_wire_fixture() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        let wire = db
+            .query_row(PROFILE_ROW, [], project_profile_wire)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "id":"llp-1","learner_id":"learner-1","language_pack_id":"es-ES",
+                "source_language":"ru","target_locale":"es-ES","estimated_level":"A1",
+                "current_lesson_number":7,"status":"active","is_default":true,
+                "preferences":{"priority_scenarios":["pharmacy"]}
+            })
+        );
     }
-    if let Some(status) = body.status {
-        match parse_enum("status", &status) {
-            Ok(parsed) => domain.status = parsed,
-            Err(_) => return operation_error(400, "invalid_field", "status outside closed set"),
+
+    #[test]
+    fn profile_sql_projection_rejects_corrupt_data() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        for invalid in [
+            PROFILE_ROW.replace("'active' AS status", "'oops' AS status"),
+            PROFILE_ROW.replace(
+                "'{\"priority_scenarios\":[\"pharmacy\"]}' AS preferences_json",
+                "'not-json' AS preferences_json",
+            ),
+        ] {
+            assert!(
+                db.query_row(&invalid, [], project_profile_wire)
+                    .unwrap()
+                    .is_none()
+            );
         }
     }
-    if let Some(default) = body.is_default {
-        domain.is_default = default;
-    }
-    if let Some(preferences) = body.preferences {
-        domain.preferences = preferences;
-    }
-    let row = profiles::LanguageProfileRow::from_domain(&domain);
-    connection.execute(
-        profiles::UPDATE_LANGUAGE_PROFILE,
-        params![
-            row.id,
-            row.estimated_level,
-            row.status,
-            row.is_default,
-            row.preferences_json,
-            row.current_lesson_number,
-            to_rfc3339(now()),
-        ],
-    )?;
-    crate::json(&domain)
-}
-
-pub(crate) fn fetch_profile(
-    connection: &rusqlite::Connection,
-    profile_id: &str,
-) -> Result<Option<profiles::LanguageProfileRow>> {
-    Ok(connection
-        .query_row(
-            profiles::SELECT_LANGUAGE_PROFILE,
-            params![profile_id],
-            profiles::LanguageProfileRow::from_row,
-        )
-        .optional()?)
 }

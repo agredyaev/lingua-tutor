@@ -92,6 +92,9 @@ CREATE TABLE lesson_metrics (
     listening_score         REAL,
     avg_answer_millis       INTEGER,
     long_pause_count        INTEGER NOT NULL DEFAULT 0,
+    task_attempt_count      INTEGER NOT NULL DEFAULT 0, -- added by 0004
+    task_success_count      INTEGER NOT NULL DEFAULT 0, -- added by 0004
+    task_success_rubric     TEXT,                       -- added by 0005
     confidence              REAL,
     created_at              TEXT NOT NULL
 );
@@ -129,9 +132,12 @@ CREATE TABLE learning_item_evidence (
     success            INTEGER NOT NULL,
     detail             TEXT,
     pack_metadata_json TEXT,
-    recorded_at        TEXT NOT NULL
+    recorded_at        TEXT NOT NULL,
+    observation_order  INTEGER NOT NULL DEFAULT 0 -- added by 0005; order within one lesson result
 );
 CREATE INDEX ix_evidence_item ON learning_item_evidence(learning_item_id, kind);
+CREATE INDEX ix_evidence_item_order
+    ON learning_item_evidence(learning_item_id, recorded_at DESC, observation_order DESC);
 
 CREATE TABLE error_targets (
     id                          TEXT PRIMARY KEY,
@@ -157,6 +163,7 @@ CREATE TABLE error_occurrences (
     error_target_id TEXT NOT NULL REFERENCES error_targets(id),
     lesson_id       TEXT REFERENCES lessons(id),
     context         TEXT,
+    communicative_impact TEXT NOT NULL DEFAULT 'medium', -- added by 0004
     recorded_at     TEXT NOT NULL
 );
 
@@ -177,10 +184,19 @@ CREATE TABLE listening_attempts (
     learning_item_id            TEXT REFERENCES learning_items(id),
     lesson_id                   TEXT REFERENCES lessons(id),
     source_reference            TEXT,          -- no raw audio stored
+    source_variant_id           TEXT,          -- added by 0004
+    talker_key                  TEXT,          -- added by 0004
+    context_tag                 TEXT,          -- added by 0004
     transcript                  TEXT,
     success                     INTEGER NOT NULL,
     recorded_at                 TEXT NOT NULL
 );
+
+Measured listening-probe assistance, latency, phase, and explicit context are stored in
+`learning_item_evidence` with `kind='listening'` and `pack_metadata_json`. The
+`listening_attempts` row remains the source/transcript record. This keeps probe
+measurement persistence on the existing evidence path instead of adding listening-only
+schema columns.
 
 CREATE TABLE cards (
     id                          TEXT PRIMARY KEY,
@@ -253,6 +269,17 @@ CREATE TABLE review_sessions (
     review_seconds              INTEGER,
     created_at                  TEXT NOT NULL
 );
+
+-- Added by 0003_review_methodology.sql. One scalar policy result per local study day.
+CREATE TABLE review_daily_budget (
+    learner_language_profile_id TEXT NOT NULL REFERENCES learner_language_profiles(id),
+    local_day_start             TEXT NOT NULL,
+    effective_budget            INTEGER NOT NULL CHECK (effective_budget BETWEEN 0 AND 255),
+    updated_at                  TEXT NOT NULL,
+    PRIMARY KEY (learner_language_profile_id, local_day_start)
+);
+CREATE INDEX ix_review_daily_budget_profile_day
+    ON review_daily_budget(learner_language_profile_id, local_day_start DESC);
 
 CREATE TABLE review_events (
     id                  TEXT PRIMARY KEY,
@@ -345,12 +372,11 @@ CREATE INDEX ix_planner_decisions_profile_created
 
 ## 3. Ownership
 
-- `card_schedule_state`, `review_events`: written only by review-engine via `application`. Language packs never write them.
+- `card_schedule_state`, `review_events`: written by the native review processing passes using `review-engine` calculations. Language packs never write them.
 - `card_mutations`: append-only audit; one row per attempted mutation, applied or not.
 - `review_events.compensates_event_id`: undo and corrections reference the compensated event; original rows never change.
 - Item × capability state and tutor-focus spacing are derived projections over immutable evidence; they are not stored as a second source of truth.
-- `planner_decisions` stores the pre-lesson planner input/decision snapshot and the eventual lesson outcome.
-- New evidence changes planner inputs, so a later reconstruction cannot reproduce the pre-lesson snapshot.
+- `planner_decisions` stores the pre-lesson planner input/decision snapshot and the eventual lesson outcome. It exists for continuity and calibration: the exact decision made before a lesson cannot be reconstructed reliably after new evidence arrives.
 
 ## 4. Migration policy
 

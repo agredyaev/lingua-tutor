@@ -1,134 +1,41 @@
 //! One tutor-facing task queue built from spaced focus state + item task scores.
-
-use crate::{CapabilityKind, TaskCandidate, TutorFocusThread};
+use crate::CapabilityKind;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
-/// One concrete tutor action. This is the only item-level queue the tutor needs.
+/// One tutor-facing output record serialized at the boundary.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TutorTask {
-    /// Stable action code.
+    /// Stable identifier of the proposed tutoring or review action.
     pub action: String,
-    /// Learning item targeted by this action.
+    /// learning item id used by the corresponding adaptation pass.
     pub learning_item_id: String,
-    /// Target-language text.
+    /// Target-language phrase or response to practice.
     pub target_text: String,
-    /// Capability being trained/probed.
+    /// capability used by the corresponding adaptation pass.
     pub capability: CapabilityKind,
-    /// Deterministic priority 0..=100.
+    /// Relative priority used to rank tutor tasks.
     pub priority: u8,
-    /// Whether spaced retrieval is due now.
+    /// due now used by the corresponding adaptation pass.
     pub due_now: bool,
-    /// Next due timestamp when this task came from a focus thread.
+    /// Next scheduled practice time as a Unix timestamp in seconds.
     pub due_at_unix: Option<i64>,
-    /// Spacing stage when this task came from a focus thread.
+    /// stage used by the corresponding adaptation pass.
     pub stage: Option<u8>,
-    /// Successful concrete contexts already used.
+    /// Concrete contexts in which the learner succeeded unaided.
     pub successful_contexts: Vec<String>,
-    /// Successful semantic context families already used.
+    /// successful context families used by the corresponding adaptation pass.
     pub successful_context_families: Vec<String>,
-    /// Required context change for the next task.
+    /// Rule for selecting the next practice context.
     pub next_context_policy: Option<String>,
-    /// Why this action is ranked here.
+    /// rationale used by the corresponding adaptation pass.
     pub rationale: String,
-    /// Observable result expected from the action.
+    /// Observable condition for marking this task successful.
     pub success_criterion: String,
 }
 
-/// Merges internal focus state and candidate scoring into one bounded tutor queue.
 #[must_use]
-pub fn build_tutor_task_queue(
-    focus_threads: &[TutorFocusThread],
-    candidates: &[TaskCandidate],
-    limit: usize,
-) -> Vec<TutorTask> {
-    let mut tasks = Vec::new();
-    let mut represented: BTreeSet<(String, CapabilityKind)> = BTreeSet::new();
-
-    for focus in focus_threads {
-        let capability = focus.capability;
-        let best = candidates
-            .iter()
-            .filter(|candidate| {
-                candidate.learning_item_id == focus.learning_item_id
-                    && evidence_capability(&candidate.expected_evidence) == Some(capability)
-            })
-            .max_by_key(|candidate| candidate.score);
-
-        let (action, score, reason) = best.map_or_else(
-            || {
-                (
-                    default_action(capability).to_owned(),
-                    default_focus_score(capability),
-                    focus.rationale.clone(),
-                )
-            },
-            |candidate| {
-                (
-                    candidate.task_type.clone(),
-                    candidate.score,
-                    format!("{}; {}", focus.rationale, candidate.rationale),
-                )
-            },
-        );
-
-        tasks.push(TutorTask {
-            action,
-            learning_item_id: focus.learning_item_id.clone(),
-            target_text: focus.target_text.clone(),
-            capability,
-            priority: score
-                .saturating_add(if focus.due_now { 8 } else { 0 })
-                .min(100),
-            due_now: focus.due_now,
-            due_at_unix: Some(focus.due_at_unix),
-            stage: Some(focus.stage),
-            successful_contexts: focus.successful_contexts.clone(),
-            successful_context_families: focus.successful_context_families.clone(),
-            next_context_policy: Some(focus.next_context_policy.clone()),
-            rationale: reason,
-            success_criterion: criterion(capability).to_owned(),
-        });
-        represented.insert((focus.learning_item_id.clone(), capability));
-    }
-
-    for candidate in candidates {
-        let Some(capability) = evidence_capability(&candidate.expected_evidence) else {
-            continue;
-        };
-        if represented.contains(&(candidate.learning_item_id.clone(), capability)) {
-            continue;
-        }
-        tasks.push(TutorTask {
-            action: candidate.task_type.clone(),
-            learning_item_id: candidate.learning_item_id.clone(),
-            target_text: candidate.target_text.clone(),
-            capability,
-            priority: candidate.score,
-            due_now: false,
-            due_at_unix: None,
-            stage: None,
-            successful_contexts: vec![],
-            successful_context_families: vec![],
-            next_context_policy: None,
-            rationale: candidate.rationale.clone(),
-            success_criterion: criterion(capability).to_owned(),
-        });
-    }
-
-    tasks.sort_by(|left, right| {
-        right
-            .due_now
-            .cmp(&left.due_now)
-            .then_with(|| right.priority.cmp(&left.priority))
-            .then_with(|| left.learning_item_id.cmp(&right.learning_item_id))
-            .then_with(|| left.capability.cmp(&right.capability))
-    });
-    tasks.truncate(limit);
-    tasks
-}
-
-fn evidence_capability(value: &str) -> Option<CapabilityKind> {
+/// Decode the expected evidence mode into a capability, rejecting unknown values.
+pub fn evidence_capability(value: &str) -> Option<CapabilityKind> {
     match value {
         "recognition" => Some(CapabilityKind::Recognition),
         "listening" => Some(CapabilityKind::Listening),
@@ -139,7 +46,9 @@ fn evidence_capability(value: &str) -> Option<CapabilityKind> {
     }
 }
 
-fn default_action(capability: CapabilityKind) -> &'static str {
+#[must_use]
+/// Return the fallback action for a capability without allocating.
+pub fn default_action(capability: CapabilityKind) -> &'static str {
     match capability {
         CapabilityKind::Recognition => "recognition_probe",
         CapabilityKind::Listening => "listening_probe",
@@ -149,7 +58,9 @@ fn default_action(capability: CapabilityKind) -> &'static str {
     }
 }
 
-fn default_focus_score(capability: CapabilityKind) -> u8 {
+#[must_use]
+/// Return the default ranking score for a capability.
+pub fn default_focus_score(capability: CapabilityKind) -> u8 {
     match capability {
         CapabilityKind::Transfer => 82,
         CapabilityKind::SpontaneousProduction => 86,
@@ -159,7 +70,9 @@ fn default_focus_score(capability: CapabilityKind) -> u8 {
     }
 }
 
-fn criterion(capability: CapabilityKind) -> &'static str {
+#[must_use]
+/// Return the observable success criterion for the capability.
+pub fn criterion(capability: CapabilityKind) -> &'static str {
     match capability {
         CapabilityKind::Recognition => "correct recognition without revealing the answer first",
         CapabilityKind::Listening => "correct comprehension on a fresh listening variant",
@@ -170,46 +83,5 @@ fn criterion(capability: CapabilityKind) -> &'static str {
         CapabilityKind::Transfer => {
             "correct unaided use in a new context_family, recorded as transfer evidence"
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn focus(capability: CapabilityKind, due: bool) -> TutorFocusThread {
-        TutorFocusThread {
-            learning_item_id: "li-1".to_owned(),
-            target_text: "target".to_owned(),
-            capability,
-            stage: 0,
-            due_at_unix: 0,
-            due_now: due,
-            successful_contexts: vec![],
-            successful_context_families: vec![],
-            next_context_policy: "new context".to_owned(),
-            rationale: "weak".to_owned(),
-        }
-    }
-
-    #[test]
-    fn due_focus_becomes_single_tutor_task() {
-        let candidates = vec![TaskCandidate {
-            task_type: "fade_prompts".to_owned(),
-            learning_item_id: "li-1".to_owned(),
-            target_text: "target".to_owned(),
-            score: 90,
-            rationale: "prompt gap".to_owned(),
-            expected_evidence: "spontaneous_production".to_owned(),
-        }];
-        let tasks = build_tutor_task_queue(
-            &[focus(CapabilityKind::SpontaneousProduction, true)],
-            &candidates,
-            10,
-        );
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].action, "fade_prompts");
-        assert!(tasks[0].due_now);
-        assert_eq!(tasks[0].priority, 98);
     }
 }

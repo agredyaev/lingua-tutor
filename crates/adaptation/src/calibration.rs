@@ -1,22 +1,184 @@
 //! Deterministic intervention-effect summaries from persisted planner snapshots.
 //!
-//! Does not change policy. Reports delayed outcome deltas from persisted snapshots.
+//! This does not auto-tune policy. It exposes delayed, observable effects so
+//! thresholds and teaching methods can later be changed from evidence.
 
-use crate::{CapabilityEstimate, CapabilityKind, ItemCapabilityState, TaskCandidate};
-use serde::Serialize;
-use std::collections::{BTreeMap, BTreeSet};
+use crate::CapabilityKind;
+use serde::{Deserialize, Serialize};
 
-/// One persisted pre-lesson snapshot used for calibration.
-#[derive(Debug, Clone, PartialEq)]
-pub struct CalibrationSnapshot {
-    /// Snapshot time as Unix seconds.
-    pub at_unix: i64,
-    /// Item capability state before that lesson.
-    pub item_states: Vec<ItemCapabilityState>,
-    /// Ranked item-level actions proposed before that lesson.
-    pub task_candidates: Vec<TaskCandidate>,
+#[derive(Deserialize)]
+struct CompactEstimate {
+    #[serde(default)]
+    weighted_success_rate: Option<f64>,
+    #[serde(default)]
+    unaided_success_rate: Option<f64>,
+    #[serde(default)]
+    last_observed_at_unix: Option<i64>,
+    #[serde(default)]
+    distinct_success_families: u16,
+}
+#[derive(Deserialize)]
+struct CompactItem<'a> {
+    #[serde(borrow)]
+    learning_item_id: std::borrow::Cow<'a, str>,
+    recognition: CompactEstimate,
+    listening: CompactEstimate,
+    prompted_production: CompactEstimate,
+    spontaneous_production: CompactEstimate,
+    transfer: CompactEstimate,
+}
+#[derive(Deserialize)]
+struct CompactIntervention<'a> {
+    #[serde(borrow)]
+    action: std::borrow::Cow<'a, str>,
+    learning_item_id: std::borrow::Cow<'a, str>,
+    target_capability: std::borrow::Cow<'a, str>,
+}
+#[derive(Deserialize)]
+struct CompactOutcome<'a> {
+    #[serde(default)]
+    calibration_valid: bool,
+    #[serde(borrow, default)]
+    interventions: Vec<CompactIntervention<'a>>,
+}
+// Request-local Structure of Arrays. Compact JSON is decoded at the boundary;
+// the core pass operates only on dense u32 item/candidate IDs and column ranges.
+#[derive(Default)]
+struct CalibrationColumns<'a> {
+    snapshot_at: Vec<i64>,
+    item_end: Vec<u32>,
+    intervention_end: Vec<u32>,
+    item_key_text: Vec<std::borrow::Cow<'a, str>>,
+    item_key: Vec<u32>,
+    item_rate: Vec<Option<f64>>,
+    item_observed_at: Vec<Option<i64>>,
+    item_families: Vec<u16>,
+    item_order: Vec<u32>,
+    intervention_action: Vec<std::borrow::Cow<'a, str>>,
+    intervention_item_key: Vec<u32>,
+    intervention_capability: Vec<Option<CapabilityKind>>,
 }
 
+fn intern_item_key<'a>(columns: &mut CalibrationColumns<'a>, id: std::borrow::Cow<'a, str>) -> u32 {
+    if let Some(index) = columns
+        .item_key_text
+        .iter()
+        .position(|existing| existing.as_ref() == id.as_ref())
+    {
+        return u32::try_from(index).unwrap_or(u32::MAX);
+    }
+    let key = u32::try_from(columns.item_key_text.len()).unwrap_or(u32::MAX);
+    columns.item_key_text.push(id);
+    key
+}
+
+fn push_item(
+    columns: &mut CalibrationColumns<'_>,
+    key: u32,
+    metrics: [(Option<f64>, Option<i64>, u16); 5],
+) {
+    columns.item_key.push(key);
+    for (rate, observed_at, families) in metrics {
+        columns.item_rate.push(rate);
+        columns.item_observed_at.push(observed_at);
+        columns.item_families.push(families);
+    }
+}
+
+fn push_intervention<'a>(
+    columns: &mut CalibrationColumns<'a>,
+    action: std::borrow::Cow<'a, str>,
+    item_key: u32,
+    capability: &str,
+) {
+    columns.intervention_action.push(action);
+    columns.intervention_item_key.push(item_key);
+    columns
+        .intervention_capability
+        .push(crate::queue::evidence_capability(capability));
+}
+
+fn finish_snapshot(columns: &mut CalibrationColumns<'_>, at: i64) {
+    let item_start = columns.item_end.last().copied().unwrap_or(0);
+    // Bounded local history; exceeding u32 would require billions of decoded items.
+    let item_end = u32::try_from(columns.item_key.len()).unwrap_or(u32::MAX);
+    columns.item_order.extend(item_start..item_end);
+    columns.item_order[item_start as usize..item_end as usize].sort_unstable_by(|&a, &b| {
+        columns.item_key[a as usize]
+            .cmp(&columns.item_key[b as usize])
+            .then_with(|| a.cmp(&b))
+    });
+    columns.item_end.push(item_end);
+    columns
+        .intervention_end
+        .push(u32::try_from(columns.intervention_action.len()).unwrap_or(u32::MAX));
+    columns.snapshot_at.push(at);
+}
+
+fn append_compact_snapshot<'a>(
+    columns: &mut CalibrationColumns<'a>,
+    at: i64,
+    items_json: &'a str,
+    outcome_json: &'a str,
+) {
+    let (Ok(items), Ok(outcome)): (
+        Result<Vec<CompactItem<'a>>, _>,
+        Result<CompactOutcome<'a>, _>,
+    ) = (
+        serde_json::from_str(items_json),
+        serde_json::from_str(outcome_json),
+    ) else {
+        return;
+    };
+    for item in items {
+        let estimates = [
+            item.recognition,
+            item.listening,
+            item.prompted_production,
+            item.spontaneous_production,
+            item.transfer,
+        ];
+        let metrics = std::array::from_fn(|i| {
+            let estimate = &estimates[i];
+            (
+                if i >= 3 {
+                    estimate.unaided_success_rate
+                } else {
+                    estimate.weighted_success_rate
+                },
+                estimate.last_observed_at_unix,
+                estimate.distinct_success_families,
+            )
+        });
+        let key = intern_item_key(columns, item.learning_item_id);
+        push_item(columns, key, metrics);
+    }
+    if outcome.calibration_valid {
+        for intervention in outcome.interventions {
+            let key = intern_item_key(columns, intervention.learning_item_id);
+            push_intervention(
+                columns,
+                intervention.action,
+                key,
+                &intervention.target_capability,
+            );
+        }
+    }
+    finish_snapshot(columns, at);
+}
+
+fn find_item(columns: &CalibrationColumns<'_>, snapshot: usize, key: u32) -> Option<usize> {
+    let start = if snapshot == 0 {
+        0
+    } else {
+        columns.item_end[snapshot - 1] as usize
+    };
+    let end = columns.item_end[snapshot] as usize;
+    let ordered = &columns.item_order[start..end];
+    let upper = ordered.partition_point(|&index| columns.item_key[index as usize] <= key);
+    let index = *ordered.get(upper.checked_sub(1)?)? as usize;
+    (columns.item_key[index] == key).then_some(index)
+}
 /// Aggregated delayed effect of one intervention action.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct InterventionEffect {
@@ -40,258 +202,258 @@ pub struct InterventionEffect {
     pub transfer_family_gains: u32,
 }
 
-/// Summarizes effects between consecutive planner snapshots.
-///
-/// A pair is eligible only after `minimum_gap_seconds`, and only when the
-/// targeted item received newer evidence between the two snapshots.
+/// Calibrate directly from persisted JSON; malformed snapshots are omitted.
 #[must_use]
-pub fn summarize_intervention_effects(
-    snapshots: &[CalibrationSnapshot],
+pub fn summarize_intervention_history<'a>(
+    rows: impl IntoIterator<Item = (i64, &'a str, &'a str)>,
     minimum_gap_seconds: i64,
 ) -> Vec<InterventionEffect> {
-    #[derive(Default)]
-    struct Acc {
-        samples: u32,
-        newly_observed: u32,
-        improved: u32,
-        stable: u32,
-        declined: u32,
-        delta_sum: f64,
-        transfer_family_gains: u32,
+    let mut columns = CalibrationColumns::default();
+    for (at, items, outcome) in rows {
+        append_compact_snapshot(&mut columns, at, items, outcome);
     }
+    summarize_columns(&columns, minimum_gap_seconds)
+}
 
-    let mut ordered: Vec<&CalibrationSnapshot> = snapshots.iter().collect();
-    ordered.sort_by_key(|snapshot| snapshot.at_unix);
+// One pure accumulation pass over indexed, columnar calibration data.
+fn summarize_columns(
+    columns: &CalibrationColumns<'_>,
+    minimum_gap_seconds: i64,
+) -> Vec<InterventionEffect> {
+    let mut ordered: Vec<u32> = (0..columns.snapshot_at.len())
+        .map(|index| u32::try_from(index).unwrap_or(u32::MAX))
+        .collect();
+    ordered.sort_by_key(|&index| columns.snapshot_at[index as usize]);
 
-    let mut acc: BTreeMap<(String, CapabilityKind), Acc> = BTreeMap::new();
+    // Accumulation columns share dense u32 bucket indices. Only final results
+    // allocate owned action strings.
+    let mut action: Vec<&str> = Vec::new();
+    let mut kind: Vec<CapabilityKind> = Vec::new();
+    let mut samples: Vec<u32> = Vec::new();
+    let mut newly_observed: Vec<u32> = Vec::new();
+    let mut improved: Vec<u32> = Vec::new();
+    let mut stable: Vec<u32> = Vec::new();
+    let mut declined: Vec<u32> = Vec::new();
+    let mut delta_sum: Vec<f64> = Vec::new();
+    let mut transfer_family_gains: Vec<u32> = Vec::new();
 
     for pair in ordered.windows(2) {
-        let before = pair[0];
-        let after = pair[1];
-        if after.at_unix.saturating_sub(before.at_unix) < minimum_gap_seconds {
+        let before = pair[0] as usize;
+        let after = pair[1] as usize;
+        if columns.snapshot_at[after].saturating_sub(columns.snapshot_at[before])
+            < minimum_gap_seconds
+        {
             continue;
         }
+        let start = if before == 0 {
+            0
+        } else {
+            columns.intervention_end[before - 1] as usize
+        };
+        let end = columns.intervention_end[before] as usize;
 
-        let before_by_id: BTreeMap<&str, &ItemCapabilityState> = before
-            .item_states
-            .iter()
-            .map(|state| (state.learning_item_id.as_str(), state))
+        // Contiguous intervention IDs: O(C log C) deduplication, then replay
+        // in original order to preserve deterministic accumulation semantics.
+        let mut interventions: Vec<u32> = (start..end)
+            .filter(|&index| columns.intervention_capability[index].is_some())
+            .map(|index| u32::try_from(index).unwrap_or(u32::MAX))
             .collect();
-        let after_by_id: BTreeMap<&str, &ItemCapabilityState> = after
-            .item_states
-            .iter()
-            .map(|state| (state.learning_item_id.as_str(), state))
-            .collect();
-
-        let mut seen = BTreeSet::new();
-        for candidate in &before.task_candidates {
-            let Some(capability) = evidence_capability(&candidate.expected_evidence) else {
+        interventions.sort_unstable_by(|&a, &b| {
+            let a = a as usize;
+            let b = b as usize;
+            (
+                columns.intervention_action[a].as_ref(),
+                columns.intervention_item_key[a],
+                columns.intervention_capability[a],
+                a,
+            )
+                .cmp(&(
+                    columns.intervention_action[b].as_ref(),
+                    columns.intervention_item_key[b],
+                    columns.intervention_capability[b],
+                    b,
+                ))
+        });
+        interventions.dedup_by(|a, b| {
+            let a = *a as usize;
+            let b = *b as usize;
+            columns.intervention_action[a] == columns.intervention_action[b]
+                && columns.intervention_item_key[a] == columns.intervention_item_key[b]
+                && columns.intervention_capability[a] == columns.intervention_capability[b]
+        });
+        interventions.sort_unstable();
+        for intervention in interventions {
+            let intervention = intervention as usize;
+            let Some(capability) = columns.intervention_capability[intervention] else {
                 continue;
             };
-            if !seen.insert((
-                candidate.task_type.clone(),
-                candidate.learning_item_id.clone(),
-                capability,
-            )) {
-                continue;
-            }
-
-            let Some(before_state) = before_by_id.get(candidate.learning_item_id.as_str()) else {
+            let intervention_action = columns.intervention_action[intervention].as_ref();
+            let intervention_item = columns.intervention_item_key[intervention];
+            let (Some(before_item), Some(after_item)) = (
+                find_item(columns, before, intervention_item),
+                find_item(columns, after, intervention_item),
+            ) else {
                 continue;
             };
-            let Some(after_state) = after_by_id.get(candidate.learning_item_id.as_str()) else {
-                continue;
+            let capability_index = match capability {
+                CapabilityKind::Recognition => 0,
+                CapabilityKind::Listening => 1,
+                CapabilityKind::PromptedProduction => 2,
+                CapabilityKind::SpontaneousProduction => 3,
+                CapabilityKind::Transfer => 4,
             };
-            let before_estimate = estimate_for(before_state, capability);
-            let after_estimate = estimate_for(after_state, capability);
-
-            let before_at = before_estimate.last_observed_at_unix.unwrap_or(i64::MIN);
-            let after_at = after_estimate.last_observed_at_unix.unwrap_or(i64::MIN);
+            let before_metric = before_item * 5 + capability_index;
+            let after_metric = after_item * 5 + capability_index;
+            let before_at = columns.item_observed_at[before_metric].unwrap_or(i64::MIN);
+            let after_at = columns.item_observed_at[after_metric].unwrap_or(i64::MIN);
             if after_at <= before_at {
                 continue;
             }
 
-            let bucket = acc
-                .entry((candidate.task_type.clone(), capability))
-                .or_default();
+            let bucket = if let Some(index) =
+                action.iter().zip(&kind).position(|(name, existing)| {
+                    *name == intervention_action && *existing == capability
+                }) {
+                index
+            } else {
+                let index = action.len();
+                action.push(intervention_action);
+                kind.push(capability);
+                samples.push(0);
+                newly_observed.push(0);
+                improved.push(0);
+                stable.push(0);
+                declined.push(0);
+                delta_sum.push(0.0);
+                transfer_family_gains.push(0);
+                index
+            };
 
             if capability == CapabilityKind::Transfer {
-                bucket.transfer_family_gains =
-                    bucket.transfer_family_gains.saturating_add(u32::from(
-                        after_estimate.distinct_success_families
-                            > before_estimate.distinct_success_families,
+                transfer_family_gains[bucket] =
+                    transfer_family_gains[bucket].saturating_add(u32::from(
+                        columns.item_families[after_metric] > columns.item_families[before_metric],
                     ));
             }
-
             match (
-                comparable_rate(before_estimate, capability),
-                comparable_rate(after_estimate, capability),
+                columns.item_rate[before_metric],
+                columns.item_rate[after_metric],
             ) {
                 (Some(before_rate), Some(after_rate)) => {
                     let delta = after_rate - before_rate;
-                    bucket.samples = bucket.samples.saturating_add(1);
-                    bucket.delta_sum += delta;
+                    samples[bucket] = samples[bucket].saturating_add(1);
+                    delta_sum[bucket] += delta;
                     if delta > 0.08 {
-                        bucket.improved = bucket.improved.saturating_add(1);
+                        improved[bucket] = improved[bucket].saturating_add(1);
                     } else if delta < -0.08 {
-                        bucket.declined = bucket.declined.saturating_add(1);
+                        declined[bucket] = declined[bucket].saturating_add(1);
                     } else {
-                        bucket.stable = bucket.stable.saturating_add(1);
+                        stable[bucket] = stable[bucket].saturating_add(1);
                     }
                 }
                 (None, Some(_)) => {
-                    bucket.newly_observed = bucket.newly_observed.saturating_add(1);
+                    newly_observed[bucket] = newly_observed[bucket].saturating_add(1);
                 }
                 _ => {}
             }
         }
     }
 
-    let mut out: Vec<InterventionEffect> = acc
-        .into_iter()
-        .map(|((action, capability), bucket)| InterventionEffect {
-            action,
-            capability,
-            samples: bucket.samples,
-            newly_observed: bucket.newly_observed,
-            improved: bucket.improved,
-            stable: bucket.stable,
-            declined: bucket.declined,
-            mean_success_delta: (bucket.samples > 0)
-                .then_some(bucket.delta_sum / f64::from(bucket.samples)),
-            transfer_family_gains: bucket.transfer_family_gains,
+    let mut output: Vec<_> = (0..action.len())
+        .map(|index| InterventionEffect {
+            action: action[index].to_owned(),
+            capability: kind[index],
+            samples: samples[index],
+            newly_observed: newly_observed[index],
+            improved: improved[index],
+            stable: stable[index],
+            declined: declined[index],
+            mean_success_delta: (samples[index] > 0)
+                .then_some(delta_sum[index] / f64::from(samples[index])),
+            transfer_family_gains: transfer_family_gains[index],
         })
         .collect();
-
-    out.sort_by(|left, right| {
+    output.sort_by(|left, right| {
         let left_n = left.samples.saturating_add(left.newly_observed);
         let right_n = right.samples.saturating_add(right.newly_observed);
         right_n
             .cmp(&left_n)
             .then_with(|| right.improved.cmp(&left.improved))
             .then_with(|| left.action.cmp(&right.action))
+            // The previous BTreeMap ordered otherwise tied buckets by capability.
+            .then_with(|| left.capability.cmp(&right.capability))
     });
-    out
-}
-
-fn comparable_rate(estimate: &CapabilityEstimate, capability: CapabilityKind) -> Option<f64> {
-    match capability {
-        CapabilityKind::SpontaneousProduction | CapabilityKind::Transfer => {
-            estimate.unaided_success_rate
-        }
-        CapabilityKind::Recognition
-        | CapabilityKind::Listening
-        | CapabilityKind::PromptedProduction => estimate.weighted_success_rate,
-    }
-}
-
-fn estimate_for(state: &ItemCapabilityState, capability: CapabilityKind) -> &CapabilityEstimate {
-    match capability {
-        CapabilityKind::Recognition => &state.recognition,
-        CapabilityKind::Listening => &state.listening,
-        CapabilityKind::PromptedProduction => &state.prompted_production,
-        CapabilityKind::SpontaneousProduction => &state.spontaneous_production,
-        CapabilityKind::Transfer => &state.transfer,
-    }
-}
-
-fn evidence_capability(value: &str) -> Option<CapabilityKind> {
-    match value {
-        "recognition" => Some(CapabilityKind::Recognition),
-        "listening" => Some(CapabilityKind::Listening),
-        "prompted_production" => Some(CapabilityKind::PromptedProduction),
-        "spontaneous_production" => Some(CapabilityKind::SpontaneousProduction),
-        "transfer" => Some(CapabilityKind::Transfer),
-        _ => None,
-    }
+    output
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn estimate(rate: Option<f64>, observed_at: i64, families: u16) -> CapabilityEstimate {
-        CapabilityEstimate {
-            attempts: u32::from(rate.is_some()),
-            successes: u32::from(rate.is_some_and(|value| value >= 0.5)),
-            weighted_success_rate: rate,
-            unaided_success_rate: rate,
-            latency_weighted_millis: None,
-            qualified_success_streak: u8::from(rate.is_some_and(|value| value >= 0.5)),
-            distinct_success_contexts: families,
-            distinct_success_families: families,
-            successful_contexts: vec![],
-            successful_context_families: vec![],
-            evidence_strength: 0.8,
-            last_observed_at_unix: rate.map(|_| observed_at),
-            last_observed_success: rate.map(|value| value >= 0.5),
-            last_observed_qualified_success: rate.map(|value| value >= 0.5),
-        }
-    }
-
-    fn state(rate: Option<f64>, observed_at: i64) -> ItemCapabilityState {
-        ItemCapabilityState {
-            learning_item_id: "li-1".to_owned(),
-            target_text: "target".to_owned(),
-            status: "learning".to_owned(),
-            recognition: CapabilityEstimate::default(),
-            listening: CapabilityEstimate::default(),
-            prompted_production: CapabilityEstimate::default(),
-            spontaneous_production: estimate(rate, observed_at, 0),
-            transfer: CapabilityEstimate::default(),
-        }
-    }
-
-    fn candidate() -> TaskCandidate {
-        TaskCandidate {
-            task_type: "fade_prompts".to_owned(),
-            learning_item_id: "li-1".to_owned(),
-            target_text: "target".to_owned(),
-            score: 90,
-            rationale: "gap".to_owned(),
-            expected_evidence: "spontaneous_production".to_owned(),
-        }
-    }
+    const EMPTY: &str = r#"[
+      {
+        "learning_item_id":"li-1",
+        "recognition":{},
+        "listening":{},
+        "prompted_production":{},
+        "spontaneous_production":{"unaided_success_rate":0.4,"last_observed_at_unix":10},
+        "transfer":{}
+      }
+    ]"#;
+    const IMPROVED: &str = r#"[
+      {
+        "learning_item_id":"li-1",
+        "recognition":{},
+        "listening":{},
+        "prompted_production":{},
+        "spontaneous_production":{"unaided_success_rate":0.8,"last_observed_at_unix":30},
+        "transfer":{}
+      }
+    ]"#;
+    const OUTCOME: &str = r#"{
+      "calibration_valid":true,
+      "interventions":[
+        {"action":"fade_prompts","learning_item_id":"li-1","target_capability":"spontaneous_production"}
+      ]
+    }"#;
 
     #[test]
-    fn delayed_improvement_is_counted() {
-        let snapshots = vec![
-            CalibrationSnapshot {
-                at_unix: 0,
-                item_states: vec![state(Some(0.3), 0)],
-                task_candidates: vec![candidate()],
-            },
-            CalibrationSnapshot {
-                at_unix: 10 * 60 * 60,
-                item_states: vec![state(Some(0.8), 10 * 60 * 60)],
-                task_candidates: vec![],
-            },
-        ];
-        let effects = summarize_intervention_effects(&snapshots, 6 * 60 * 60);
+    fn compact_history_detects_improvement() {
+        let rows = [(0, EMPTY, OUTCOME), (30_000, IMPROVED, "{}")];
+        let effects = summarize_intervention_history(rows, 21_600);
         assert_eq!(effects.len(), 1);
+        assert_eq!(effects[0].action, "fade_prompts");
+        assert_eq!(effects[0].capability, CapabilityKind::SpontaneousProduction);
         assert_eq!(effects[0].samples, 1);
         assert_eq!(effects[0].improved, 1);
-        assert!(
-            effects[0]
-                .mean_success_delta
-                .is_some_and(|delta| delta > 0.4)
-        );
+        assert_eq!(effects[0].mean_success_delta, Some(0.4));
     }
 
     #[test]
-    fn same_session_change_is_not_used_for_calibration() {
-        let snapshots = vec![
-            CalibrationSnapshot {
-                at_unix: 0,
-                item_states: vec![state(Some(0.3), 0)],
-                task_candidates: vec![candidate()],
-            },
-            CalibrationSnapshot {
-                at_unix: 60,
-                item_states: vec![state(Some(0.8), 60)],
-                task_candidates: vec![],
-            },
-        ];
-        assert!(summarize_intervention_effects(&snapshots, 6 * 60 * 60).is_empty());
+    fn planned_candidates_without_actual_intervention_do_not_calibrate() {
+        let no_actual = r#"{"calibration_valid":true,"interventions":[]}"#;
+        let rows = [(0, EMPTY, no_actual), (30_000, IMPROVED, "{}")];
+        assert!(summarize_intervention_history(rows, 21_600).is_empty());
+    }
+
+    #[test]
+    fn measurement_invalid_lesson_does_not_calibrate() {
+        let invalid = r#"{
+          "calibration_valid":false,
+          "interventions":[
+            {"action":"fade_prompts","learning_item_id":"li-1","target_capability":"spontaneous_production"}
+          ]
+        }"#;
+        let rows = [(0, EMPTY, invalid), (30_000, IMPROVED, "{}")];
+        assert!(summarize_intervention_history(rows, 21_600).is_empty());
+    }
+
+    #[test]
+    fn malformed_or_too_close_snapshots_are_ignored() {
+        let malformed = [(0, "{", OUTCOME), (30_000, IMPROVED, "{}")];
+        assert!(summarize_intervention_history(malformed, 21_600).is_empty());
+
+        let close = [(0, EMPTY, OUTCOME), (100, IMPROVED, "{}")];
+        assert!(summarize_intervention_history(close, 21_600).is_empty());
     }
 }

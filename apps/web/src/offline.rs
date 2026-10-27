@@ -78,10 +78,8 @@ fn read(key: &str) -> Option<String> {
     storage().and_then(|s| s.get_item(key).ok().flatten())
 }
 
-fn write(key: &str, value: &str) {
-    if let Some(s) = storage() {
-        let _ = s.set_item(key, value);
-    }
+fn write(key: &str, value: &str) -> bool {
+    storage().is_some_and(|s| s.set_item(key, value).is_ok())
 }
 
 /// Currently queued offline events, oldest first.
@@ -94,10 +92,7 @@ pub fn pending_events() -> Vec<PendingEvent> {
 #[must_use]
 pub fn queue_event(event: PendingEvent) -> bool {
     match pure::append(pending_events(), event) {
-        Ok(queue) => {
-            write(EVENTS_KEY, &pure::serialize(&queue));
-            true
-        }
+        Ok(queue) => write(EVENTS_KEY, &pure::serialize(&queue)),
         Err(()) => false,
     }
 }
@@ -153,7 +148,10 @@ pub async fn replay() -> ReplayReport {
             Err(ApiError::Api { code, .. }) if code == "conflict_stale_state" => {
                 let mut conflicts = pure::parse_queue(read(CONFLICTS_KEY));
                 conflicts.push(queue.remove(0));
-                write(CONFLICTS_KEY, &pure::serialize(&conflicts));
+                if !write(CONFLICTS_KEY, &pure::serialize(&conflicts)) {
+                    report.interrupted = true;
+                    break;
+                }
                 report.conflicts += 1;
             }
             Err(ApiError::Api { .. } | ApiError::Decode(_)) => {
@@ -161,7 +159,10 @@ pub async fn replay() -> ReplayReport {
                 // handled above; validation errors): keep for audit, move on.
                 let mut conflicts = pure::parse_queue(read(CONFLICTS_KEY));
                 conflicts.push(queue.remove(0));
-                write(CONFLICTS_KEY, &pure::serialize(&conflicts));
+                if !write(CONFLICTS_KEY, &pure::serialize(&conflicts)) {
+                    report.interrupted = true;
+                    break;
+                }
                 report.conflicts += 1;
             }
             Err(ApiError::Network(_)) => {

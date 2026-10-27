@@ -1,8 +1,8 @@
 //! Versioned tutor lesson-result and card-mutation schemas + validation
 //! (07-tutor-contract.md §2–3). Schema and bounds checking only — no
-//! business logic; applying results is `application`'s job.
+//! business logic; applying results is the native lesson-completion pass's job.
 //!
-//! Untrusted-input boundary: payloads arrive as pasted ChatGPT
+//! This is the untrusted-input boundary: payloads arrive as pasted ChatGPT
 //! output. Parsing/validation must never panic (fuzzed in `fuzz/`).
 
 mod validate;
@@ -14,7 +14,26 @@ use learning_core::{CoreErrorCategory, EvidenceKind, LearningItemStatus, Learnin
 use serde::{Deserialize, Serialize};
 
 /// Supported lesson-result schema version.
-pub const SCHEMA_VERSION: &str = "1";
+pub const SCHEMA_VERSION: &str = "2";
+
+/// Stable database/wire ID for the v1 communicative-task rubric.
+pub const COMMUNICATIVE_TASK_SUCCESS_RUBRIC_V1: &str = "goal_completed_without_target_model_v1";
+
+/// Closed communicative-task success rubric.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommunicativeTaskRubric {
+    /// The original communicative goal is achieved without a prior target-utterance model.
+    #[serde(rename = "goal_completed_without_target_model_v1")]
+    GoalAchievementV1,
+}
+
+/// Stable rubric ID for persistence and planner filtering.
+#[must_use]
+pub const fn communicative_task_rubric_id(value: CommunicativeTaskRubric) -> &'static str {
+    match value {
+        CommunicativeTaskRubric::GoalAchievementV1 => COMMUNICATIVE_TASK_SUCCESS_RUBRIC_V1,
+    }
+}
 
 /// Hard size bounds (07-tutor-contract.md §2 "schema- and size-bounded").
 pub mod bounds {
@@ -22,6 +41,8 @@ pub mod bounds {
     pub const MAX_NEW_ITEMS: usize = 50;
     /// Max evidence entries.
     pub const MAX_EVIDENCE: usize = 200;
+    /// Max pedagogically significant interventions actually applied.
+    pub const MAX_INTERVENTIONS: usize = 100;
     /// Max error occurrences.
     pub const MAX_ERROR_OCCURRENCES: usize = 50;
     /// Max listening attempts.
@@ -79,6 +100,9 @@ pub struct LessonResult {
     /// Evidence observed this lesson.
     #[serde(default)]
     pub evidence: Vec<EvidenceEntry>,
+    /// Pedagogically significant interventions actually applied this lesson.
+    #[serde(default)]
+    pub interventions: Vec<InterventionEvent>,
     /// Errors observed this lesson.
     #[serde(default)]
     pub error_occurrences: Vec<ErrorOccurrenceEntry>,
@@ -135,6 +159,15 @@ pub struct MetricsBlock {
     /// Long pauses observed.
     #[serde(default)]
     pub long_pause_count: u32,
+    /// Explicit communicative tasks attempted during the lesson.
+    #[serde(default)]
+    pub task_attempt_count: u32,
+    /// Communicative tasks completed successfully under the declared rubric.
+    #[serde(default)]
+    pub task_success_count: u32,
+    /// Versioned rubric used to score communicative task success.
+    #[serde(default)]
+    pub task_success_rubric: Option<CommunicativeTaskRubric>,
     /// Tutor-estimated confidence 0..=1.
     #[serde(default)]
     pub confidence: Option<f64>,
@@ -173,6 +206,17 @@ pub enum ProbePhase {
     Transfer,
 }
 
+/// Stable database encoding for a probe phase.
+#[must_use]
+pub const fn probe_phase_id(value: ProbePhase) -> &'static str {
+    match value {
+        ProbePhase::Diagnostic => "diagnostic",
+        ProbePhase::Practice => "practice",
+        ProbePhase::DelayedRetrieval => "delayed_retrieval",
+        ProbePhase::Transfer => "transfer",
+    }
+}
+
 /// One evidence observation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -202,6 +246,12 @@ pub struct EvidenceEntry {
     /// Where this probe occurred in the learning cycle.
     #[serde(default)]
     pub probe_phase: Option<ProbePhase>,
+    /// Whether production was intelligible without a pronunciation-driven repeat.
+    #[serde(default)]
+    pub pronunciation_intelligible: Option<bool>,
+    /// Whether a repeat was required specifically because of pronunciation.
+    #[serde(default)]
+    pub pronunciation_repeat_required: Option<bool>,
     /// Free-form detail.
     #[serde(default)]
     pub detail: Option<String>,
@@ -216,6 +266,9 @@ pub struct ErrorOccurrenceEntry {
     pub error_target_id: Option<String>,
     /// Core category (closed set).
     pub core_category: CoreErrorCategory,
+    /// Communicative impact used by deterministic escalation policy.
+    #[serde(default)]
+    pub communicative_impact: learning_core::CommunicativeImpact,
     /// Stable pack taxonomy code.
     #[serde(default)]
     pub pack_error_code: Option<String>,
@@ -240,12 +293,52 @@ pub struct ListeningAttemptEntry {
     pub client_item_key: Option<String>,
     /// Outcome.
     pub success: bool,
+    /// Assistance level: 0 = unaided, 1 = generic cue, 2 = targeted cue, 3 = model/reveal.
+    #[serde(default)]
+    pub assistance_level: Option<u8>,
+    /// Observed comprehension/response latency in milliseconds.
+    #[serde(default)]
+    pub response_millis: Option<u32>,
+    /// Where this listening probe occurred in the learning cycle.
+    #[serde(default)]
+    pub probe_phase: Option<ProbePhase>,
     /// Reference into lesson material.
     #[serde(default)]
     pub source_reference: Option<String>,
+    /// Stable variant ID for the acoustic realization (no audio stored).
+    #[serde(default)]
+    pub source_variant_id: Option<String>,
+    /// Stable anonymized talker/voice key when known.
+    #[serde(default)]
+    pub talker_key: Option<String>,
+    /// Controlled listening context tag when known.
+    #[serde(default)]
+    pub context_tag: Option<String>,
     /// What was heard/said, as text.
     #[serde(default)]
     pub transcript: Option<String>,
+}
+
+/// One pedagogically significant intervention actually applied during the lesson.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InterventionEvent {
+    /// Stable intervention/action code, for example fade_prompts.
+    pub action: String,
+    /// Existing learning item. Exactly one of this or client_item_key is required.
+    #[serde(default)]
+    pub learning_item_id: Option<String>,
+    /// Lesson-local key of a newly introduced item.
+    #[serde(default)]
+    pub client_item_key: Option<String>,
+    /// Capability the intervention intended to improve.
+    pub target_capability: EvidenceKind,
+    /// Optional immediate outcome in LessonResult.evidence.
+    #[serde(default)]
+    pub evidence_index: Option<u16>,
+    /// Optional immediate outcome in LessonResult.listening_attempts.
+    #[serde(default)]
+    pub listening_attempt_index: Option<u16>,
 }
 
 /// Tutor-proposed item status change; server re-checks against mastery rules.

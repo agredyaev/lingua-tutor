@@ -7,10 +7,10 @@ use tutor_contract::{MutationOperation, bounds, parse_lesson_result, validate};
 
 fn spec_fixture() -> String {
     // 07-tutor-contract.md §2 example, concretized (core_category uses the
-    // core closed set; the spec's "verb_form" is illustrative — specificity
+    // core closed set; language-specific specificity belongs in pack_error_code
     // lives in pack_error_code).
     serde_json::json!({
-      "schema_version": "1",
+      "schema_version": "2",
       "client_operation_id": "op_01J5",
       "language_profile_id": "llp_01J5",
       "language_pack_id": "es-ES",
@@ -28,13 +28,22 @@ fn spec_fixture() -> String {
       "new_learning_items": [ { "item_type": "phrase", "target_text": "¿Tiene algo para la tos?",
                                 "prompt_text": "Спросите что-нибудь от кашля", "prompt_language": "ru" } ],
       "evidence": [ { "learning_item_id": "phr_01J5", "kind": "spontaneous_production",
-                      "success": true, "detail": null } ],
+                      "success": true, "context": "pharmacy:ask-remedy",
+                      "assistance_level": 0, "response_millis": 1800,
+                      "probe_phase": "diagnostic",
+                      "pronunciation_intelligible": true,
+                      "pronunciation_repeat_required": false, "detail": null } ],
+      "interventions": [ { "action": "fade_prompts", "learning_item_id": "phr_01J5",
+                           "target_capability": "spontaneous_production",
+                           "evidence_index": 0 } ],
       "error_occurrences": [ { "error_target_id": null,
                                "core_category": "grammar", "pack_error_code": "es.verb.ser_estar",
                                "original_production": "estoy médico",
                                "corrected_production": "soy médico",
                                "explanation": "Profession takes ser." } ],
       "listening_attempts": [ { "learning_item_id": "phr_01J5", "success": false,
+                                "assistance_level": 0, "response_millis": 1600,
+                                "probe_phase": "diagnostic", "context_tag": "pharmacy:question",
                                 "source_reference": "lesson-audio-3", "transcript": "¿tiene algo…?" } ],
       "mastery_changes": [ { "learning_item_id": "phr_01J5", "new_status": "provisionally_mastered" } ],
       "card_mutations": [ { "operation": "create", "client_operation_id": "op_01J5x",
@@ -69,6 +78,42 @@ fn spec_example_parses_and_validates_clean() {
 }
 
 #[test]
+fn communicative_task_counts_require_known_success_rubric() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    {
+        let metrics = result.metrics.as_mut().unwrap();
+        metrics.task_attempt_count = 2;
+        metrics.task_success_count = 1;
+        metrics.task_success_rubric = None;
+    }
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.path == "metrics/task_success_rubric" && issue.code == "missing_field"
+    }));
+
+    result.metrics.as_mut().unwrap().task_success_rubric =
+        Some(tutor_contract::CommunicativeTaskRubric::GoalAchievementV1);
+    let issues = validate(&result);
+    assert!(
+        !issues
+            .iter()
+            .any(|issue| issue.path == "metrics/task_success_rubric")
+    );
+}
+
+#[test]
+fn communicative_task_counts_require_explicit_rubric() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    let metrics = result.metrics.as_mut().unwrap();
+    metrics.task_attempt_count = 2;
+    metrics.task_success_count = 1;
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.code == "missing_field" && issue.path == "metrics/task_success_rubric"
+    }));
+}
+
+#[test]
 fn unknown_fields_rejected() {
     let json = spec_fixture().replace("\"schema_version\"", "\"evil_extra\":1,\"schema_version\"");
     assert!(parse_lesson_result(&json).is_err());
@@ -76,7 +121,7 @@ fn unknown_fields_rejected() {
 
 #[test]
 fn wrong_schema_version_flagged() {
-    let json = spec_fixture().replace("\"schema_version\":\"1\"", "\"schema_version\":\"9\"");
+    let json = spec_fixture().replace("\"schema_version\":\"2\"", "\"schema_version\":\"9\"");
     let result = parse_lesson_result(&json).unwrap();
     let issues = validate(&result);
     assert!(
@@ -166,6 +211,8 @@ fn same_lesson_client_item_reference_validates() {
     result.evidence[0].learning_item_id = None;
     result.evidence[0].client_item_key = Some("new-cough".to_owned());
     result.evidence[0].context = Some("pharmacy:ask-for-remedy".to_owned());
+    result.interventions[0].learning_item_id = None;
+    result.interventions[0].client_item_key = Some("new-cough".to_owned());
     let issues = validate(&result);
     assert!(issues.is_empty(), "unexpected issues: {issues:?}");
 }
@@ -215,5 +262,41 @@ fn prompted_production_cannot_be_marked_unaided() {
     let issues = validate(&result);
     assert!(issues.iter().any(|issue| {
         issue.code == "inconsistent_evidence" && issue.path == "evidence/0/assistance_level"
+    }));
+}
+
+#[test]
+fn selected_probe_measurements_are_mandatory() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    result.evidence[0].response_millis = None;
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.code == "missing_metric" && issue.path == "evidence/0/response_millis"
+    }));
+}
+
+#[test]
+fn lesson_requires_two_measured_diagnostic_probes() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    result.listening_attempts[0].probe_phase = Some(tutor_contract::ProbePhase::Practice);
+    let issues = validate(&result);
+    assert!(
+        issues
+            .iter()
+            .any(|issue| { issue.code == "insufficient_measurement_coverage" })
+    );
+}
+
+#[test]
+fn production_probe_requires_pronunciation_signals() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    result.evidence[0].pronunciation_intelligible = None;
+    result.evidence[0].pronunciation_repeat_required = None;
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.path == "evidence/0/pronunciation_intelligible" && issue.code == "missing_metric"
+    }));
+    assert!(issues.iter().any(|issue| {
+        issue.path == "evidence/0/pronunciation_repeat_required" && issue.code == "missing_metric"
     }));
 }

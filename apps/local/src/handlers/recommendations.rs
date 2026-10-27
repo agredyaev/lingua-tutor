@@ -1,51 +1,8 @@
 //! Recommendation operations and persistence helper.
 
-use crate::api::{new_id, now};
-use crate::repositories::{recommendations as repo, to_rfc3339};
+use crate::repositories::recommendations as repo;
 use crate::{Env, Result};
-use adaptation::Recommendation;
-use rusqlite::{OptionalExtension as _, params};
-
-/// Persists recommendations, skipping ones already open for the same
-/// subject + action (no spam on every session).
-pub fn insert_all(
-    connection: &rusqlite::Connection,
-    profile_id: &str,
-    recommendations: &[Recommendation],
-) -> Result<u32> {
-    let mut inserted = 0;
-    for recommendation in recommendations {
-        let duplicate: Option<String> = connection
-            .query_row(
-                repo::SELECT_OPEN_DUPLICATE,
-                params![
-                    profile_id,
-                    recommendation.subject_type,
-                    recommendation.subject_id,
-                    recommendation.action,
-                ],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if duplicate.is_some() {
-            continue;
-        }
-        connection.execute(
-            repo::INSERT,
-            params![
-                new_id("rec"),
-                profile_id,
-                recommendation.subject_type,
-                recommendation.subject_id,
-                recommendation.action,
-                serde_json::json!({ "detail": recommendation.detail }).to_string(),
-                to_rfc3339(now()),
-            ],
-        )?;
-        inserted += 1;
-    }
-    Ok(inserted)
-}
+use rusqlite::params;
 
 pub(crate) fn list_for(env: &Env, profile_id: &str) -> Result<serde_json::Value> {
     let connection = env.connection()?;
@@ -62,20 +19,6 @@ pub(crate) fn list_for(env: &Env, profile_id: &str) -> Result<serde_json::Value>
     })?;
     let rows = rows.collect::<rusqlite::Result<Vec<_>>>()?;
     crate::json(&rows)
-}
-
-/// Resolve a recommendation as accepted or dismissed.
-pub(crate) fn resolve(
-    env: &Env,
-    recommendation_id: &str,
-    status: &str,
-) -> Result<serde_json::Value> {
-    let connection = env.connection()?;
-    connection.execute(
-        repo::UPDATE_STATUS,
-        params![recommendation_id, status, to_rfc3339(now())],
-    )?;
-    crate::json(&serde_json::json!({ "id": recommendation_id, "status": status }))
 }
 
 pub(crate) fn redesign_candidates_for(env: &Env, profile_id: &str) -> Result<serde_json::Value> {

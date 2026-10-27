@@ -28,8 +28,7 @@ flowchart LR
     L -->|outbound MCP tunnel| T
 ```
 
-One local application owns the PWA assets, browser JSON-RPC boundary, in-process MCP dispatch, OpenAI Secure MCP Tunnel transport, and SQLite access.
-The application has no remote application server, remote database, authentication service, or deployment environment.
+One local application owns the PWA assets, browser JSON-RPC boundary, in-process MCP dispatch, secure tunnel transport, and SQLite access. There is no application server, database, authentication service, or deployment environment outside the machine.
 
 ## 2. Trust boundaries
 
@@ -40,7 +39,7 @@ The application has no remote application server, remote database, authenticatio
 | 3 | Database | One local SQLite database; only the local runtime opens it for application traffic. |
 | 4 | Review | review-engine has no network or language behavior. |
 | 5 | Plugin | Language packs receive bounded typed inputs; no storage or network access. |
-| 6 | ChatGPT | Access uses the in-process OpenAI Secure MCP Tunnel. Tunnel credentials exist only for the process lifetime and are not persisted. |
+| 6 | ChatGPT | Access is only through the in-process secure MCP tunnel; tunnel credentials are session-only and never persisted. |
 | 7 | Repository | Code and schema only; never runtime secrets or database copies. |
 
 ## 3. Binding decisions

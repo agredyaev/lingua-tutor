@@ -139,7 +139,7 @@ pub struct DashboardDto {
     pub next_lesson_goal: Option<String>,
     /// Item counts by status.
     pub items_by_status: BTreeMap<String, u32>,
-    /// Pending recommendations, newest first.
+    /// Open adaptive recommendations (detail lines, newest first).
     #[serde(default)]
     pub open_recommendations: Vec<String>,
 }

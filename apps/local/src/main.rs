@@ -75,6 +75,9 @@ async fn run_project(args: Vec<String>) -> Result<(), String> {
     let paths = ProjectPaths::from_current_dir()?;
     let first_run = !paths.db.is_file();
     ensure_initialized(&paths)?;
+    if !first_run {
+        storage::backup_if_due(&paths.db)?;
+    }
     let env = storage::environment(&paths.db)?;
     let registry = Arc::new(built_in_language_packs().map_err(|error| error.to_string())?);
 
@@ -233,6 +236,8 @@ fn print_help() {
 }
 
 #[cfg(test)]
+// Test fixtures intentionally fail fast and use compact tuple snapshots.
+#[allow(clippy::unwrap_used, clippy::type_complexity)]
 mod tests {
     use super::*;
     use std::path::Path;

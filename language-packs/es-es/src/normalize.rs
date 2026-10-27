@@ -1,5 +1,5 @@
 //! Spanish (Spain) normalization + matching policy (06-language-packs.md §7,
-//! WBS 7.1). Uses character operations; no regex or ICU dependency.
+//! WBS 7.1). Plain char ops, single pass where possible — no regex/ICU
 //! (09-frontend.md §9 size rule; 16-rust-guidelines.md §5).
 
 /// Canonical stored form: trimmed, single-spaced, case/diacritics/¿¡ kept.

@@ -10,8 +10,11 @@ use std::time::{Duration, SystemTime};
 
 const INIT: &str = include_str!("../migrations/0001_init.sql");
 const MIGRATION_2: &str = include_str!("../migrations/0002_planner_history.sql");
-const SCHEMA_VERSION: i64 = 2;
-const SCHEMA_NAME: &str = "0002_planner_history.sql";
+const MIGRATION_3: &str = include_str!("../migrations/0003_review_methodology.sql");
+const MIGRATION_4: &str = include_str!("../migrations/0004_methodology_calibration.sql");
+const MIGRATION_5: &str = include_str!("../migrations/0005_methodology_semantics.sql");
+const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_NAME: &str = "0005_methodology_semantics.sql";
 
 fn private_dir(path: &Path) -> Result<(), String> {
     let mut builder = DirBuilder::new();
@@ -51,8 +54,26 @@ fn initialize(connection: &Connection) -> Result<(), String> {
         .and_then(|_| connection.execute_batch(MIGRATION_2))
         .and_then(|_| {
             connection.execute_batch(
-                "INSERT INTO schema_migrations(id,name) VALUES (2,'0002_planner_history.sql');
-                 PRAGMA user_version=2;
+                "INSERT INTO schema_migrations(id,name) VALUES (2,'0002_planner_history.sql');",
+            )
+        })
+        .and_then(|_| connection.execute_batch(MIGRATION_3))
+        .and_then(|_| {
+            connection.execute_batch(
+                "INSERT INTO schema_migrations(id,name) VALUES (3,'0003_review_methodology.sql');",
+            )
+        })
+        .and_then(|_| connection.execute_batch(MIGRATION_4))
+        .and_then(|_| {
+            connection.execute_batch(
+                "INSERT INTO schema_migrations(id,name) VALUES (4,'0004_methodology_calibration.sql');",
+            )
+        })
+        .and_then(|_| connection.execute_batch(MIGRATION_5))
+        .and_then(|_| {
+            connection.execute_batch(
+                "INSERT INTO schema_migrations(id,name) VALUES (5,'0005_methodology_semantics.sql');
+                 PRAGMA user_version=5;
                  COMMIT;",
             )
         });
@@ -81,6 +102,60 @@ fn migrate_v1_to_v2(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn migrate_v2_to_v3(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch("BEGIN IMMEDIATE;")
+        .map_err(|e| e.to_string())?;
+    let result = connection.execute_batch(MIGRATION_3).and_then(|_| {
+        connection.execute_batch(
+            "INSERT INTO schema_migrations(id,name) VALUES (3,'0003_review_methodology.sql');
+             PRAGMA user_version=3;
+             COMMIT;",
+        )
+    });
+    if let Err(error) = result {
+        let _ = connection.execute_batch("ROLLBACK");
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+fn migrate_v3_to_v4(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch("BEGIN IMMEDIATE;")
+        .map_err(|e| e.to_string())?;
+    let result = connection.execute_batch(MIGRATION_4).and_then(|_| {
+        connection.execute_batch(
+            "INSERT INTO schema_migrations(id,name) VALUES (4,'0004_methodology_calibration.sql');
+             PRAGMA user_version=4;
+             COMMIT;",
+        )
+    });
+    if let Err(error) = result {
+        let _ = connection.execute_batch("ROLLBACK");
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+fn migrate_v4_to_v5(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch("BEGIN IMMEDIATE;")
+        .map_err(|e| e.to_string())?;
+    let result = connection.execute_batch(MIGRATION_5).and_then(|_| {
+        connection.execute_batch(
+            "INSERT INTO schema_migrations(id,name) VALUES (5,'0005_methodology_semantics.sql');
+             PRAGMA user_version=5;
+             COMMIT;",
+        )
+    });
+    if let Err(error) = result {
+        let _ = connection.execute_batch("ROLLBACK");
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
 /// Open a fresh or existing local SQLite database. Unknown schemas fail closed.
 pub fn open(path: &Path) -> Result<Connection, String> {
     private_dir(path.parent().ok_or("database path has no parent")?)?;
@@ -100,7 +175,22 @@ pub fn open(path: &Path) -> Result<Connection, String> {
 
     match (version, has_schema) {
         (0, false) => initialize(&connection)?,
-        (1, true) => migrate_v1_to_v2(&connection)?,
+        (1, true) => {
+            migrate_v1_to_v2(&connection)?;
+            migrate_v2_to_v3(&connection)?;
+            migrate_v3_to_v4(&connection)?;
+            migrate_v4_to_v5(&connection)?;
+        }
+        (2, true) => {
+            migrate_v2_to_v3(&connection)?;
+            migrate_v3_to_v4(&connection)?;
+            migrate_v4_to_v5(&connection)?;
+        }
+        (3, true) => {
+            migrate_v3_to_v4(&connection)?;
+            migrate_v4_to_v5(&connection)?;
+        }
+        (4, true) => migrate_v4_to_v5(&connection)?,
         (SCHEMA_VERSION, true) => {
             let name: String = connection
                 .query_row(
@@ -209,7 +299,12 @@ pub fn backup(path: &Path) -> Result<PathBuf, String> {
     let copy = Connection::open(&target).map_err(|e| e.to_string())?;
     copy.execute_batch("PRAGMA foreign_keys=ON")
         .map_err(|e| e.to_string())?;
-    validate(&copy)?;
+    if let Err(error) = validate(&copy) {
+        drop(copy);
+        let _ = fs::remove_file(&target);
+        return Err(error);
+    }
+    drop(copy);
 
     let cutoff = SystemTime::now() - Duration::from_secs(90 * 24 * 60 * 60);
     for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
@@ -231,8 +326,40 @@ pub fn backup(path: &Path) -> Result<PathBuf, String> {
     Ok(target)
 }
 
+/// Create a consistent snapshot on startup if no verified backup was made recently.
+/// File metadata is sufficient here because backups are only published after validation.
+pub fn backup_if_due(path: &Path) -> Result<Option<PathBuf>, String> {
+    let dir = path
+        .parent()
+        .ok_or("database path has no parent")?
+        .join("backups");
+    let now = SystemTime::now();
+    if dir.is_dir() {
+        for entry in fs::read_dir(&dir).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with("lingua-")
+                && name.ends_with(".sqlite3")
+                && entry.file_type().map_err(|e| e.to_string())?.is_file()
+                && entry
+                    .metadata()
+                    .map_err(|e| e.to_string())?
+                    .modified()
+                    .ok()
+                    .and_then(|at| now.duration_since(at).ok())
+                    .is_some_and(|age| age < Duration::from_secs(24 * 60 * 60))
+            {
+                return Ok(None);
+            }
+        }
+    }
+    backup(path).map(Some)
+}
+
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+// Test fixtures intentionally fail fast and use compact tuple snapshots.
+#[allow(clippy::unwrap_used, clippy::type_complexity)]
 mod tests {
     use super::*;
 
@@ -274,7 +401,63 @@ mod tests {
     }
 
     #[test]
-    fn migrates_v1_database_to_v2() {
+    fn verified_backup_restores_application_state_after_database_loss() {
+        let dir = std::env::temp_dir().join(format!("lingua-restore-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("lingua.sqlite3");
+        let connection = open(&path).unwrap();
+        connection
+            .execute(
+                "INSERT INTO learner_profile(id,created_at,updated_at)
+                 VALUES('learner-restore','2026-10-23T12:00:00Z','2026-10-23T12:00:00Z')",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let saved = backup(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::copy(&saved, &path).unwrap();
+
+        let restored = open(&path).unwrap();
+        validate(&restored).unwrap();
+        let learner_id: String = restored
+            .query_row(
+                "SELECT id FROM learner_profile WHERE id='learner-restore'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(learner_id, "learner-restore");
+
+        drop(restored);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn startup_backup_is_created_once_per_day() {
+        let dir = std::env::temp_dir().join(format!("lingua-auto-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("lingua.sqlite3");
+        let connection = open(&path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE snapshot_probe(value TEXT);
+                                   INSERT INTO snapshot_probe VALUES ('durable');",
+            )
+            .unwrap();
+        drop(connection);
+        let saved = backup_if_due(&path).unwrap().unwrap();
+        assert!(saved.is_file());
+        assert!(backup_if_due(&path).unwrap().is_none());
+        let value: String = Connection::open(saved)
+            .unwrap()
+            .query_row("SELECT value FROM snapshot_probe", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(value, "durable");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn migrates_v1_database_to_current() {
         let dir = std::env::temp_dir().join(format!("lingua-migrate-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("lingua.sqlite3");
@@ -311,9 +494,76 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 5);
         assert_eq!(table_exists, 1);
-        assert_eq!(latest, "0002_planner_history.sql");
+        assert_eq!(latest, "0005_methodology_semantics.sql");
+        drop(migrated);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn migrates_v2_database_to_current() {
+        let dir = std::env::temp_dir().join(format!("lingua-migrate-v2-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lingua.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(INIT).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_migrations(
+                    id INTEGER PRIMARY KEY,
+                    name TEXT UNIQUE NOT NULL,
+                    applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
+                 );
+                 INSERT INTO schema_migrations(id,name) VALUES (1,'0001_init.sql');",
+            )
+            .unwrap();
+        connection.execute_batch(MIGRATION_2).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO schema_migrations(id,name) VALUES (2,'0002_planner_history.sql');
+                 PRAGMA user_version=2;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let migrated = open(&path).unwrap();
+        let version: i64 = migrated
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let budget_table: i64 = migrated
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master
+                 WHERE type='table' AND name='review_daily_budget')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 5);
+        assert_eq!(budget_table, 1);
+        drop(migrated);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn migrates_v3_database_to_current() {
+        let dir = std::env::temp_dir().join(format!("lingua-migrate-v3-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lingua.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(INIT).unwrap();
+        connection.execute_batch("CREATE TABLE schema_migrations(id INTEGER PRIMARY KEY,name TEXT UNIQUE NOT NULL,applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL); INSERT INTO schema_migrations(id,name) VALUES (1,'0001_init.sql');").unwrap();
+        connection.execute_batch(MIGRATION_2).unwrap();
+        connection.execute_batch(MIGRATION_3).unwrap();
+        connection.execute_batch("INSERT INTO schema_migrations(id,name) VALUES (2,'0002_planner_history.sql'); INSERT INTO schema_migrations(id,name) VALUES (3,'0003_review_methodology.sql'); PRAGMA user_version=3;").unwrap();
+        drop(connection);
+        let migrated = open(&path).unwrap();
+        let version: i64 = migrated
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let task_column: i64 = migrated.query_row("SELECT COUNT(*) FROM pragma_table_info('lesson_metrics') WHERE name='task_success_count'", [], |row| row.get(0)).unwrap();
+        let listening_column: i64 = migrated.query_row("SELECT COUNT(*) FROM pragma_table_info('listening_attempts') WHERE name='source_variant_id'", [], |row| row.get(0)).unwrap();
+        assert_eq!(version, 5);
+        assert_eq!(task_column, 1);
+        assert_eq!(listening_column, 1);
         drop(migrated);
         fs::remove_dir_all(dir).unwrap();
     }
