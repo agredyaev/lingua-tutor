@@ -320,7 +320,7 @@ mod tests {
                 .any(|row| row.0 == "¿Tiene algo para la tos?")
         );
         assert!(state.items.iter().any(|row| row.0 == "Buenos días"));
-        assert_eq!(state.evidence.len(), 2);
+        assert_eq!(state.evidence.len(), 3);
         assert_eq!(state.errors.len(), 2);
         assert_eq!(state.rechecks.len(), 6);
         cleanup(path);
@@ -1178,11 +1178,43 @@ pub(crate) fn complete_lesson(
             source.context_tag.as_deref(),
             source.transcript.as_deref(),
             source.success,
-            source.assistance_level,
-            source.response_millis,
-            source.probe_phase.map(tutor_contract::probe_phase_id),
             &at,
         )?;
+
+        if let Some(item_id) = item_id {
+            let context_key = format!(
+                "variant={}|talker={}|context={}",
+                source.source_variant_id.as_deref().unwrap_or(""),
+                source.talker_key.as_deref().unwrap_or(""),
+                source.context_tag.as_deref().unwrap_or("")
+            );
+            let metadata = serde_json::json!({
+                "context_key": context_key,
+                "assistance_level": source.assistance_level,
+                "response_millis": source.response_millis,
+                "probe_phase": source.probe_phase
+            })
+            .to_string();
+            let order = plan
+                .evidence_len
+                .checked_add(i)
+                .and_then(|value| u32::try_from(value).ok())
+                .ok_or_else(|| {
+                    crate::Error::RustError("listening observation order overflow".to_owned())
+                })?;
+            insert_evidence(
+                &transaction,
+                &crate::api::new_id("ev"),
+                item_id,
+                &lesson_id,
+                "listening",
+                source.success,
+                None,
+                &metadata,
+                &at,
+                order,
+            )?;
+        }
     }
 
     for i in 0..plan.error_len {

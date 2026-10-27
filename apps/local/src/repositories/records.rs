@@ -99,12 +99,12 @@ pub const SELECT_DUE_RECHECKS: &str = "SELECT id, error_target_id, offset_days, 
 pub const INSERT_LISTENING_ATTEMPT: &str = "INSERT INTO listening_attempts
     (id, learner_language_profile_id, learning_item_id, lesson_id,
      source_reference, source_variant_id, talker_key, context_tag,
-     transcript, success, assistance_level, response_millis, probe_phase, recorded_at)
- VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)";
+     transcript, success, recorded_at)
+ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)";
 
 /// Profile listening attempts, newest first, bounded.
 pub const SELECT_LISTENING_ATTEMPTS: &str = "SELECT id, learner_language_profile_id,
     learning_item_id, lesson_id, source_reference, source_variant_id, talker_key, context_tag,
-    transcript, success, assistance_level, response_millis, probe_phase, recorded_at
+    transcript, success, recorded_at
  FROM listening_attempts WHERE learner_language_profile_id = ?1
  ORDER BY recorded_at DESC LIMIT ?2";

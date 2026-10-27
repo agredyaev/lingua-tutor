@@ -189,11 +189,14 @@ CREATE TABLE listening_attempts (
     context_tag                 TEXT,          -- added by 0004
     transcript                  TEXT,
     success                     INTEGER NOT NULL,
-    assistance_level            INTEGER,       -- added by 0006; 0..3 when present
-    response_millis             INTEGER,       -- added by 0006; <=600000 when present
-    probe_phase                 TEXT,          -- added by 0006; diagnostic/practice/delayed_retrieval/transfer
     recorded_at                 TEXT NOT NULL
 );
+
+Measured listening-probe assistance, latency, phase, and explicit context are stored in
+`learning_item_evidence` with `kind='listening'` and `pack_metadata_json`. The
+`listening_attempts` row remains the source/transcript record. This keeps probe
+measurement persistence on the existing evidence path instead of adding listening-only
+schema columns.
 
 CREATE TABLE cards (
     id                          TEXT PRIMARY KEY,

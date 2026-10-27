@@ -206,13 +206,11 @@ pub(crate) fn visit_item_capabilities(
                      ORDER BY e.recorded_at DESC,e.observation_order DESC,e.rowid DESC
                    ) AS rn
             FROM learning_item_evidence e JOIN selected s ON s.id=e.learning_item_id
-            WHERE e.kind NOT IN ('listening','correction')
+            WHERE e.kind != 'correction'
         ),
-        listening AS (
+        legacy_listening AS (
             SELECT l.learning_item_id,'listening' AS kind,l.success,
                    json_object(
-                     'assistance_level', l.assistance_level,
-                     'response_millis', l.response_millis,
                      'context_key',
                      CASE
                        WHEN l.source_variant_id IS NOT NULL
@@ -229,13 +227,20 @@ pub(crate) fn visit_item_capabilities(
                      ORDER BY l.recorded_at DESC,l.id DESC
                    ) AS rn
             FROM listening_attempts l JOIN selected s ON s.id=l.learning_item_id
+            WHERE NOT EXISTS (
+                SELECT 1 FROM learning_item_evidence e
+                WHERE e.learning_item_id=l.learning_item_id
+                  AND e.lesson_id=l.lesson_id
+                  AND e.kind='listening'
+                  AND e.recorded_at=l.recorded_at
+            )
         ),
         sampled AS (
             SELECT learning_item_id,kind,success,pack_metadata_json,recorded_at,id,observation_order
             FROM evidence WHERE rn<=12
             UNION ALL
             SELECT learning_item_id,kind,success,pack_metadata_json,recorded_at,id,observation_order
-            FROM listening WHERE rn<=12
+            FROM legacy_listening WHERE rn<=12
         )
         SELECT s.ord,s.id,s.target_text,s.status,
                e.kind,e.success,e.pack_metadata_json,e.recorded_at
@@ -286,7 +291,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn listening_variation_ignores_source_reference_without_explicit_metadata() {
+    fn measured_listening_evidence_coexists_with_legacy_attempts_without_double_counting() {
         let db = Connection::open_in_memory().unwrap();
         db.execute_batch(
             "CREATE TABLE learning_items(
@@ -299,6 +304,7 @@ mod tests {
              CREATE TABLE learning_item_evidence(
                 id TEXT PRIMARY KEY,
                 learning_item_id TEXT NOT NULL,
+                lesson_id TEXT,
                 kind TEXT NOT NULL,
                 success INTEGER NOT NULL,
                 pack_metadata_json TEXT,
@@ -309,22 +315,27 @@ mod tests {
                 id TEXT PRIMARY KEY,
                 learner_language_profile_id TEXT NOT NULL,
                 learning_item_id TEXT,
+                lesson_id TEXT,
                 source_reference TEXT,
                 source_variant_id TEXT,
                 talker_key TEXT,
                 context_tag TEXT,
+                transcript TEXT,
                 success INTEGER NOT NULL,
-                assistance_level INTEGER,
-                response_millis INTEGER,
-                probe_phase TEXT,
                 recorded_at TEXT NOT NULL
              );
              INSERT INTO learning_items VALUES(
                 'li-1','llp-1','hola','learning','2026-10-23T10:00:00Z'
              );
+             INSERT INTO learning_item_evidence VALUES(
+                'ev-1','li-1','les-1','listening',1,
+                json_object('assistance_level',0,'response_millis',1200,
+                            'context_key','variant=a|talker=|context=one'),
+                '2026-10-23T10:01:00Z',0
+             );
              INSERT INTO listening_attempts VALUES
-                ('la-1','llp-1','li-1','audio-a',NULL,NULL,NULL,1,0,1200,'diagnostic','2026-10-23T10:01:00Z'),
-                ('la-2','llp-1','li-1','audio-b',NULL,NULL,NULL,1,2,2400,'practice','2026-10-23T10:02:00Z');",
+                ('la-1','llp-1','li-1','les-1','audio-a','a',NULL,'one',NULL,1,'2026-10-23T10:01:00Z'),
+                ('la-legacy','llp-1','li-1','les-old','audio-b','b',NULL,'two',NULL,1,'2026-10-22T10:01:00Z');",
         )
         .unwrap();
 
@@ -338,22 +349,10 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        assert_eq!(distinct, Some(0));
-        assert_eq!(unaided, Some(1.0));
-        assert!(latency.is_some_and(|millis| (1_200..=2_400).contains(&millis)));
 
-        db.execute(
-            "UPDATE listening_attempts
-             SET source_variant_id=CASE id WHEN 'la-1' THEN 'variant-a' ELSE 'variant-b' END",
-            [],
-        )
-        .unwrap();
-        visit_item_capabilities(&db, "llp-1", 1_761_213_000, |item| {
-            distinct = Some(item.listening.distinct_success_contexts);
-            Ok(())
-        })
-        .unwrap();
         assert_eq!(distinct, Some(2));
+        assert_eq!(unaided, Some(1.0));
+        assert_eq!(latency, Some(1_200));
     }
 
     #[test]

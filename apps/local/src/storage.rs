@@ -13,9 +13,8 @@ const MIGRATION_2: &str = include_str!("../migrations/0002_planner_history.sql")
 const MIGRATION_3: &str = include_str!("../migrations/0003_review_methodology.sql");
 const MIGRATION_4: &str = include_str!("../migrations/0004_methodology_calibration.sql");
 const MIGRATION_5: &str = include_str!("../migrations/0005_methodology_semantics.sql");
-const MIGRATION_6: &str = include_str!("../migrations/0006_probe_measurements.sql");
-const SCHEMA_VERSION: i64 = 6;
-const SCHEMA_NAME: &str = "0006_probe_measurements.sql";
+const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_NAME: &str = "0005_methodology_semantics.sql";
 
 fn private_dir(path: &Path) -> Result<(), String> {
     let mut builder = DirBuilder::new();
@@ -73,14 +72,8 @@ fn initialize(connection: &Connection) -> Result<(), String> {
         .and_then(|_| connection.execute_batch(MIGRATION_5))
         .and_then(|_| {
             connection.execute_batch(
-                "INSERT INTO schema_migrations(id,name) VALUES (5,'0005_methodology_semantics.sql');",
-            )
-        })
-        .and_then(|_| connection.execute_batch(MIGRATION_6))
-        .and_then(|_| {
-            connection.execute_batch(
-                "INSERT INTO schema_migrations(id,name) VALUES (6,'0006_probe_measurements.sql');
-                 PRAGMA user_version=6;
+                "INSERT INTO schema_migrations(id,name) VALUES (5,'0005_methodology_semantics.sql');
+                 PRAGMA user_version=5;
                  COMMIT;",
             )
         });
@@ -163,24 +156,6 @@ fn migrate_v4_to_v5(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-fn migrate_v5_to_v6(connection: &Connection) -> Result<(), String> {
-    connection
-        .execute_batch("BEGIN IMMEDIATE;")
-        .map_err(|e| e.to_string())?;
-    let result = connection.execute_batch(MIGRATION_6).and_then(|_| {
-        connection.execute_batch(
-            "INSERT INTO schema_migrations(id,name) VALUES (6,'0006_probe_measurements.sql');
-             PRAGMA user_version=6;
-             COMMIT;",
-        )
-    });
-    if let Err(error) = result {
-        let _ = connection.execute_batch("ROLLBACK");
-        return Err(error.to_string());
-    }
-    Ok(())
-}
-
 /// Open a fresh or existing local SQLite database. Unknown schemas fail closed.
 pub fn open(path: &Path) -> Result<Connection, String> {
     private_dir(path.parent().ok_or("database path has no parent")?)?;
@@ -205,24 +180,17 @@ pub fn open(path: &Path) -> Result<Connection, String> {
             migrate_v2_to_v3(&connection)?;
             migrate_v3_to_v4(&connection)?;
             migrate_v4_to_v5(&connection)?;
-            migrate_v5_to_v6(&connection)?;
         }
         (2, true) => {
             migrate_v2_to_v3(&connection)?;
             migrate_v3_to_v4(&connection)?;
             migrate_v4_to_v5(&connection)?;
-            migrate_v5_to_v6(&connection)?;
         }
         (3, true) => {
             migrate_v3_to_v4(&connection)?;
             migrate_v4_to_v5(&connection)?;
-            migrate_v5_to_v6(&connection)?;
         }
-        (4, true) => {
-            migrate_v4_to_v5(&connection)?;
-            migrate_v5_to_v6(&connection)?;
-        }
-        (5, true) => migrate_v5_to_v6(&connection)?,
+        (4, true) => migrate_v4_to_v5(&connection)?,
         (SCHEMA_VERSION, true) => {
             let name: String = connection
                 .query_row(
@@ -526,9 +494,9 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 5);
         assert_eq!(table_exists, 1);
-        assert_eq!(latest, "0006_probe_measurements.sql");
+        assert_eq!(latest, "0005_methodology_semantics.sql");
         drop(migrated);
         fs::remove_dir_all(dir).unwrap();
     }
@@ -570,7 +538,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 5);
         assert_eq!(budget_table, 1);
         drop(migrated);
         fs::remove_dir_all(dir).unwrap();
@@ -593,61 +561,9 @@ mod tests {
             .unwrap();
         let task_column: i64 = migrated.query_row("SELECT COUNT(*) FROM pragma_table_info('lesson_metrics') WHERE name='task_success_count'", [], |row| row.get(0)).unwrap();
         let listening_column: i64 = migrated.query_row("SELECT COUNT(*) FROM pragma_table_info('listening_attempts') WHERE name='source_variant_id'", [], |row| row.get(0)).unwrap();
-        assert_eq!(version, 6);
+        assert_eq!(version, 5);
         assert_eq!(task_column, 1);
         assert_eq!(listening_column, 1);
-        drop(migrated);
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn migrates_v5_database_to_current_with_probe_columns() {
-        let dir = std::env::temp_dir().join(format!("lingua-migrate-v5-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("lingua.sqlite3");
-        let connection = Connection::open(&path).unwrap();
-        connection.execute_batch(INIT).unwrap();
-        connection
-            .execute_batch(
-                "CREATE TABLE schema_migrations(
-                    id INTEGER PRIMARY KEY,
-                    name TEXT UNIQUE NOT NULL,
-                    applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
-                 );
-                 INSERT INTO schema_migrations(id,name) VALUES (1,'0001_init.sql');",
-            )
-            .unwrap();
-        connection.execute_batch(MIGRATION_2).unwrap();
-        connection.execute_batch(MIGRATION_3).unwrap();
-        connection.execute_batch(MIGRATION_4).unwrap();
-        connection.execute_batch(MIGRATION_5).unwrap();
-        connection
-            .execute_batch(
-                "INSERT INTO schema_migrations(id,name) VALUES
-                    (2,'0002_planner_history.sql'),
-                    (3,'0003_review_methodology.sql'),
-                    (4,'0004_methodology_calibration.sql'),
-                    (5,'0005_methodology_semantics.sql');
-                 PRAGMA user_version=5;",
-            )
-            .unwrap();
-        drop(connection);
-
-        let migrated = open(&path).unwrap();
-        let version: i64 = migrated
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .unwrap();
-        for column in ["assistance_level", "response_millis", "probe_phase"] {
-            let count: i64 = migrated
-                .query_row(
-                    "SELECT COUNT(*) FROM pragma_table_info('listening_attempts') WHERE name=?1",
-                    [column],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            assert_eq!(count, 1, "missing migrated listening column {column}");
-        }
-        assert_eq!(version, 6);
         drop(migrated);
         fs::remove_dir_all(dir).unwrap();
     }

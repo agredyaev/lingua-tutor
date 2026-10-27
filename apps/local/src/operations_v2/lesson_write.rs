@@ -48,9 +48,6 @@ mod tests {
                 context_tag TEXT,
                 transcript TEXT,
                 success INTEGER NOT NULL,
-                assistance_level INTEGER,
-                response_millis INTEGER,
-                probe_phase TEXT,
                 recorded_at TEXT NOT NULL
             );",
             )
@@ -213,9 +210,6 @@ mod tests {
                 None,
                 Some(&transcript),
                 i % 2 == 1,
-                None,
-                None,
-                None,
                 &at,
             )
             .unwrap();
@@ -270,9 +264,6 @@ mod tests {
             None,
             None,
             true,
-            None,
-            None,
-            None,
             "2026-10-16T00:00:00Z",
         )
         .unwrap();
@@ -288,9 +279,6 @@ mod tests {
             None,
             Some(""),
             false,
-            None,
-            None,
-            None,
             "2026-10-16T00:00:01Z",
         )
         .unwrap();
@@ -440,9 +428,6 @@ pub(crate) fn insert_listening_attempt(
     context_tag: Option<&str>,
     transcript: Option<&str>,
     success: bool,
-    assistance_level: Option<u8>,
-    response_millis: Option<u32>,
-    probe_phase: Option<&str>,
     recorded_at: &str,
 ) -> Result<()> {
     let mut statement = database.prepare_cached(records::INSERT_LISTENING_ATTEMPT)?;
@@ -457,9 +442,6 @@ pub(crate) fn insert_listening_attempt(
         context_tag,
         transcript,
         u8::from(success),
-        assistance_level,
-        response_millis,
-        probe_phase,
         recorded_at,
     ])?;
     Ok(())

@@ -373,9 +373,6 @@ fn listening_attempt_insert_and_list() {
             None::<String>,
             Some("¿tiene algo…?"),
             0,
-            None::<u8>,
-            None::<u32>,
-            None::<String>,
             NOW
         ],
     )

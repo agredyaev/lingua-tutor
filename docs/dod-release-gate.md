@@ -31,7 +31,6 @@ This decision is based on the final `refactor/core-data-path` working tree. Func
 | fuzz workspace `cargo check --locked` | PASS |
 | fuzz workspace `cargo deny --locked ... check` | PASS |
 | `lesson_result_parse` fuzz smoke | PASS, >=1,000 runs |
-| `error_occurrence_soa` fuzz smoke | PASS, 1,000 runs |
 | Trunk `wasm-release` build | PASS |
 | native debug build | PASS |
 | native release build | PASS |

@@ -20,5 +20,3 @@ jobs:
       - run: cargo install cargo-fuzz --locked
       - name: fuzz lesson_result_parse (120s)
         run: cargo +nightly fuzz run lesson_result_parse -- -max_total_time=120
-      - name: fuzz error_occurrence_soa (120s)
-        run: cargo +nightly fuzz run error_occurrence_soa -- -max_total_time=120

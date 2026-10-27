@@ -210,7 +210,7 @@ use crate::repositories::{records, to_rfc3339};
 use crate::{Env, Result};
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 
-use super::lesson_write::insert_listening_attempt;
+use super::lesson_write::{insert_evidence, insert_listening_attempt};
 use super::recommendation_write::insert_recommendation;
 
 pub(crate) struct ListeningAttemptInput<'a> {
@@ -320,11 +320,36 @@ pub(crate) fn create_listening_attempt(
         Some(input.context_tag),
         input.transcript,
         input.success,
-        Some(input.assistance_level),
-        Some(input.response_millis),
-        Some(tutor_contract::probe_phase_id(input.probe_phase)),
         &at,
     )?;
+
+    if let (Some(item_id), Some(lesson_id)) = (input.learning_item_id, input.lesson_id) {
+        let context_key = format!(
+            "variant={}|talker={}|context={}",
+            input.source_variant_id.unwrap_or(""),
+            input.talker_key.unwrap_or(""),
+            input.context_tag
+        );
+        let metadata = serde_json::json!({
+            "context_key": context_key,
+            "assistance_level": input.assistance_level,
+            "response_millis": input.response_millis,
+            "probe_phase": input.probe_phase
+        })
+        .to_string();
+        insert_evidence(
+            &database,
+            &crate::api::new_id("ev"),
+            item_id,
+            lesson_id,
+            "listening",
+            input.success,
+            None,
+            &metadata,
+            &at,
+            0,
+        )?;
+    }
 
     crate::json(&serde_json::json!({ "id": id }))
 }
