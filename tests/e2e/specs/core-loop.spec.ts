@@ -21,14 +21,34 @@ async function rpc<T>(
 
 const lessonResult = (profileId: string) =>
   JSON.stringify({
-    schema_version: "1",
+    schema_version: "2",
     client_operation_id: `op-e2e-${Date.now()}`,
     language_profile_id: profileId,
     language_pack_id: "es-ES",
     language_pack_version: "0.2.0",
     lesson: { scenario: "pharmacy", duration_seconds: 900 },
     new_learning_items: [
-      { item_type: "phrase", target_text: "¿Tiene algo para la tos?" },
+      { client_item_key: "cough", item_type: "phrase", target_text: "¿Tiene algo para la tos?" },
+    ],
+    evidence: [
+      {
+        client_item_key: "cough",
+        kind: "recognition",
+        success: true,
+        assistance_level: 0,
+        response_millis: 900,
+        probe_phase: "diagnostic",
+        context: "pharmacy:recognition-1",
+      },
+      {
+        client_item_key: "cough",
+        kind: "recognition",
+        success: true,
+        assistance_level: 0,
+        response_millis: 1100,
+        probe_phase: "diagnostic",
+        context: "pharmacy:recognition-2",
+      },
     ],
     card_mutations: [
       {
@@ -140,7 +160,7 @@ test("real lesson lifecycle creates a review card and advances the next lesson",
     {
       lesson_id: started.id,
       lesson_result: {
-        schema_version: "1",
+        schema_version: "2",
         client_operation_id: `op-e2e-cycle-${op}`,
         language_profile_id: profileId,
         language_pack_id: "es-ES",
@@ -173,7 +193,20 @@ test("real lesson lifecycle creates a review card and advances the next lesson",
             kind: "prompted_production",
             success: true,
             assistance_level: 1,
+            response_millis: 1600,
+            probe_phase: "diagnostic",
             context: "restaurant:bill",
+            pronunciation_intelligible: true,
+            pronunciation_repeat_required: false,
+          },
+          {
+            client_item_key: "bill",
+            kind: "recognition",
+            success: true,
+            assistance_level: 0,
+            response_millis: 900,
+            probe_phase: "diagnostic",
+            context: "restaurant:bill-recognition",
           },
         ],
         card_mutations: [
@@ -267,7 +300,7 @@ test("offline review grade is queued and replayed after reconnect", async ({ pag
     {
       lesson_id: started.id,
       lesson_result: {
-        schema_version: "1",
+        schema_version: "2",
         client_operation_id: `op-e2e-offline-${op}`,
         language_profile_id: profileId,
         language_pack_id: "es-ES",
@@ -291,7 +324,20 @@ test("offline review grade is queued and replayed after reconnect", async ({ pag
             kind: "prompted_production",
             success: true,
             assistance_level: 1,
+            response_millis: 1400,
+            probe_phase: "diagnostic",
             context: "cafe:water",
+            pronunciation_intelligible: true,
+            pronunciation_repeat_required: false,
+          },
+          {
+            client_item_key: "water",
+            kind: "recognition",
+            success: true,
+            assistance_level: 0,
+            response_millis: 800,
+            probe_phase: "diagnostic",
+            context: "cafe:water-recognition",
           },
         ],
         card_mutations: [
