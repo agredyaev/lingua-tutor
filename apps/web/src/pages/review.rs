@@ -41,7 +41,17 @@ pub fn ReviewPage() -> impl IntoView {
     let offline_mode = RwSignal::new(false);
     let session = LocalResource::new(move || {
         let id = active.id();
+        let default_lookup_network_failed = active.default_lookup_network_failed();
         async move {
+            if id.is_none() && default_lookup_network_failed {
+                return crate::offline::cached_queue().map_or_else(
+                    || Err(ApiError::Network("offline, no prefetched batch".to_owned())),
+                    |cached| {
+                        offline_mode.set(true);
+                        Ok(Some(cached))
+                    },
+                );
+            }
             let Some(id) = id else { return Ok(None) };
             let report = crate::offline::replay().await;
             if report.interrupted
