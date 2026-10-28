@@ -58,9 +58,11 @@ jobs:
           lock_version="$(awk '
             $0 == "name = \"lingua-tutor-local\"" { found=1; next }
             found && /^version = / {
-              gsub(/^version = \"|\"$/, "", $0)
-              print
-              exit
+              if (match($0, /version = \"[^\"]+\"/)) {
+                value = substr($0, RSTART + 11, RLENGTH - 12)
+                print value
+                exit
+              }
             }
           ' Cargo.lock)"
           test -n "$version"
