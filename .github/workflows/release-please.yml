@@ -2,7 +2,7 @@ name: Release Please
 
 on:
   workflow_run:
-    workflows: [Release]
+    workflows: [e2e]
     types: [completed]
     branches: [main]
   workflow_dispatch:
@@ -17,16 +17,46 @@ jobs:
   release-please:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      # Adapted from Rivet: Release Please owns the version/changelog PR.
-      # Lingua Tutor's existing CI -> e2e -> Release pipeline keeps ownership
-      # of draft creation, tested binaries, tags, publishing, and checksums.
-      #
-      # Trigger after Release rather than CI so skip-github-release only runs
-      # after the external release pipeline had a chance to create/publish the
-      # tag for a merged release PR.
+      - name: Require successful CI for the same commit
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          for _ in {1..90}; do
+            runs="$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=20")"
+            status="$(jq -r '.workflow_runs | sort_by(.created_at) | reverse | .[0].status // empty' <<< "$runs")"
+            conclusion="$(jq -r '.workflow_runs | sort_by(.created_at) | reverse | .[0].conclusion // empty' <<< "$runs")"
+
+            if [[ "$status" == "completed" ]]; then
+              if [[ "$conclusion" != "success" ]]; then
+                echo "::error::CI completed with $conclusion for $SHA."
+                exit 1
+              fi
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "::error::CI did not complete for $SHA."
+          exit 1
+
       - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
+        id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  release-assets:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
