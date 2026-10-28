@@ -67,67 +67,8 @@ jobs:
           test "$version" = "$cargo_version"
           test "$version" = "$lock_version"
 
-  prepare-release:
-    needs: checks
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    outputs:
-      stage: ${{ steps.release.outputs.stage }}
-      version: ${{ steps.release.outputs.version }}
-      tag: ${{ steps.release.outputs.tag }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Prepare draft release
-        id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          EVENT_NAME: ${{ github.event_name }}
-          SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-
-          version="$(tr -d '[:space:]' < VERSION)"
-          test -n "$version"
-          tag="v$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-
-          if [[ "$EVENT_NAME" != "push" ]]; then
-            echo "stage=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          existing="$(gh api "repos/$GH_REPO/releases?per_page=100" --jq ".[] | select(.tag_name == \"$tag\") | @base64" | head -n1 || true)"
-          if [[ -n "$existing" ]]; then
-            release_json="$(printf '%s' "$existing" | base64 --decode)"
-            release_id="$(jq -r .id <<< "$release_json")"
-            draft="$(jq -r .draft <<< "$release_json")"
-            target="$(jq -r .target_commitish <<< "$release_json")"
-
-            if [[ "$draft" != "true" ]]; then
-              echo "Published release $tag already exists; skipping release staging."
-              echo "stage=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-
-            if [[ "$target" != "$SHA" ]]; then
-              gh api --method DELETE "repos/$GH_REPO/releases/$release_id"
-              gh api --method DELETE "repos/$GH_REPO/git/refs/tags/$tag" >/dev/null 2>&1 || true
-              existing=""
-            fi
-          fi
-
-          if [[ -z "$existing" ]]; then
-            gh release create "$tag"               --repo "$GH_REPO"               --target "$SHA"               --title "$tag"               --generate-notes               --draft
-          fi
-
-          echo "stage=true" >> "$GITHUB_OUTPUT"
-
   build:
-    needs: [checks, prepare-release]
+    needs: checks
     strategy:
       fail-fast: false
       matrix:
@@ -135,7 +76,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
@@ -187,10 +128,10 @@ jobs:
             trap 'kill "$pid" 2>/dev/null || true' EXIT
 
             test -s .lingua-tutor/web/index.html
-            response="$(curl -fsS               -H 'Content-Type: application/json'               -d '{"jsonrpc":"2.0","id":1,"method":"health","params":{}}'               http://127.0.0.1:18787/rpc)"
+            response="$(curl -fsS -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"health","params":{}}' http://127.0.0.1:18787/rpc)"
             grep -Fq '"result"' <<< "$response"
 
-            created="$(curl -fsS               -H 'Content-Type: application/json'               -d '{"jsonrpc":"2.0","id":2,"method":"create_language_profile","params":{"language_pack_id":"es-ES","source_language":"ru"}}'               http://127.0.0.1:18787/rpc)"
+            created="$(curl -fsS -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":2,"method":"create_language_profile","params":{"language_pack_id":"es-ES","source_language":"ru"}}' http://127.0.0.1:18787/rpc)"
             grep -Fq '"result"' <<< "$created"
 
             backup_path="$("$binary" backup)"
@@ -203,7 +144,7 @@ jobs:
             "$binary" check
 
             start_runtime
-            restored="$(curl -fsS               -H 'Content-Type: application/json'               -d '{"jsonrpc":"2.0","id":3,"method":"list_language_profiles","params":{}}'               http://127.0.0.1:18787/rpc)"
+            restored="$(curl -fsS -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":3,"method":"list_language_profiles","params":{}}' http://127.0.0.1:18787/rpc)"
             grep -Fq '"language_pack_id":"es-ES"' <<< "$restored"
             grep -Fq '"source_language":"ru"' <<< "$restored"
           )
@@ -215,32 +156,19 @@ jobs:
           cargo build --locked --release -p lingua-tutor-local --bin lingua-tutor --target aarch64-apple-darwin
           file target/aarch64-apple-darwin/release/lingua-tutor | grep -Eq 'Mach-O 64-bit executable arm64'
 
-      - if: runner.os == 'macOS' && needs.prepare-release.outputs.stage == 'true'
-        name: Stage macOS release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          VERSION: ${{ needs.prepare-release.outputs.version }}
-          TAG: ${{ needs.prepare-release.outputs.tag }}
-        run: |
-          set -euo pipefail
-          package_dir="$(mktemp -d)"
-          cp target/aarch64-apple-darwin/release/lingua-tutor "$package_dir/lingua-tutor"
-          chmod +x "$package_dir/lingua-tutor"
-          asset="$GITHUB_WORKSPACE/lingua-tutor-v$VERSION-darwin-arm64.zip"
-          (cd "$package_dir" && zip -q "$asset" lingua-tutor)
-          test "$(unzip -Z1 "$asset")" = "lingua-tutor"
-          verify_dir="$(mktemp -d)"
-          unzip -q "$asset" -d "$verify_dir"
-          test -x "$verify_dir/lingua-tutor"
-          gh release upload "$TAG" "$asset" --repo "$GH_REPO" --clobber
+      - if: runner.os == 'macOS'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lingua-tutor-macos-target
+          path: target/aarch64-apple-darwin/release/lingua-tutor
+          if-no-files-found: error
 
   cross:
-    needs: [checks, prepare-release]
+    needs: checks
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:
-      contents: write
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
@@ -271,15 +199,37 @@ jobs:
           file target/aarch64-unknown-linux-gnu/release/lingua-tutor | grep -Eq 'ELF 64-bit.*ARM aarch64'
           target/x86_64-unknown-linux-gnu/release/lingua-tutor --help
 
-      - if: needs.prepare-release.outputs.stage == 'true'
-        name: Stage Linux release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          VERSION: ${{ needs.prepare-release.outputs.version }}
-          TAG: ${{ needs.prepare-release.outputs.tag }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lingua-tutor-linux-targets
+          path: |
+            target/x86_64-unknown-linux-gnu/release/lingua-tutor
+            target/aarch64-unknown-linux-gnu/release/lingua-tutor
+          if-no-files-found: error
+
+  release-artifacts:
+    needs: [checks, build, cross]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: lingua-tutor-linux-targets
+          path: staged/linux
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: lingua-tutor-macos-target
+          path: staged/macos
+
+      - name: Package tested release assets
         run: |
           set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          test -n "$version"
+          mkdir -p dist
 
           package() {
             binary="$1"
@@ -287,52 +237,26 @@ jobs:
             package_dir="$(mktemp -d)"
             cp "$binary" "$package_dir/lingua-tutor"
             chmod +x "$package_dir/lingua-tutor"
-            (cd "$package_dir" && zip -q "$GITHUB_WORKSPACE/$asset" lingua-tutor)
-            test "$(unzip -Z1 "$GITHUB_WORKSPACE/$asset")" = "lingua-tutor"
-            verify_dir="$(mktemp -d)"
-            unzip -q "$GITHUB_WORKSPACE/$asset" -d "$verify_dir"
-            test -x "$verify_dir/lingua-tutor"
+            (cd "$package_dir" && zip -q "$GITHUB_WORKSPACE/dist/$asset" lingua-tutor)
+            test "$(unzip -Z1 "dist/$asset")" = "lingua-tutor"
           }
 
-          package target/x86_64-unknown-linux-gnu/release/lingua-tutor             "lingua-tutor-v$VERSION-linux-x64.zip"
-          package target/aarch64-unknown-linux-gnu/release/lingua-tutor             "lingua-tutor-v$VERSION-linux-aarch64.zip"
-
-          gh release upload "$TAG"             "lingua-tutor-v$VERSION-linux-x64.zip"             "lingua-tutor-v$VERSION-linux-aarch64.zip"             --repo "$GH_REPO"             --clobber
-
-  release-assets:
-    needs: [prepare-release, build, cross]
-    if: needs.prepare-release.outputs.stage == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: write
-    steps:
-      - name: Verify staged assets and add checksums
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          VERSION: ${{ needs.prepare-release.outputs.version }}
-          TAG: ${{ needs.prepare-release.outputs.tag }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          gh release download "$TAG"             --repo "$GH_REPO"             --pattern 'lingua-tutor-*.zip'             --dir dist
-
-          expected="$(printf '%s\n'             "lingua-tutor-v$VERSION-darwin-arm64.zip"             "lingua-tutor-v$VERSION-linux-aarch64.zip"             "lingua-tutor-v$VERSION-linux-x64.zip" | sort)"
-          actual="$(find dist -maxdepth 1 -type f -exec basename {} \; | sort)"
-          test "$actual" = "$expected"
-
-          for archive in dist/lingua-tutor-*.zip; do
-            test "$(unzip -Z1 "$archive")" = "lingua-tutor"
-            verify_dir="$(mktemp -d)"
-            unzip -q "$archive" -d "$verify_dir"
-            test -x "$verify_dir/lingua-tutor"
-          done
+          package staged/linux/x86_64-unknown-linux-gnu/release/lingua-tutor "lingua-tutor-v$version-linux-x64.zip"
+          package staged/linux/aarch64-unknown-linux-gnu/release/lingua-tutor "lingua-tutor-v$version-linux-aarch64.zip"
+          package staged/macos/lingua-tutor "lingua-tutor-v$version-darwin-arm64.zip"
 
           (cd dist && sha256sum lingua-tutor-*.zip > SHA256SUMS)
           (cd dist && sha256sum -c SHA256SUMS)
-          gh release upload "$TAG" dist/SHA256SUMS --repo "$GH_REPO" --clobber
 
-          expected_with_sums="$(printf '%s\n' SHA256SUMS "$expected" | sort)"
-          published="$(gh release view "$TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' | sort)"
-          test "$published" = "$expected_with_sums"
+          expected="$(printf '%s\n' SHA256SUMS             "lingua-tutor-v$version-darwin-arm64.zip"             "lingua-tutor-v$version-linux-aarch64.zip"             "lingua-tutor-v$version-linux-x64.zip" | sort)"
+          actual="$(find dist -maxdepth 1 -type f -exec basename {} \; | sort)"
+          test "$actual" = "$expected"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: lingua-tutor-release-assets
+          path: |
+            dist/lingua-tutor-*.zip
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 30
