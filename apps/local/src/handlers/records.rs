@@ -5,6 +5,21 @@ use crate::repositories::{records, to_rfc3339};
 use crate::{Env, Result};
 use rusqlite::{OptionalExtension as _, params};
 
+fn effective_current_lesson_number(
+    database: &rusqlite::Connection,
+    profile_id: &str,
+    stored: u32,
+) -> Result<u32> {
+    let persisted_max: u32 = database.query_row(
+        "SELECT COALESCE(MAX(lesson_number), 0)
+         FROM lessons
+         WHERE learner_language_profile_id = ?1",
+        params![profile_id],
+        |row| row.get(0),
+    )?;
+    Ok(stored.max(persisted_max))
+}
+
 /// Learning-state query — item counts by
 /// status + active error targets + due rechecks.
 pub(crate) fn learning_state_for(env: &Env, profile_id: &str) -> Result<serde_json::Value> {
@@ -211,6 +226,8 @@ pub(crate) fn next_lesson_for(env: &Env, profile_id: &str) -> Result<serde_json:
     else {
         return operation_error(404, "not_found", "unknown profile");
     };
+    let current_lesson_number =
+        effective_current_lesson_number(&database, profile_id, current_lesson_number)?;
     let last = database
         .query_row(
             "SELECT next_goal, scenario FROM lessons
@@ -475,6 +492,8 @@ pub(crate) fn tutor_context_for(
     else {
         return operation_error(404, "not_found", "unknown profile");
     };
+    let current_lesson_number =
+        effective_current_lesson_number(&database, profile_id, current_lesson_number)?;
     let Some(pack) = language_pack_registry::get(registry, &pack_id) else {
         return operation_error(409, "pack_incompatible", "profile pack not registered");
     };
@@ -720,6 +739,8 @@ pub(crate) fn dashboard_for(env: &Env, profile_id: &str) -> Result<serde_json::V
     else {
         return operation_error(404, "not_found", "unknown profile");
     };
+    let current_lesson_number =
+        effective_current_lesson_number(&database, profile_id, current_lesson_number)?;
     let at = crate::api::now();
     let now_text = to_rfc3339(at);
     let timezone: String = database.query_row(

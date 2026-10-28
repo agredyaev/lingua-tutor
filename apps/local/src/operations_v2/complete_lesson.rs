@@ -776,6 +776,15 @@ mod tests {
     fn completing_started_lesson_preserves_single_planner_decision_and_records_outcome() {
         let (path, env) = create_env("planner-new");
         seed_started_lesson(&env);
+        env.connection()
+            .unwrap()
+            .execute(
+                "UPDATE learner_language_profiles
+                 SET current_lesson_number = 0
+                 WHERE id = 'llp-1'",
+                [],
+            )
+            .unwrap();
         let registry = built_in_language_packs().unwrap();
         let mut input = result();
         input.client_operation_id = "op-existing-lesson".to_owned();
@@ -1321,7 +1330,17 @@ pub(crate) fn complete_lesson(
 
     transaction.execute(
         "UPDATE learner_language_profiles
-         SET current_lesson_number = current_lesson_number + 1, updated_at = ?2
+         SET current_lesson_number = MAX(
+                 current_lesson_number,
+                 COALESCE(
+                     (SELECT MAX(lesson_number)
+                      FROM lessons
+                      WHERE learner_language_profile_id = ?1
+                        AND status = 'completed'),
+                     current_lesson_number
+                 )
+             ),
+             updated_at = ?2
          WHERE id = ?1",
         params![result.language_profile_id, at],
     )?;

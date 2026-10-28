@@ -160,6 +160,51 @@ mod tests {
     }
 
     #[test]
+    fn start_uses_persisted_max_when_profile_counter_is_stale() {
+        let (path, env) = create_env("stale-counter");
+        let registry = built_in_language_packs().unwrap();
+        env.connection()
+            .unwrap()
+            .execute(
+                "UPDATE learner_language_profiles
+                 SET current_lesson_number = 0
+                 WHERE id = 'llp-1'",
+                [],
+            )
+            .unwrap();
+
+        let profiles = crate::handlers::profiles::list_profiles(&env).unwrap();
+        assert_eq!(profiles[0]["current_lesson_number"], 4);
+
+        let result = start_lesson(
+            &registry,
+            &env,
+            "llp-1",
+            "pharmacy",
+            "repair counter",
+            "mcp",
+        )
+        .unwrap();
+
+        assert_eq!(result["lesson_number"], 5);
+        let db = env.connection().unwrap();
+        let persisted: (u32, String) = db
+            .query_row(
+                "SELECT lesson_number, status
+                 FROM lessons
+                 WHERE learner_language_profile_id = 'llp-1'
+                 ORDER BY lesson_number DESC
+                 LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(persisted, (5, "active".to_owned()));
+        drop(db);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn record_views_preserve_seeded_profile_contract() {
         let (path, env) = create_env("profile-read");
         let registry = built_in_language_packs().unwrap();
@@ -400,6 +445,16 @@ pub(crate) fn start_lesson(
             crate::Error::operation(404, "not_found", "unknown profile", serde_json::Value::Null)
         })?;
     let (_learner_id, pack_id, current_lesson_number, preferences_json) = profile;
+    let max_persisted_lesson_number: u32 = transaction.query_row(
+        "SELECT COALESCE(MAX(lesson_number), 0)
+         FROM lessons
+         WHERE learner_language_profile_id = ?1",
+        params![profile_id],
+        |row| row.get(0),
+    )?;
+    let next_lesson_number = current_lesson_number
+        .max(max_persisted_lesson_number)
+        .saturating_add(1);
 
     let Some(manifest) = language_pack_registry::manifest(registry, &pack_id) else {
         return Err(crate::Error::operation(
@@ -509,7 +564,7 @@ pub(crate) fn start_lesson(
             profile_id,
             pack_id,
             pack_version,
-            current_lesson_number + 1,
+            next_lesson_number,
             "active",
             scenario,
             planned_goal,
@@ -545,6 +600,6 @@ pub(crate) fn start_lesson(
     transaction.commit()?;
     crate::json(&serde_json::json!({
         "id": lesson_id,
-        "lesson_number": current_lesson_number + 1
+        "lesson_number": next_lesson_number
     }))
 }
