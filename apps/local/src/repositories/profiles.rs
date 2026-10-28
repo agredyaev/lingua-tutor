@@ -34,7 +34,8 @@ pub const SELECT_LANGUAGE_PROFILES: &str = "SELECT p.id, p.learner_id, p.languag
         COALESCE(
             (SELECT MAX(l.lesson_number)
              FROM lessons l
-             WHERE l.learner_language_profile_id = p.id),
+             WHERE l.learner_language_profile_id = p.id
+               AND l.status = 'completed'),
             0
         )
     ) AS current_lesson_number,
@@ -49,7 +50,8 @@ pub const SELECT_LANGUAGE_PROFILE: &str = "SELECT p.id, p.learner_id, p.language
         COALESCE(
             (SELECT MAX(l.lesson_number)
              FROM lessons l
-             WHERE l.learner_language_profile_id = p.id),
+             WHERE l.learner_language_profile_id = p.id
+               AND l.status = 'completed'),
             0
         )
     ) AS current_lesson_number,

@@ -43,7 +43,7 @@ flowchart LR
     Server["server.rs loopback HTTP + JSON-RPC"]
     Tunnel["tunnel.rs outbound secure MCP tunnel"]
     MCP["mcp.rs + mcp_tools.rs"]
-    Ops["operations_v2/* explicit processing/write passes"]
+    Ops["operations/* explicit processing/write passes"]
     Reads["handlers/* read/boundary projections"]
     SQL["repositories/* SQL text + enum conversion"]
     Storage["storage.rs + assets.rs"]
@@ -108,7 +108,7 @@ flowchart TD
   decode/admit MCP"]
   ReadHandlers["handlers/*
   read/wire projections"]
-  Passes["operations_v2/*
+  Passes["operations/*
   explicit processing/write passes"]
   Repos["repositories/*
   SQL constants + scalar enum passes"]
@@ -140,7 +140,7 @@ flowchart TD
 
 Structural observations:
 - `apps/local/src/old` and `crates/application` are absent.
-- There is one native business-write implementation: `operations_v2`.
+- There is one native business-write implementation: `operations`.
 - `LanguagePack` behavior trait/dynamic dispatch is absent; production uses a concrete dense registry and explicit pack passes.
 - `ReviewScheduler` trait/dynamic dispatch is absent; scheduler selection is explicit integer/scalar dispatch.
 - `handlers/*` remains necessary where it directly projects read/wire results; delegation-only write paths have been removed.
@@ -174,15 +174,15 @@ No browser object is authoritative for persisted scheduling state.
 
 | Operation/gate | Exact data path | Retained state / multiplicity | Current finding |
 | --- | --- | --- | --- |
-| JSON-RPC write | wire JSON → `server::dispatch_rpc` → one `operations_v2` pass → SQLite txn | request-local buffers; SQLite authoritative | single implementation |
-| MCP write | tunnel raw JSON → `mcp::dispatch_jsonrpc` / `mcp_tools` → same `operations_v2` pass | request-local; same DB authority | single implementation |
+| JSON-RPC write | wire JSON → `server::dispatch_rpc` → one `operations` pass → SQLite txn | request-local buffers; SQLite authoritative | single implementation |
+| MCP write | tunnel raw JSON → `mcp::dispatch_jsonrpc` / `mcp_tools` → same `operations` pass | request-local; same DB authority | single implementation |
 | lesson completion | `LessonResult` → preload columns → `LessonPlanState` SoA/index passes → bounded write buffers → SQLite | request-local arrays/text arenas; stable indices | DOD path active |
 | review | persisted scalar schedule columns → `review-engine` pass → scalar result → SQLite | no scheduler object graph | DOD path active |
 | adaptation | SQLite/context columns → request-local indexed/column buffers → explicit rules | request-local arrays / CSR-like prefix ranges where sparse | DOD path active |
 | language behavior | pack ID → dense registry index → concrete es-ES data → free processing functions | immutable startup pack data | no trait dispatch |
 | offline replay | bounded `Vec<PendingEvent>` at browser storage boundary → ordered RPC replay | max 50 wire records | boundary DTO, not domain authority |
 | strict CI | source + tests → fmt/clippy/test/trunk/deny | no runtime state | local compile/test/lint/build gates pass |
-| fuzz supply chain | `fuzz/Cargo.toml + fuzz/Cargo.lock` → cargo-deny | separate workspace | lock/policy pass; both fuzz targets smoke-tested |
+| fuzz supply chain | `fuzz/Cargo.toml + fuzz/Cargo.lock` → cargo-deny | separate workspace | lock/policy pass; all five fuzz targets smoke-tested |
 
 ## Remaining architecture acceptance work
 
@@ -211,7 +211,7 @@ Root `cargo deny --locked check` passes. The separate fuzz lock is refreshed, de
 
 ### E. Release evidence — PARTIAL / ENVIRONMENT-DEPENDENT
 
-Verified locally on the final working tree: format, workspace check/tests, strict all-target Clippy, WASM target check, Trunk release build, native debug/release builds, root + fuzz cargo-deny, git diff check, and smoke runs for both fuzz targets.
+Verified locally on the final working tree: format, workspace check/tests, strict all-target Clippy, WASM target check, Trunk release build, native debug/release builds, root + fuzz cargo-deny, git diff check, and smoke runs for all five fuzz targets (parser, core components, stateful lesson lifecycle, tunnel wire/policy, and error persistence).
 
 Not executable as green in this Rivet sandbox: Playwright fails before test execution because Node hits `EPERM` resolving `/opt`; a direct release-binary RPC benchmark initializes SQLite/assets but the sandbox denies localhost socket bind; real tunnel→SQLite requires the external tunnel service/credentials; Linux evidence belongs to CI. No performance improvement is claimed until representative RPC latency/profiling runs in a bind-capable environment.
 

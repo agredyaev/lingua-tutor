@@ -5,11 +5,27 @@ use crate::repositories::{records, to_rfc3339};
 use crate::{Env, Result};
 use rusqlite::{OptionalExtension as _, params};
 
-fn effective_current_lesson_number(
+fn effective_next_lesson_number(
     database: &rusqlite::Connection,
     profile_id: &str,
-    stored: u32,
+    stored_current: u32,
 ) -> Result<u32> {
+    if let Some(open_number) = database
+        .query_row(
+            "SELECT lesson_number
+             FROM lessons
+             WHERE learner_language_profile_id = ?1
+               AND status IN ('planned','active')
+             ORDER BY started_at DESC, lesson_number DESC
+             LIMIT 1",
+            params![profile_id],
+            |row| row.get::<_, u32>(0),
+        )
+        .optional()?
+    {
+        return Ok(open_number);
+    }
+
     let persisted_max: u32 = database.query_row(
         "SELECT COALESCE(MAX(lesson_number), 0)
          FROM lessons
@@ -17,7 +33,7 @@ fn effective_current_lesson_number(
         params![profile_id],
         |row| row.get(0),
     )?;
-    Ok(stored.max(persisted_max))
+    Ok(stored_current.max(persisted_max).saturating_add(1))
 }
 
 /// Learning-state query — item counts by
@@ -159,7 +175,7 @@ fn adaptive_lesson_planning_at(
         }
     }
 
-    let view = crate::operations_v2::planner_read::read_planner_input(
+    let view = crate::operations::planner_read::read_planner_input(
         database,
         profile_id,
         at,
@@ -193,13 +209,13 @@ fn adaptive_lesson_snapshot(
     let at = now();
     let (planner_input, plan, primary_objective) =
         adaptive_lesson_planning_at(database, profile_id, preferences, at)?;
-    let mut selection = crate::operations_v2::adaptive_selection::new_selection(24, 32);
-    let item_count = crate::operations_v2::capability_read::visit_item_capabilities(
+    let mut selection = crate::operations::adaptive_selection::new_selection(24, 32);
+    let item_count = crate::operations::capability_read::visit_item_capabilities(
         database,
         profile_id,
         at.0,
         |state| {
-            crate::operations_v2::adaptive_selection::observe_selection(
+            crate::operations::adaptive_selection::observe_selection(
                 &mut selection,
                 adaptation::item_capability_view(state),
                 primary_objective,
@@ -208,8 +224,7 @@ fn adaptive_lesson_snapshot(
             Ok(())
         },
     )?;
-    let tutor_tasks =
-        crate::operations_v2::adaptive_selection::selection_tutor_tasks(&selection, 16);
+    let tutor_tasks = crate::operations::adaptive_selection::selection_tutor_tasks(&selection, 16);
     Ok(AdaptiveLessonSnapshot {
         planner_input,
         plan,
@@ -226,8 +241,8 @@ pub(crate) fn next_lesson_for(env: &Env, profile_id: &str) -> Result<serde_json:
     else {
         return operation_error(404, "not_found", "unknown profile");
     };
-    let current_lesson_number =
-        effective_current_lesson_number(&database, profile_id, current_lesson_number)?;
+    let next_lesson_number =
+        effective_next_lesson_number(&database, profile_id, current_lesson_number)?;
     let last = database
         .query_row(
             "SELECT next_goal, scenario FROM lessons
@@ -239,7 +254,7 @@ pub(crate) fn next_lesson_for(env: &Env, profile_id: &str) -> Result<serde_json:
         .optional()?;
     let snapshot = adaptive_lesson_snapshot(&database, profile_id, &preferences)?;
     crate::json(&serde_json::json!({
-        "lesson_number": current_lesson_number + 1,
+        "lesson_number": next_lesson_number,
         "estimated_level": estimated_level,
         "learner_preferences": preferences,
         "previous_goal": last.as_ref().and_then(|row| row.0.clone()),
@@ -492,8 +507,8 @@ pub(crate) fn tutor_context_for(
     else {
         return operation_error(404, "not_found", "unknown profile");
     };
-    let current_lesson_number =
-        effective_current_lesson_number(&database, profile_id, current_lesson_number)?;
+    let next_lesson_number =
+        effective_next_lesson_number(&database, profile_id, current_lesson_number)?;
     let Some(pack) = language_pack_registry::get(registry, &pack_id) else {
         return operation_error(409, "pack_incompatible", "profile pack not registered");
     };
@@ -704,7 +719,7 @@ pub(crate) fn tutor_context_for(
         "schema_version": "1",
         "language_profile_id": profile_id,
         "language_pack": manifest,
-        "next_lesson_number": current_lesson_number + 1,
+        "next_lesson_number": next_lesson_number,
         "estimated_level": estimated_level,
         "learner_preferences": preferences,
         "tutor_instructions": instructions,
@@ -739,8 +754,8 @@ pub(crate) fn dashboard_for(env: &Env, profile_id: &str) -> Result<serde_json::V
     else {
         return operation_error(404, "not_found", "unknown profile");
     };
-    let current_lesson_number =
-        effective_current_lesson_number(&database, profile_id, current_lesson_number)?;
+    let next_lesson_number =
+        effective_next_lesson_number(&database, profile_id, current_lesson_number)?;
     let at = crate::api::now();
     let now_text = to_rfc3339(at);
     let timezone: String = database.query_row(
@@ -748,7 +763,7 @@ pub(crate) fn dashboard_for(env: &Env, profile_id: &str) -> Result<serde_json::V
         params![learner_id],
         |row| row.get(0),
     )?;
-    let day_start = to_rfc3339(crate::operations_v2::card_budget::local_day_start_utc(
+    let day_start = to_rfc3339(crate::operations::card_budget::local_day_start_utc(
         at, &timezone,
     )?);
 
@@ -836,7 +851,7 @@ pub(crate) fn dashboard_for(env: &Env, profile_id: &str) -> Result<serde_json::V
         .optional()?
         .flatten();
 
-    let budget = crate::operations_v2::card_budget::remaining_budget(
+    let budget = crate::operations::card_budget::remaining_budget(
         &database,
         profile_id,
         at,
@@ -884,7 +899,7 @@ pub(crate) fn dashboard_for(env: &Env, profile_id: &str) -> Result<serde_json::V
         review_seconds_today: u32::try_from(review_seconds_today).unwrap_or(u32::MAX),
         active_error_targets: active_errors,
         due_error_rechecks: due_rechecks,
-        next_lesson_number: current_lesson_number + 1,
+        next_lesson_number,
         next_lesson_goal: goal,
         items_by_status: items,
         open_recommendations,

@@ -148,7 +148,7 @@ fn dispatch_rpc(
         "list_language_profiles" => handlers::profiles::list_profiles(env),
         "list_language_packs" => handlers::profiles::list_packs(registry),
         "get_language_pack" => handlers::profiles::get_pack(registry, required("pack_id")?),
-        "create_language_profile" => crate::operations_v2::profile_write::create_profile(
+        "create_language_profile" => crate::operations::profile_write::create_profile(
             registry,
             env,
             required("language_pack_id")?,
@@ -158,10 +158,10 @@ fn dispatch_rpc(
             let profile_id = required("language_profile_id")?.to_owned();
             let patch: handlers::profiles::PatchProfileParams =
                 serde_json::from_value(params.clone())?;
-            crate::operations_v2::profile_write::patch_profile(
+            crate::operations::profile_write::patch_profile(
                 env,
                 &profile_id,
-                crate::operations_v2::profile_write::PatchProfileInput {
+                crate::operations::profile_write::PatchProfileInput {
                     estimated_level: patch.estimated_level.as_deref(),
                     status: patch.status.as_deref(),
                     is_default: patch.is_default,
@@ -176,7 +176,7 @@ fn dispatch_rpc(
         "get_next_lesson" => {
             handlers::records::next_lesson_for(env, required("language_profile_id")?)
         }
-        "start_lesson" => crate::operations_v2::start_lesson::start_lesson(
+        "start_lesson" => crate::operations::start_lesson::start_lesson(
             registry,
             env,
             required("language_profile_id")?,
@@ -224,7 +224,7 @@ fn dispatch_rpc(
         "get_error_target" => {
             handlers::records::get_error_target(env, required("error_target_id")?)
         }
-        "complete_error_recheck" => crate::operations_v2::records_write::complete_error_recheck(
+        "complete_error_recheck" => crate::operations::records_write::complete_error_recheck(
             env,
             required("error_target_id")?,
             required("recheck_id")?,
@@ -233,9 +233,9 @@ fn dispatch_rpc(
         "create_listening_attempt" => {
             let attempt: handlers::records::ListeningAttemptParams =
                 serde_json::from_value(params.clone())?;
-            crate::operations_v2::records_write::create_listening_attempt(
+            crate::operations::records_write::create_listening_attempt(
                 env,
-                crate::operations_v2::records_write::ListeningAttemptInput {
+                crate::operations::records_write::ListeningAttemptInput {
                     language_profile_id: &attempt.language_profile_id,
                     learning_item_id: attempt.learning_item_id.as_deref(),
                     lesson_id: attempt.lesson_id.as_deref(),
@@ -264,10 +264,10 @@ fn dispatch_rpc(
         "patch_card" => {
             let card_id = required("card_id")?.to_owned();
             let patch: handlers::cards::CardPatchParams = serde_json::from_value(params.clone())?;
-            crate::operations_v2::card_direct::patch_card(
+            crate::operations::card_direct::patch_card(
                 env,
                 &card_id,
-                crate::operations_v2::card_direct::CardPatchInput {
+                crate::operations::card_direct::CardPatchInput {
                     edit_class: &patch.edit_class,
                     prompt: patch.prompt.as_deref(),
                     answer: patch.answer.as_deref(),
@@ -286,7 +286,7 @@ fn dispatch_rpc(
                     return api::operation_error(400, "invalid_field", "unsupported card status");
                 }
             };
-            crate::operations_v2::card_direct::set_card_status(
+            crate::operations::card_direct::set_card_status(
                 env,
                 required("card_id")?,
                 status,
@@ -305,7 +305,7 @@ fn dispatch_rpc(
                     "status must be accepted|dismissed",
                 );
             }
-            crate::operations_v2::recommendation_ops::resolve(
+            crate::operations::recommendation_ops::resolve(
                 env,
                 required("recommendation_id")?,
                 status,
@@ -315,22 +315,20 @@ fn dispatch_rpc(
             env,
             required("language_profile_id")?,
         ),
-        "create_review_session" => crate::operations_v2::review_ops::create_session(
+        "create_review_session" => crate::operations::review_ops::create_session(
             env,
             required("language_profile_id")?,
             rpc_param(params, "source").unwrap_or("online"),
         ),
-        "get_review_queue" => {
-            crate::operations_v2::review_queue::queue(env, required("session_id")?)
-        }
+        "get_review_queue" => crate::operations::review_queue::queue(env, required("session_id")?),
         "review_card" => {
             let session_id = required("session_id")?.to_owned();
             let event: handlers::review::ReviewEventParams =
                 serde_json::from_value(params.clone())?;
-            crate::operations_v2::review_ops::submit_event(
+            crate::operations::review_ops::submit_event(
                 env,
                 &session_id,
-                crate::operations_v2::review_ops::ReviewEventInputData {
+                crate::operations::review_ops::ReviewEventInputData {
                     client_operation_id: &event.client_operation_id,
                     card_id: &event.card_id,
                     grade: event.grade,
@@ -344,8 +342,8 @@ fn dispatch_rpc(
                 },
             )
         }
-        "undo_review" => crate::operations_v2::review_ops::undo_last(env, required("session_id")?),
-        "complete_review_session" => crate::operations_v2::review_ops::complete_session(
+        "undo_review" => crate::operations::review_ops::undo_last(env, required("session_id")?),
+        "complete_review_session" => crate::operations::review_ops::complete_session(
             env,
             required("session_id")?,
             u32_param("card_count")?,
@@ -987,4 +985,213 @@ mod tests {
 
         std::fs::remove_dir_all(dir).unwrap();
     }
+}
+
+// FUZZ SUPPORT BELOW: excluded from production line coverage.
+
+/// Drive the real HTTP handler without binding a socket.
+#[cfg(feature = "fuzzing")]
+#[allow(clippy::expect_used, missing_docs)]
+pub(crate) fn fuzz_boundary(
+    env: &Env,
+    registry: &crate::BuiltInPackRegistry,
+    dir: &Path,
+    args: &serde_json::Value,
+    data: &[u8],
+) {
+    let _ = registry;
+    let assets = dir.join("assets");
+    std::fs::create_dir_all(&assets).expect("assets dir");
+    for ext in [
+        "html", "css", "js", "wasm", "json", "svg", "png", "ico", "txt",
+    ] {
+        std::fs::write(assets.join(format!("index.{ext}")), b"fuzz asset").expect("asset");
+    }
+    let state = AppState {
+        env: env.clone(),
+        registry: Arc::new(crate::built_in_language_packs().expect("registry")),
+        assets: assets.canonicalize().expect("assets path"),
+        port: 7777,
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        let methods = [
+            "health",
+            "list_language_profiles",
+            "list_language_packs",
+            "get_language_pack",
+            "create_language_profile",
+            "update_profile",
+            "get_dashboard",
+            "get_learning_state",
+            "get_next_lesson",
+            "start_lesson",
+            "list_lessons",
+            "get_lesson",
+            "complete_lesson",
+            "validate_lesson_result",
+            "apply_lesson_result",
+            "list_error_targets",
+            "get_error_target",
+            "complete_error_recheck",
+            "create_listening_attempt",
+            "get_tutor_context",
+            "list_cards",
+            "get_card",
+            "patch_card",
+            "set_card_status",
+            "list_recommendations",
+            "resolve_recommendation",
+            "get_card_redesign_candidates",
+            "create_review_session",
+            "get_review_queue",
+            "review_card",
+            "undo_review",
+            "complete_review_session",
+            "evaluate_review_answer",
+            "get_review_summary",
+            "get_review_forecast",
+            "get_review_retention",
+            "unknown",
+        ];
+        for method in methods {
+            for params in [args.clone(), serde_json::json!({})] {
+                let body =
+                    serde_json::json!({"jsonrpc":"2.0","id":9,"method":method,"params":params})
+                        .to_string();
+                let request = HttpRequest::builder()
+                    .method("POST")
+                    .uri("/rpc")
+                    .header("host", "127.0.0.1:7777")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .expect("request");
+                let response = handle(State(state.clone()), request).await;
+                let bytes = to_bytes(response.into_body(), 1024 * 1024)
+                    .await
+                    .expect("response");
+                let json: serde_json::Value =
+                    serde_json::from_slice(&bytes).expect("RPC response JSON");
+                assert_eq!(json["id"], 9);
+            }
+        }
+        for (method, path, host, origin, ctype, body, expected) in [
+            ("GET", "/rpc", "evil", "", "", b"".as_slice(), 403),
+            (
+                "POST",
+                "/rpc",
+                "localhost:7777",
+                "http://evil",
+                "application/json",
+                b"",
+                403,
+            ),
+            ("GET", "/rpc", "localhost:7777", "", "", b"", 405),
+            ("POST", "/rpc", "localhost:7777", "", "text/plain", b"", 415),
+            (
+                "POST",
+                "/rpc",
+                "localhost:7777",
+                "",
+                "application/json",
+                b"{",
+                200,
+            ),
+            (
+                "POST",
+                "/rpc",
+                "localhost:7777",
+                "",
+                "application/json",
+                b"{\"jsonrpc\":\"1.0\",\"id\":1,\"method\":\"health\"}",
+                200,
+            ),
+            (
+                "GET",
+                "/api/v1/export/full",
+                "localhost:7777",
+                "",
+                "",
+                b"",
+                400,
+            ),
+            (
+                "POST",
+                "/api/v1/export/full",
+                "localhost:7777",
+                "",
+                "",
+                b"",
+                405,
+            ),
+            (
+                "GET",
+                "/api/v1/export/full?language_profile_id=missing",
+                "localhost:7777",
+                "",
+                "",
+                b"",
+                200,
+            ),
+            (
+                "GET",
+                "/api/v1/export/cards.csv?language_profile_id=missing",
+                "localhost:7777",
+                "",
+                "",
+                b"",
+                200,
+            ),
+            ("POST", "/other", "localhost:7777", "", "", b"", 404),
+        ] {
+            let mut builder = HttpRequest::builder()
+                .method(method)
+                .uri(path)
+                .header("host", host)
+                .header("content-type", ctype);
+            if !origin.is_empty() {
+                builder = builder.header("origin", origin);
+            }
+            let response = handle(
+                State(state.clone()),
+                builder.body(Body::from(body.to_vec())).expect("request"),
+            )
+            .await;
+            assert_eq!(response.status().as_u16(), expected);
+        }
+        for path in [
+            "/",
+            "/route",
+            "/missing.js",
+            "/%2e",
+            "/../escape",
+            "/index.html",
+            "/index.css",
+            "/index.js",
+            "/index.wasm",
+            "/index.json",
+            "/index.svg",
+            "/index.png",
+            "/index.ico",
+            "/index.txt",
+        ] {
+            let request = HttpRequest::builder()
+                .uri(path)
+                .header("host", "localhost:7777")
+                .body(Body::empty())
+                .expect("request");
+            let _ = handle(State(state.clone()), request).await;
+        }
+        let request = HttpRequest::builder()
+            .method("POST")
+            .uri("/rpc")
+            .header("host", "localhost:7777")
+            .header("content-type", "application/json")
+            .body(Body::from(data.to_vec()))
+            .expect("fuzz HTTP request");
+        let _ = handle(State(state.clone()), request).await;
+    });
 }

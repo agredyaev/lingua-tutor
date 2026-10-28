@@ -98,6 +98,10 @@ struct Client {
     config: TunnelConfig,
     endpoint: String,
     instance_id: String,
+    // FUZZ SUPPORT BEGIN
+    #[cfg(feature = "fuzzing")]
+    fuzz_peer: Option<(u8, std::sync::atomic::AtomicUsize)>,
+    // FUZZ SUPPORT END
 }
 
 impl Client {
@@ -116,6 +120,10 @@ impl Client {
             config,
             endpoint,
             instance_id: new_instance_id(),
+            // FUZZ SUPPORT BEGIN
+            #[cfg(feature = "fuzzing")]
+            fuzz_peer: None,
+            // FUZZ SUPPORT END
         }))
     }
 
@@ -292,6 +300,67 @@ impl Client {
         shard_token: Option<String>,
         timeout: Duration,
     ) -> Result<HttpResponse, String> {
+        // FUZZ SUPPORT BEGIN
+        #[cfg(feature = "fuzzing")]
+        if let Some((seed, polls)) = &self.fuzz_peer {
+            tokio::task::yield_now().await;
+            let (status, body) = if url.contains("/poll?") {
+                let call = polls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if *seed == 32 {
+                    (418, vec![])
+                } else if *seed == 64 {
+                    (200, vec![b'x'; MAX_POLL_BODY_BYTES + 1])
+                } else if *seed == 128 {
+                    (200, b"{".to_vec())
+                } else if call == 0 && *seed == 16 {
+                    return Err("scripted transport failure".into());
+                } else {
+                    match call {
+                        0 => {
+                            let commands=(0..20).map(|i|serde_json::json!({"request_id":format!("r-{i}"),"shard_token":"s","command_type":"future"})).collect::<Vec<_>>();
+                            (
+                                200,
+                                serde_json::to_vec(&serde_json::json!({"commands":commands}))
+                                    .map_err(|e| e.to_string())?,
+                            )
+                        }
+                        1 => (204, vec![]),
+                        _ => (401, vec![]),
+                    }
+                }
+            } else if url.ends_with("/response") {
+                if *seed == 5 {
+                    return Err("scripted post failure".into());
+                }
+                (
+                    match seed % 6 {
+                        0 => 200,
+                        1 => 404,
+                        2 => 403,
+                        3 => 400,
+                        4 => 503,
+                        _ => 401,
+                    },
+                    vec![],
+                )
+            } else {
+                (
+                    match seed % 3 {
+                        0 => 200,
+                        1 => 403,
+                        _ => 418,
+                    },
+                    vec![],
+                )
+            };
+            return Ok(HttpResponse {
+                status,
+                body,
+                received_at: Instant::now(),
+                retry_after_ms: None,
+            });
+        }
+        // FUZZ SUPPORT END
         let api_key = self.config.api_key.clone();
         let instance_id = self.instance_id.clone();
         tokio::task::spawn_blocking(move || {
@@ -751,4 +820,70 @@ mod tests {
     fn poll_envelope_limit_matches_tunnel_service_limit() {
         assert_eq!(MAX_POLL_BODY_BYTES, 10 * 1024 * 1024);
     }
+}
+
+// FUZZ SUPPORT BELOW: excluded from production line coverage.
+/// Scripted HTTP peer exercises production protocol transitions without network access.
+#[cfg(feature = "fuzzing")]
+#[allow(clippy::expect_used, missing_docs)]
+pub(crate) fn fuzz_transport(env: &Env, data: &[u8]) {
+    let seed = data.first().copied().unwrap_or(0);
+    let id = format!("tunnel_{}", "a".repeat(32));
+    assert!(TunnelConfig::production("bad".into(), "key".into()).is_err());
+    assert!(TunnelConfig::production(id.clone(), "".into()).is_err());
+    let config = TunnelConfig::production(id, "fuzz-key".into()).expect("config");
+    let mut client = Client::new(config).expect("client");
+    Arc::get_mut(&mut client).expect("unique client").fuzz_peer =
+        Some((seed, std::sync::atomic::AtomicUsize::new(0)));
+    let registry = Arc::new(crate::built_in_language_packs().expect("registry"));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    runtime.block_on(async {
+        let _=client.validate().await;
+        assert!(client.poll_loop(env.clone(),Arc::clone(&registry)).await.is_err());
+        let base=serde_json::json!({"request_id":"r","shard_token":"s","command_type":"jsonrpc","jsonrpc":{"jsonrpc":"2.0","id":1,"method":"ping"}});
+        for variant in 0..10 {
+            let mut command=base.clone();
+            match variant {0=>{},1=>command["command_type"]=serde_json::json!("session_termination"),2=>command["channel"]=serde_json::json!("other"),3=>command["jsonrpc"]=serde_json::json!({"method":"ping"}),4=>{command.as_object_mut().expect("object").remove("jsonrpc");},5=>command["jsonrpc"]=serde_json::json!({"id":1}),6=>command["command_type"]=serde_json::json!("future"),7=>command["request_id"]=serde_json::json!(""),8=>command["response_timeout"]=serde_json::json!("0s"),_=>{command=serde_json::json!({});}}
+            if variant<8 {command["response_timeout"]=serde_json::json!(if seed%6>=4 {"1ms"} else {"1s"});}
+            let raw=serde_json::value::to_raw_value(&command).expect("command");
+            let _=process_command(Arc::clone(&client),env.clone(),Arc::clone(&registry),raw,Instant::now()).await;
+        }
+        assert!(!sleep_with_deadline(Duration::from_secs(1),Some(Instant::now())).await);
+        assert!(sleep_with_deadline(Duration::ZERO,None).await);
+        // The real curl process reads only this disposable fixture through file://.
+        let raw=Client::new(TunnelConfig::production(format!("tunnel_{}","b".repeat(32)),"fuzz-key".into()).expect("config")).expect("client");
+        let _=raw.request("GET",format!("file://{}",env.db_path().display()),None,None,Duration::from_secs(1)).await;
+    });
+    for bad in [
+        b"no metadata".as_slice(),
+        b"__M__:",
+        b"__M__:oops\n0",
+        b"__M__:200\nNaN",
+        b"__M__:200\n-1",
+        b"__M__:200\n86401",
+    ] {
+        assert!(parse_curl_output(bad, "__M__:", Instant::now()).is_err());
+    }
+    let parsed =
+        parse_curl_output(b"{}\n__M__:200\n0.5\n3", "__M__:", Instant::now()).expect("metadata");
+    assert_eq!(parsed.status, 200);
+    let _ = parse_curl_output(data, "__M__:", Instant::now());
+    let _ = build_curl_config(
+        "POST",
+        "file:///fuzz-fixture",
+        "key",
+        "instance",
+        Some("shard"),
+        Some(data),
+        Duration::ZERO,
+    );
+    for ch in ["\"", "\\", "\n", "\r", "\t", "ñ"] {
+        let _ = curl_quote(ch);
+    }
+    let _ = retry_backoff(u32::from(seed), Some(1));
+    report_task(Ok(Ok(())));
+    report_task(Ok(Err("fuzz".into())));
 }

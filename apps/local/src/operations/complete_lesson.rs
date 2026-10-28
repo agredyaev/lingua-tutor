@@ -327,6 +327,38 @@ mod tests {
     }
 
     #[test]
+    fn direct_completion_uses_persisted_max_when_profile_counter_is_stale() {
+        let (path, env) = create_env("direct-stale-counter");
+        let registry = built_in_language_packs().unwrap();
+        env.connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO lessons
+                 (id, learner_language_profile_id, language_pack_id,
+                  language_pack_version, lesson_number, status, scenario,
+                  planned_goal, source, started_at, completed_at, created_at, updated_at)
+                 VALUES
+                 ('lesson-stale-8', 'llp-1', 'es-ES', '0.2.0', 8, 'completed',
+                  'seed', '', 'import', '2026-10-15T00:00:00Z',
+                  '2026-10-15T00:20:00Z', '2026-10-15T00:00:00Z',
+                  '2026-10-15T00:20:00Z')",
+                [],
+            )
+            .unwrap();
+
+        let mut input = result();
+        input.client_operation_id = "op-direct-stale".to_owned();
+        complete_lesson(&registry, &env, &input).unwrap();
+
+        let state = snapshot(&env);
+        assert_eq!(state.profile_lesson_number, 9);
+        assert_eq!(state.lessons.len(), 2);
+        assert_eq!(state.lessons[0].0, 8);
+        assert_eq!(state.lessons[1].0, 9);
+        cleanup(path);
+    }
+
+    #[test]
     fn started_lessons_complete_once_and_advance_numbers() {
         let (path, env) = create_env("started-sequence");
         let registry = built_in_language_packs().unwrap();
@@ -988,6 +1020,15 @@ pub(crate) fn complete_lesson(
         .ok_or_else(|| {
             crate::Error::operation(404, "not_found", "unknown profile", serde_json::Value::Null)
         })?;
+
+    let max_persisted_lesson_number: u32 = transaction.query_row(
+        "SELECT COALESCE(MAX(lesson_number), 0)
+         FROM lessons
+         WHERE learner_language_profile_id = ?1",
+        params![result.language_profile_id],
+        |row| row.get(0),
+    )?;
+    let current_lesson_number = current_lesson_number.max(max_persisted_lesson_number);
 
     let Some(pack) = language_pack_registry::get(registry, &pack_id) else {
         return Err(crate::Error::operation(

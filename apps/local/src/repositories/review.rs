@@ -78,14 +78,14 @@ pub const SELECT_EFFECTIVE_EVENTS_FOR_CARD: &str = "SELECT e.answered_at, e.grad
    AND e.compensates_event_id IS NULL
    AND NOT EXISTS (
        SELECT 1 FROM review_events x WHERE x.compensates_event_id = e.id)
- ORDER BY e.created_at, e.id";
+ ORDER BY e.rowid";
 
 /// Last event in a session (undo target).
 pub const SELECT_LAST_SESSION_EVENT: &str = "SELECT id, card_id, review_session_id,
     client_operation_id, presented_at, answered_at, grade, response_millis,
     answer_revealed, prior_state_hash, result_state_hash, algorithm_version,
     source, compensates_event_id, created_at
- FROM review_events WHERE review_session_id = ?1 ORDER BY created_at DESC, id DESC LIMIT 1";
+ FROM review_events WHERE review_session_id = ?1 ORDER BY rowid DESC LIMIT 1";
 
 /// Events graded today (summary + adaptation signals).
 pub const SELECT_EVENTS_SINCE: &str = "SELECT e.grade, e.response_millis

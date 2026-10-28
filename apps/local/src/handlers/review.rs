@@ -30,15 +30,20 @@ fn default_source() -> String {
 pub(crate) fn summary_for(env: &Env, profile_id: &str) -> Result<serde_json::Value> {
     let at = now();
     let database = env.connection()?;
-    let timezone: String = database.query_row(
-        "SELECT l.timezone
+    let timezone: String = database
+        .query_row(
+            "SELECT l.timezone
          FROM learner_language_profiles p
          JOIN learner_profile l ON l.id=p.learner_id
          WHERE p.id=?1",
-        params![profile_id],
-        |row| row.get(0),
-    )?;
-    let day_start = to_rfc3339(crate::operations_v2::card_budget::local_day_start_utc(
+            params![profile_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| {
+            crate::Error::operation(404, "not_found", "unknown profile", serde_json::Value::Null)
+        })?;
+    let day_start = to_rfc3339(crate::operations::card_budget::local_day_start_utc(
         at, &timezone,
     )?);
     let mut grades = [0_u32; 4];

@@ -343,6 +343,7 @@ pub(crate) fn undo_last(env: &Env, session_id: &str) -> Result<serde_json::Value
         .map_err(|error| crate::Error::RustError(error.to_string()))?;
     let mut replayed = review_engine::initial_state(scheduler, activated_at)
         .map_err(|error| crate::Error::RustError(error.to_string()))?;
+    let mut replayed_status = learning_core::CardStatus::New;
     {
         let mut statement = transaction.prepare(review::SELECT_EFFECTIVE_EVENTS_FOR_CARD)?;
         let mut rows = statement.query(params![card_id, last_id])?;
@@ -366,6 +367,9 @@ pub(crate) fn undo_last(env: &Env, session_id: &str) -> Result<serde_json::Value
                         serde_json::Value::Null,
                     )
                 })?;
+            replayed_status = next_status(replayed_status, grade).ok_or_else(|| {
+                crate::Error::RustError("invalid replayed card transition".to_owned())
+            })?;
             replayed = review_engine::apply_review(
                 scheduler,
                 &scratch,
@@ -402,6 +406,22 @@ pub(crate) fn undo_last(env: &Env, session_id: &str) -> Result<serde_json::Value
         ],
     )?;
     write_state(&transaction, &card_id, &replayed, &state_hash, &at)?;
+    let current_status: String =
+        transaction.query_row("SELECT status FROM cards WHERE id=?1", [&card_id], |r| {
+            r.get(0)
+        })?;
+    if matches!(
+        current_status.as_str(),
+        "new" | "learning" | "review" | "relearning"
+    ) {
+        update_card_status(
+            &transaction,
+            &card_id,
+            crate::repositories::card_status_db(&replayed_status),
+            None,
+            &at,
+        )?;
+    }
     transaction.commit()?;
 
     crate::json(&serde_json::json!({
@@ -824,10 +844,36 @@ mod tests {
             },
         )
         .unwrap();
+        // UUID lexical order is unrelated to insertion order within one second.
+        env.connection()
+            .unwrap()
+            .execute(
+                "UPDATE review_events SET id='zzzz-original',created_at=?1",
+                [to_rfc3339(crate::api::now())],
+            )
+            .unwrap();
         undo_last(&env, "rs-1").unwrap();
+        env.connection()
+            .unwrap()
+            .execute(
+                "UPDATE review_events SET created_at='2026-10-28T00:00:00Z'",
+                [],
+            )
+            .unwrap();
+        let before_repeat = snapshot(&env);
+        assert!(matches!(
+            undo_last(&env, "rs-1"),
+            Err(crate::Error::Operation {
+                code: "already_undone",
+                ..
+            })
+        ));
+        assert_eq!(snapshot(&env), before_repeat);
         let state = snapshot(&env);
+        assert_eq!(state.0, "new");
         assert_eq!(state.1, 0);
         assert_eq!(state.2, 0);
+        crate::operations::review_queue::queue(&env, "rs-1").unwrap();
         assert_eq!(state.3, 2);
         let compensations: u32 = env
             .connection()

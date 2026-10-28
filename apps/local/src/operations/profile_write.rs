@@ -223,6 +223,41 @@ mod tests {
         );
         let _ = std::fs::remove_file(path);
     }
+
+    #[test]
+    fn patch_response_repairs_stale_lesson_counter_projection() {
+        let (path, env) = create_env("patch-stale-counter");
+        seed_profile(&env);
+        env.connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO lessons
+                 (id,learner_language_profile_id,language_pack_id,language_pack_version,
+                  lesson_number,status,scenario,planned_goal,source,started_at,completed_at,
+                  created_at,updated_at)
+                 VALUES
+                 ('lesson-8','llp-1','es-ES','0.2.0',8,'completed','seed','','import',
+                  'a','a','a','a')",
+                [],
+            )
+            .unwrap();
+
+        let response = patch_profile(
+            &env,
+            "llp-1",
+            PatchProfileInput {
+                estimated_level: Some("A2"),
+                status: None,
+                is_default: None,
+                preferences: None,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(response["current_lesson_number"], 8);
+        assert_eq!(patch_snapshot(&env).4, 7);
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 use crate::repositories::{packs, profiles, to_rfc3339};
@@ -381,7 +416,18 @@ pub(crate) fn patch_profile(
         preferences_json,
     ) = transaction.query_row(
         "SELECT learner_id,language_pack_id,source_language,target_locale,
-                estimated_level,current_lesson_number,status,is_default,preferences_json
+                estimated_level,
+                MAX(
+                    current_lesson_number,
+                    COALESCE(
+                        (SELECT MAX(l.lesson_number)
+                         FROM lessons l
+                         WHERE l.learner_language_profile_id = learner_language_profiles.id
+                           AND l.status = 'completed'),
+                        0
+                    )
+                ) AS current_lesson_number,
+                status,is_default,preferences_json
          FROM learner_language_profiles WHERE id=?1",
         params![profile_id],
         |row| {

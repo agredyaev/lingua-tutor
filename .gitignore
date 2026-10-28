@@ -9,3 +9,8 @@ node_modules/
 .DS_Store
 /.local-dev/
 **/.lingua-tutor/
+/fuzz/coverage/
+/fuzz/seed-corpus/
+/fuzz/artifacts/
+/fuzz/corpus/
+/.rivet-cargo-home/
