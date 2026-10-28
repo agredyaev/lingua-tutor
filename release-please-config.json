@@ -1,0 +1,34 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "932201c11978148e8c686ca58c5bf31223298063",
+  "skip-github-release": true,
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "bump-patch-for-minor-pre-major": true,
+  "always-update": true,
+  "changelog-sections": [
+    { "type": "feat", "section": "Features", "hidden": false },
+    { "type": "fix", "section": "Bug Fixes", "hidden": false },
+    { "type": "perf", "section": "Performance Improvements", "hidden": false },
+    { "type": "refactor", "section": "Refactoring", "hidden": false }
+  ],
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "component": "lingua-tutor",
+      "version-file": "VERSION",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "apps/local/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "Cargo.lock",
+          "jsonpath": "$.package[?(@.name=='lingua-tutor-local')].version"
+        }
+      ]
+    }
+  }
+}

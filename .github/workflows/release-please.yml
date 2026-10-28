@@ -1,0 +1,32 @@
+name: Release Please
+
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      # Adapted from Rivet: Release Please owns the version/changelog PR.
+      # Lingua Tutor's existing CI -> e2e -> Release pipeline keeps ownership
+      # of draft creation, tested binaries, tags, publishing, and checksums.
+      #
+      # Trigger after Release rather than CI so skip-github-release only runs
+      # after the external release pipeline had a chance to create/publish the
+      # tag for a merged release PR.
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

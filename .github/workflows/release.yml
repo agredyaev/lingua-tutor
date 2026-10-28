@@ -46,8 +46,7 @@ jobs:
             exit 0
           fi
 
-          cargo_toml="$(gh api "repos/$GH_REPO/contents/apps/local/Cargo.toml?ref=$sha" --jq .content | tr -d '\n' | base64 --decode)"
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' <<< "$cargo_toml" | head -n1)"
+          version="$(gh api "repos/$GH_REPO/contents/VERSION?ref=$sha" --jq .content | tr -d '\n' | base64 --decode | tr -d '[:space:]')"
           test -n "$version"
           tag="v$version"
 
