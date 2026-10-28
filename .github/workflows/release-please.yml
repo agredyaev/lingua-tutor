@@ -2,187 +2,35 @@ name: Release Please
 
 on:
   workflow_run:
-    workflows: [e2e]
+    workflows: [CI]
     types: [completed]
     branches: [main]
   workflow_dispatch:
 
 permissions:
-  actions: write
+  actions: read
   contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
-  prepare-release:
+  release-please:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     outputs:
-      release_created: ${{ steps.prepare.outputs.release_created }}
-      release_sha: ${{ steps.prepare.outputs.release_sha }}
-      tag_name: ${{ steps.prepare.outputs.tag_name }}
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-
-      - name: Resolve source commit
-        id: source
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          EVENT_NAME: ${{ github.event_name }}
-          WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          set -euo pipefail
-          main_sha="$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq .object.sha)"
-          sha="${WORKFLOW_SHA:-$main_sha}"
-          if [[ "$sha" != "$main_sha" ]]; then
-            echo "Current main moved from $sha to $main_sha; skipping stale release calculation."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          subject="$(gh api "repos/$GH_REPO/commits/$sha" --jq '.commit.message' | head -n1)"
-          if [[ "$subject" == chore(main): release * ]]; then
-            echo "Release commit $sha already passed e2e; no second version bump."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "skip=false" >> "$GITHUB_OUTPUT"
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-
-      # The repository intentionally does not grant GITHUB_TOKEN permission to
-      # create pull requests. Release Please is still the version/changelog
-      # engine: it creates its deterministic release branch, then fails only
-      # when attempting to open the PR. The pinned action makes this behavior
-      # stable; the next step validates the generated commit before using it.
-      - name: Generate Release Please branch
-        if: steps.source.outputs.skip != 'true'
-        id: release_please
-        continue-on-error: true
-        uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4
+        id: release
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-      - name: Promote generated release commit
-        if: steps.source.outputs.skip != 'true'
-        id: prepare
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          SOURCE_SHA: ${{ steps.source.outputs.sha }}
-          RELEASE_BRANCH: release-please--branches--main--components--lingua-tutor
-        run: |
-          set -euo pipefail
-          echo "release_created=false" >> "$GITHUB_OUTPUT"
-
-          branch_sha="$(gh api "repos/$GH_REPO/git/ref/heads/$RELEASE_BRANCH" --jq .object.sha 2>/dev/null || true)"
-          if [[ -z "$branch_sha" ]]; then
-            echo "Release Please produced no release branch; there is nothing to release."
-            exit 0
-          fi
-
-          parent_sha="$(gh api "repos/$GH_REPO/commits/$branch_sha" --jq '.parents[0].sha')"
-          if [[ "$parent_sha" != "$SOURCE_SHA" ]]; then
-            echo "::error::Release Please branch is stale: parent $parent_sha, expected $SOURCE_SHA."
-            exit 1
-          fi
-
-          git fetch origin "$RELEASE_BRANCH"
-          git checkout --detach "$branch_sha"
-
-          version="$(tr -d '[:space:]' < VERSION)"
-          test -n "$version"
-
-          # Release Please updates VERSION and Cargo.toml. Keep the local
-          # workspace package entry in Cargo.lock aligned without broad lockfile
-          # regeneration.
-          VERSION_TO_SET="$version" python3 - <<'PY'
-          import os
-          from pathlib import Path
-
-          path = Path("Cargo.lock")
-          text = path.read_text()
-          marker = 'name = "lingua-tutor-local"\nversion = "'
-          start = text.find(marker)
-          if start < 0:
-              raise SystemExit("lingua-tutor-local entry not found in Cargo.lock")
-          value_start = start + len(marker)
-          value_end = text.find('"', value_start)
-          if value_end < 0:
-              raise SystemExit("invalid lingua-tutor-local version in Cargo.lock")
-          text = text[:value_start] + os.environ["VERSION_TO_SET"] + text[value_end:]
-          path.write_text(text)
-          PY
-
-          cargo check --locked -p lingua-tutor-local
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Cargo.lock
-          if ! git diff --cached --quiet; then
-            git commit --amend --no-edit
-          fi
-
-          release_sha="$(git rev-parse HEAD)"
-          release_parent="$(git rev-parse HEAD^)"
-          test "$release_parent" = "$SOURCE_SHA"
-
-          cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' apps/local/Cargo.toml | head -n1)"
-          manifest_version="$(python3 -c 'import json; print(json.load(open(".release-please-manifest.json"))["."])')"
-          lock_version="$(awk '
-            $0 == "name = \"lingua-tutor-local\"" { found=1; next }
-            found && /^version = / {
-              gsub(/^version = \"|\"$/, "", $0)
-              print
-              exit
-            }
-          ' Cargo.lock)"
-          test "$version" = "$cargo_version"
-          test "$version" = "$manifest_version"
-          test "$version" = "$lock_version"
-
-          # Fast-forward main with the commit generated by Release Please.
-          # This requires contents:write only; no PR-creation permission.
-          git push origin HEAD:main
-          gh api --method DELETE "repos/$GH_REPO/git/refs/heads/$RELEASE_BRANCH" >/dev/null 2>&1 || true
-
-          echo "Dispatching CI and e2e explicitly because pushes made with GITHUB_TOKEN do not recursively start workflows."
-          gh workflow run ci.yml --repo "$GH_REPO" --ref main
-          gh workflow run e2e.yml --repo "$GH_REPO" --ref main
-
-          wait_for_workflow() {
-            workflow="$1"
-            for _ in {1..120}; do
-              runs="$(gh api "repos/$GH_REPO/actions/workflows/$workflow/runs?head_sha=$release_sha&per_page=20")"
-              status="$(jq -r '.workflow_runs | sort_by(.created_at) | reverse | .[0].status // empty' <<< "$runs")"
-              conclusion="$(jq -r '.workflow_runs | sort_by(.created_at) | reverse | .[0].conclusion // empty' <<< "$runs")"
-              if [[ "$status" == "completed" ]]; then
-                if [[ "$conclusion" != "success" ]]; then
-                  echo "::error::$workflow completed with $conclusion for $release_sha."
-                  exit 1
-                fi
-                return 0
-              fi
-              sleep 10
-            done
-            echo "::error::$workflow did not complete for $release_sha."
-            exit 1
-          }
-
-          wait_for_workflow ci.yml
-          wait_for_workflow e2e.yml
-
-          echo "release_created=true" >> "$GITHUB_OUTPUT"
-          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
-          echo "tag_name=v$version" >> "$GITHUB_OUTPUT"
-
   release-assets:
-    needs: prepare-release
-    if: ${{ needs.prepare-release.outputs.release_created == 'true' }}
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     uses: ./.github/workflows/release.yml
     with:
-      sha: ${{ needs.prepare-release.outputs.release_sha }}
-      tag: ${{ needs.prepare-release.outputs.tag_name }}
+      tag: ${{ needs.release-please.outputs.tag_name }}
