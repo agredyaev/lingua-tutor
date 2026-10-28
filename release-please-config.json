@@ -22,11 +22,6 @@
           "type": "toml",
           "path": "apps/local/Cargo.toml",
           "jsonpath": "$.package.version"
-        },
-        {
-          "type": "toml",
-          "path": "Cargo.lock",
-          "jsonpath": "$.package[?(@.name=='lingua-tutor-local')].version"
         }
       ]
     }
