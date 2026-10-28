@@ -4,25 +4,30 @@
   "skip-github-release": true,
   "include-component-in-tag": false,
   "include-v-in-tag": true,
+  "bump-patch-for-minor-pre-major": true,
+  "always-update": true,
   "changelog-sections": [
     { "type": "feat", "section": "Features", "hidden": false },
     { "type": "fix", "section": "Bug Fixes", "hidden": false },
     { "type": "perf", "section": "Performance Improvements", "hidden": false },
     { "type": "refactor", "section": "Refactoring", "hidden": false }
   ],
-  "plugins": ["cargo-workspace"],
   "packages": {
-    "apps/local": {
-      "release-type": "rust",
+    ".": {
+      "release-type": "simple",
       "component": "lingua-tutor",
-      "include-paths": [
-        "apps/local",
-        "apps/web",
-        "crates",
-        "language-packs",
-        "tests",
-        "Cargo.toml",
-        "Cargo.lock"
+      "version-file": "VERSION",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "apps/local/Cargo.toml",
+          "jsonpath": "$.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "Cargo.lock",
+          "jsonpath": "$.package[?(@.name=='lingua-tutor-local')].version"
+        }
       ]
     }
   }
