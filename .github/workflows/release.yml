@@ -3,14 +3,22 @@ name: Release Assets
 on:
   workflow_call:
     inputs:
+      sha:
+        description: Release commit SHA that passed CI and e2e
+        required: true
+        type: string
       tag:
-        description: Existing Release Please tag whose tested CI artifacts should be published
+        description: Release tag to create and publish
         required: true
         type: string
   workflow_dispatch:
     inputs:
+      sha:
+        description: Release commit SHA that passed CI and e2e
+        required: true
+        type: string
       tag:
-        description: Existing Release Please tag whose tested CI artifacts should be published
+        description: Release tag to create and publish
         required: true
         type: string
 
@@ -31,25 +39,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          SHA: ${{ inputs.sha }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
 
-          ref_json="$(gh api "repos/$GH_REPO/git/ref/tags/$TAG")"
-          sha="$(jq -r '.object.sha' <<< "$ref_json")"
-          type="$(jq -r '.object.type' <<< "$ref_json")"
-          if [[ "$type" == "tag" ]]; then
-            tag_json="$(gh api "repos/$GH_REPO/git/tags/$sha")"
-            sha="$(jq -r '.object.sha' <<< "$tag_json")"
-          fi
-
-          version_file="$(gh api "repos/$GH_REPO/contents/VERSION?ref=$sha" --jq .content | tr -d '\n' | base64 --decode | tr -d '[:space:]')"
+          version_file="$(gh api "repos/$GH_REPO/contents/VERSION?ref=$SHA" --jq .content | tr -d '\n' | base64 --decode | tr -d '[:space:]')"
           if [[ -z "$version_file" || "$TAG" != "v$version_file" ]]; then
             echo "::error::Release tag $TAG does not match VERSION $version_file."
             exit 1
           fi
 
-          runs="$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=20")"
+          runs="$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=20")"
           run_id="$(jq -r '
             .workflow_runs
             | map(select(.status == "completed" and .conclusion == "success"))
@@ -59,7 +60,7 @@ jobs:
           ' <<< "$runs")"
 
           if [[ -z "$run_id" ]]; then
-            echo "::error::No successful CI run found for release commit $sha."
+            echo "::error::No successful CI run found for release commit $SHA."
             exit 1
           fi
 
@@ -69,7 +70,6 @@ jobs:
             exit 1
           fi
 
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
 
       - name: Download tested release assets
@@ -82,10 +82,8 @@ jobs:
           mkdir -p dist
           gh run download "$RUN_ID" --repo "$GH_REPO" --name lingua-tutor-release-assets --dir dist
 
-      - name: Verify and publish tested assets
+      - name: Verify assets
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
@@ -113,8 +111,26 @@ jobs:
             test -x "$verify_dir/lingua-tutor"
           done
 
+      - name: Create release and publish tested assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ inputs.sha }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if ! gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release create "$TAG"               --repo "$GH_REPO"               --target "$SHA"               --title "$TAG"               --generate-notes
+          fi
+
+          tag_sha="$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .object.sha)"
+          test "$tag_sha" = "$SHA"
+
           gh release upload "$TAG" dist/lingua-tutor-*.zip dist/SHA256SUMS --repo "$GH_REPO" --clobber
 
+          version="${TAG#v}"
+          expected_list="$(printf '%s\n'             SHA256SUMS             "lingua-tutor-v$version-darwin-arm64.zip"             "lingua-tutor-v$version-linux-aarch64.zip"             "lingua-tutor-v$version-linux-x64.zip" | sort)"
           release_assets="$(gh release view "$TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' | sort)"
           test "$release_assets" = "$expected_list"
 
