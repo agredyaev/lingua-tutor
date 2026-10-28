@@ -1,24 +1,16 @@
-name: Release Assets
+name: Release
 
 on:
   workflow_call:
     inputs:
-      sha:
-        description: Release commit SHA that passed CI and e2e
-        required: true
-        type: string
       tag:
-        description: Release tag to create and publish
+        description: Existing release tag whose tested CI artifacts should be published
         required: true
         type: string
   workflow_dispatch:
     inputs:
-      sha:
-        description: Release commit SHA that passed CI and e2e
-        required: true
-        type: string
       tag:
-        description: Release tag to create and publish
+        description: Existing release tag whose tested CI artifacts should be published
         required: true
         type: string
 
@@ -39,18 +31,26 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          SHA: ${{ inputs.sha }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
 
-          version_file="$(gh api "repos/$GH_REPO/contents/VERSION?ref=$SHA" --jq .content | tr -d '\n' | base64 --decode | tr -d '[:space:]')"
-          if [[ -z "$version_file" || "$TAG" != "v$version_file" ]]; then
-            echo "::error::Release tag $TAG does not match VERSION $version_file."
+          ref_json="$(gh api "repos/$GH_REPO/git/ref/tags/$TAG")"
+          sha="$(jq -r '.object.sha' <<< "$ref_json")"
+          type="$(jq -r '.object.type' <<< "$ref_json")"
+          if [[ "$type" == "tag" ]]; then
+            tag_json="$(gh api "repos/$GH_REPO/git/tags/$sha")"
+            sha="$(jq -r '.object.sha' <<< "$tag_json")"
+          fi
+
+          cargo_toml="$(gh api "repos/$GH_REPO/contents/apps/local/Cargo.toml?ref=$sha" --jq .content | tr -d '\n' | base64 --decode)"
+          version="$(sed -n 's/^version = "\([^"]*\)".*/\1/p' <<< "$cargo_toml" | head -n1)"
+          if [[ -z "$version" || "$TAG" != "v$version" ]]; then
+            echo "::error::Release tag $TAG does not match apps/local/Cargo.toml version $version."
             exit 1
           fi
 
-          runs="$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=20")"
+          runs="$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=20")"
           run_id="$(jq -r '
             .workflow_runs
             | map(select(.status == "completed" and .conclusion == "success"))
@@ -60,7 +60,7 @@ jobs:
           ' <<< "$runs")"
 
           if [[ -z "$run_id" ]]; then
-            echo "::error::No successful CI run found for release commit $SHA."
+            echo "::error::No successful CI run found for release commit $sha."
             exit 1
           fi
 
@@ -70,7 +70,9 @@ jobs:
             exit 1
           fi
 
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "Using tested CI run $run_id for release commit $sha"
 
       - name: Download tested release assets
         env:
@@ -82,8 +84,10 @@ jobs:
           mkdir -p dist
           gh run download "$RUN_ID" --repo "$GH_REPO" --name lingua-tutor-release-assets --dir dist
 
-      - name: Verify assets
+      - name: Verify and publish existing CI artifacts
         env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
@@ -101,38 +105,24 @@ jobs:
 
           expected_list="$(printf '%s\n' "${expected[@]}" | sort)"
           actual_list="$(find dist -maxdepth 1 -type f -exec basename {} \; | sort)"
-          test "$actual_list" = "$expected_list"
-
-          (cd dist && sha256sum -c SHA256SUMS)
-          for archive in dist/lingua-tutor-*.zip; do
-            test "$(unzip -Z1 "$archive")" = "lingua-tutor"
-            verify_dir="$(mktemp -d)"
-            unzip -q "$archive" -d "$verify_dir"
-            test -x "$verify_dir/lingua-tutor"
-          done
-
-      - name: Create release and publish tested assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          SHA: ${{ inputs.sha }}
-          TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-
-          if ! gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
-            gh release create "$TAG"               --repo "$GH_REPO"               --target "$SHA"               --title "$TAG"               --generate-notes
+          if [[ "$actual_list" != "$expected_list" ]]; then
+            echo "::error::Unexpected release artifact set."
+            printf 'Expected:\n%s\nActual:\n%s\n' "$expected_list" "$actual_list"
+            exit 1
           fi
 
-          tag_sha="$(gh api "repos/$GH_REPO/git/ref/tags/$TAG" --jq .object.sha)"
-          test "$tag_sha" = "$SHA"
+          (cd dist && sha256sum -c SHA256SUMS)
+          gh release upload "$TAG" dist/lingua-tutor-*.zip dist/SHA256SUMS --clobber
 
-          gh release upload "$TAG" dist/lingua-tutor-*.zip dist/SHA256SUMS --repo "$GH_REPO" --clobber
-
-          version="${TAG#v}"
-          expected_list="$(printf '%s\n'             SHA256SUMS             "lingua-tutor-v$version-darwin-arm64.zip"             "lingua-tutor-v$version-linux-aarch64.zip"             "lingua-tutor-v$version-linux-x64.zip" | sort)"
-          release_assets="$(gh release view "$TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' | sort)"
-          test "$release_assets" = "$expected_list"
+          release_assets="$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)"
+          if [[ "$release_assets" != "$expected_list" ]]; then
+            echo "::error::Published release asset set does not match the supported platform set."
+            printf 'Expected:\n%s\nActual:\n%s\n' "$expected_list" "$release_assets"
+            exit 1
+          fi
 
           latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)"
-          test "$latest" = "$TAG"
+          if [[ "$latest" != "$TAG" ]]; then
+            echo "::error::Published release $TAG is not GitHub releases/latest (got $latest)."
+            exit 1
+          fi
