@@ -55,16 +55,7 @@ jobs:
           set -euo pipefail
           version="$(tr -d '[:space:]' < VERSION)"
           cargo_version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' apps/local/Cargo.toml | head -n1)"
-          lock_version="$(awk '
-            $0 == "name = \"lingua-tutor-local\"" { found=1; next }
-            found && /^version = / {
-              if (match($0, /version = \"[^\"]+\"/)) {
-                value = substr($0, RSTART + 11, RLENGTH - 12)
-                print value
-                exit
-              }
-            }
-          ' Cargo.lock)"
+          lock_version="$(sed -n '/^name = "lingua-tutor-local"$/ { n; s/^version = "\([^"]*\)".*/\1/p; q; }' Cargo.lock)"
           test -n "$version"
           test "$version" = "$cargo_version"
           test "$version" = "$lock_version"
