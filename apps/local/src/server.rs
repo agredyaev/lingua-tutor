@@ -990,7 +990,7 @@ mod tests {
 // FUZZ SUPPORT BELOW: excluded from production line coverage.
 
 /// Drive the real HTTP handler without binding a socket.
-#[cfg(feature = "fuzzing")]
+#[cfg(fuzzing)]
 #[allow(clippy::expect_used, missing_docs)]
 pub(crate) fn fuzz_boundary(
     env: &Env,

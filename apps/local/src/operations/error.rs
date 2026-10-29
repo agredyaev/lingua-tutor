@@ -99,7 +99,7 @@ pub(crate) fn insert_error_recheck(
     Ok(())
 }
 
-#[cfg(any(test, feature = "fuzzing"))]
+#[cfg(any(test, fuzzing))]
 fn scratch_database() -> rusqlite::Result<Connection> {
     let connection = Connection::open_in_memory()?;
     connection.execute_batch(
@@ -141,7 +141,7 @@ fn scratch_database() -> rusqlite::Result<Connection> {
     Ok(connection)
 }
 
-#[cfg(feature = "fuzzing")]
+#[cfg(fuzzing)]
 /// Exercise direct error writes with arbitrary bytes and transaction rollback.
 pub fn fuzz_error_occurrence_sequence(data: &[u8]) {
     let Ok(mut database) = scratch_database() else {

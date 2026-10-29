@@ -5,7 +5,7 @@ pub use runtime::*;
 
 pub mod api;
 pub mod assets;
-#[cfg(feature = "fuzzing")]
+#[cfg(fuzzing)]
 pub mod fuzzing;
 pub mod handlers;
 pub mod mcp;

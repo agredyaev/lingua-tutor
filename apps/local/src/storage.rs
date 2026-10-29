@@ -572,7 +572,7 @@ mod tests {
 // FUZZ SUPPORT BELOW: excluded from production line coverage.
 
 /// Historical schemas, atomic migration failure, backup/restore and signing-key lifecycle.
-#[cfg(feature = "fuzzing")]
+#[cfg(fuzzing)]
 #[allow(clippy::expect_used, missing_docs)]
 pub(crate) fn fuzz_storage(data: &[u8]) {
     let seed = data.first().copied().unwrap_or(0);

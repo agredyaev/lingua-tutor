@@ -43,6 +43,7 @@ leptos = "0.8.20"
 [workspace.lints.rust]
 missing_docs = "warn" # "deny" after M2 exit gate (17-documentation.md §1)
 unsafe_code = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 
 [workspace.lints.rustdoc]
 broken_intra_doc_links = "deny"

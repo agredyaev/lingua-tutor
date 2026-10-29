@@ -99,7 +99,7 @@ struct Client {
     endpoint: String,
     instance_id: String,
     // FUZZ SUPPORT BEGIN
-    #[cfg(feature = "fuzzing")]
+    #[cfg(fuzzing)]
     fuzz_peer: Option<(u8, std::sync::atomic::AtomicUsize)>,
     // FUZZ SUPPORT END
 }
@@ -121,7 +121,7 @@ impl Client {
             endpoint,
             instance_id: new_instance_id(),
             // FUZZ SUPPORT BEGIN
-            #[cfg(feature = "fuzzing")]
+            #[cfg(fuzzing)]
             fuzz_peer: None,
             // FUZZ SUPPORT END
         }))
@@ -301,7 +301,7 @@ impl Client {
         timeout: Duration,
     ) -> Result<HttpResponse, String> {
         // FUZZ SUPPORT BEGIN
-        #[cfg(feature = "fuzzing")]
+        #[cfg(fuzzing)]
         if let Some((seed, polls)) = &self.fuzz_peer {
             tokio::task::yield_now().await;
             let (status, body) = if url.contains("/poll?") {
@@ -824,7 +824,7 @@ mod tests {
 
 // FUZZ SUPPORT BELOW: excluded from production line coverage.
 /// Scripted HTTP peer exercises production protocol transitions without network access.
-#[cfg(feature = "fuzzing")]
+#[cfg(fuzzing)]
 #[allow(clippy::expect_used, missing_docs)]
 pub(crate) fn fuzz_transport(env: &Env, data: &[u8]) {
     let seed = data.first().copied().unwrap_or(0);
