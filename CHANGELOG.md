@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.3](https://github.com/agredyaev/lingua-tutor/compare/v0.1.2...v0.1.3) (2026-10-29)
+
+
+### Bug Fixes
+
+* harden lesson lifecycle and fuzz coverage ([d8d9cda](https://github.com/agredyaev/lingua-tutor/commit/d8d9cda919eb969433ae5d47c0f6703df5db1ed7))
+* recover stale lesson counters before writes ([d33f575](https://github.com/agredyaev/lingua-tutor/commit/d33f575e5b7cdf32dcd1f31174bfa317d340384a))
+
 ## [0.1.2](https://github.com/agredyaev/lingua-tutor/compare/v0.1.1...v0.1.2) (2026-10-28)
 
 
