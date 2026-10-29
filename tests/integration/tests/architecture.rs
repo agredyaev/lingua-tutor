@@ -10,7 +10,7 @@ const CORE_CARD: &str = include_str!("../../../crates/learning-core/src/card.rs"
 const CORE: &str = include_str!("../../../crates/learning-core/src/lib.rs");
 const LOCAL_MANIFEST: &str = include_str!("../../../apps/local/Cargo.toml");
 const ROOT_MANIFEST: &str = include_str!("../../../Cargo.toml");
-const LESSON_PLAN: &str = include_str!("../../../apps/local/src/operations_v2/lesson_plan.rs");
+const LESSON_PLAN: &str = include_str!("../../../apps/local/src/operations/lesson_plan.rs");
 
 fn between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
     source
@@ -118,7 +118,7 @@ fn adaptation_internal_relationships_use_dense_u32_keys() {
     assert!(!calibration.contains("intervention_item_id: Vec<"));
     assert!(!calibration.contains("item_id: Vec<std::borrow::Cow"));
 
-    let selection = include_str!("../../../apps/local/src/operations_v2/adaptive_selection.rs");
+    let selection = include_str!("../../../apps/local/src/operations/adaptive_selection.rs");
     assert!(selection.contains("item_key: [u32; MAX_TASKS]"));
     assert!(selection.contains("item_key: [u32; MAX_FOCUS]"));
     assert!(selection.contains("selection.candidates.item_key[ci] == item_key"));
@@ -390,8 +390,8 @@ fn repository_domain_row_adapters_are_absent() {
 
 #[test]
 fn indexed_queue_and_evidence_stores_have_no_domain_behavior_methods() {
-    let queue = include_str!("../../../apps/local/src/operations_v2/review_queue.rs");
-    let evidence = include_str!("../../../apps/local/src/operations_v2/capability_read.rs");
+    let queue = include_str!("../../../apps/local/src/operations/review_queue.rs");
+    let evidence = include_str!("../../../apps/local/src/operations/capability_read.rs");
     assert!(
         !queue.contains("impl QueueColumns {"),
         "queue store contains behavior"
@@ -416,7 +416,7 @@ fn indexed_queue_and_evidence_stores_have_no_domain_behavior_methods() {
 
 #[test]
 fn evidence_pass_initializes_only_observed_slots_not_entire_capacity() {
-    let evidence = include_str!("../../../apps/local/src/operations_v2/capability_read.rs");
+    let evidence = include_str!("../../../apps/local/src/operations/capability_read.rs");
     let reset = between(
         evidence,
         "fn clear_evidence_columns(",
@@ -488,7 +488,7 @@ fn local_runtime_has_only_the_new_processing_implementation() {
 
 #[test]
 fn lesson_planning_uses_pure_passes_over_indexed_storage() {
-    let lesson = include_str!("../../../apps/local/src/operations_v2/lesson_plan.rs");
+    let lesson = include_str!("../../../apps/local/src/operations/lesson_plan.rs");
     assert!(
         !lesson.contains("impl LessonPlanState {"),
         "storage must not carry methods"
@@ -510,7 +510,7 @@ fn lesson_planning_uses_pure_passes_over_indexed_storage() {
 
 #[test]
 fn adaptive_selection_has_no_domain_methods() {
-    let s = include_str!("../../../apps/local/src/operations_v2/adaptive_selection.rs");
+    let s = include_str!("../../../apps/local/src/operations/adaptive_selection.rs");
     assert!(!s.contains("impl Selection {"));
     for n in [
         "fn new_selection(",
@@ -523,7 +523,7 @@ fn adaptive_selection_has_no_domain_methods() {
 
 #[test]
 fn candidate_and_focus_columns_use_explicit_passes() {
-    let s = include_str!("../../../apps/local/src/operations_v2/adaptive_selection.rs");
+    let s = include_str!("../../../apps/local/src/operations/adaptive_selection.rs");
     assert!(!s.contains("impl CandidateColumns {"));
     assert!(!s.contains("impl FocusColumns {"));
     for name in [
@@ -538,7 +538,7 @@ fn candidate_and_focus_columns_use_explicit_passes() {
 
 #[test]
 fn review_runtime_uses_persisted_profile_policy() {
-    let ops = include_str!("../../../apps/local/src/operations_v2/review_ops.rs");
+    let ops = include_str!("../../../apps/local/src/operations/review_ops.rs");
     assert!(
         !ops.contains("SchedulerSettings::default()"),
         "review runtime must not ignore persisted desired_retention"
@@ -639,9 +639,9 @@ fn spanish_pack_behavior_uses_direct_passes() {
         assert!(pack.contains(expected), "missing Spanish pass: {expected}");
     }
     let native = [
-        include_str!("../../../apps/local/src/operations_v2/start_lesson.rs"),
-        include_str!("../../../apps/local/src/operations_v2/complete_lesson.rs"),
-        include_str!("../../../apps/local/src/operations_v2/review_ops.rs"),
+        include_str!("../../../apps/local/src/operations/start_lesson.rs"),
+        include_str!("../../../apps/local/src/operations/complete_lesson.rs"),
+        include_str!("../../../apps/local/src/operations/review_ops.rs"),
     ];
     for source in native {
         assert!(
@@ -713,7 +713,7 @@ fn language_pack_contract_is_data_and_explicit_passes_only() {
 
 #[test]
 fn card_plan_state_has_no_domain_methods() {
-    let source = include_str!("../../../apps/local/src/operations_v2/card_plan.rs");
+    let source = include_str!("../../../apps/local/src/operations/card_plan.rs");
     assert!(
         !source.contains("impl CardPlanState {"),
         "CardPlanState must be storage only"
@@ -735,7 +735,7 @@ fn card_plan_state_has_no_domain_methods() {
 
 #[test]
 fn card_plan_output_uses_pure_functions_not_methods() {
-    let cards = include_str!("../../../apps/local/src/operations_v2/card_plan.rs");
+    let cards = include_str!("../../../apps/local/src/operations/card_plan.rs");
     assert!(
         !cards.contains("impl CardPlan {"),
         "result arrays carry behavior"
@@ -761,7 +761,7 @@ fn lesson_planning_retains_bounded_indexed_layout() {
     assert!(LESSON_PLAN.contains("Reused(u32)"));
     assert!(LESSON_PLAN.contains("New(u32)"));
     assert!(LESSON_PLAN.contains("status_source: [u32;"));
-    let cards = include_str!("../../../apps/local/src/operations_v2/card_plan.rs");
+    let cards = include_str!("../../../apps/local/src/operations/card_plan.rs");
     assert!(cards.contains("source_index: [u32; MAX_MUTATIONS]"));
     assert!(!cards.contains("source_index: [usize; MAX_MUTATIONS]"));
     assert!(!LESSON_PLAN.contains("Arc<"));

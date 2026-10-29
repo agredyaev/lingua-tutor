@@ -124,7 +124,7 @@ pub(crate) fn apply_import_text(
         return operation_error(409, "validation_expired", "token expired — re-validate");
     }
     let result = validate_lesson_result(parse_lesson_result_text(text)?)?;
-    crate::operations_v2::complete_lesson::complete_lesson(registry, env, &result)
+    crate::operations::complete_lesson::complete_lesson(registry, env, &result)
 }
 
 pub(crate) fn complete_lesson_result(
@@ -135,7 +135,7 @@ pub(crate) fn complete_lesson_result(
 ) -> Result<serde_json::Value> {
     result = validate_lesson_result(result)?;
     result.lesson.lesson_id = Some(lesson_id.to_owned());
-    crate::operations_v2::complete_lesson::complete_lesson(registry, env, &result)
+    crate::operations::complete_lesson::complete_lesson(registry, env, &result)
 }
 
 pub(crate) fn parse_lesson_result_text(text: &str) -> Result<LessonResult> {

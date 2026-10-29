@@ -568,3 +568,147 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 }
+
+// FUZZ SUPPORT BELOW: excluded from production line coverage.
+
+/// Historical schemas, atomic migration failure, backup/restore and signing-key lifecycle.
+#[cfg(fuzzing)]
+#[allow(clippy::expect_used, missing_docs)]
+pub(crate) fn fuzz_storage(data: &[u8]) {
+    let seed = data.first().copied().unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!("lingua-storage-fuzz-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&dir).expect("directory");
+    let path = dir.join("db.sqlite3");
+    let version = 1 + i64::from(seed % 5);
+    let db = Connection::open(&path).expect("db");
+    db.execute_batch(INIT).expect("v1 schema");
+    db.execute_batch("CREATE TABLE schema_migrations(id INTEGER PRIMARY KEY,name TEXT UNIQUE NOT NULL,applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL); INSERT INTO schema_migrations(id,name) VALUES(1,'0001_init.sql');PRAGMA user_version=1;").expect("history");
+    for (v, sql, name) in [
+        (2, MIGRATION_2, "0002_planner_history.sql"),
+        (3, MIGRATION_3, "0003_review_methodology.sql"),
+        (4, MIGRATION_4, "0004_methodology_calibration.sql"),
+        (5, MIGRATION_5, SCHEMA_NAME),
+    ] {
+        if v <= version {
+            db.execute_batch(sql).expect("seed schema");
+            db.execute(
+                "INSERT INTO schema_migrations(id,name) VALUES(?1,?2)",
+                rusqlite::params![v, name],
+            )
+            .expect("migration history");
+            db.pragma_update(None, "user_version", v)
+                .expect("schema version");
+        }
+    }
+    drop(db);
+    let migrated = open(&path).expect("migrate historical schema");
+    validate(&migrated).expect("migration integrity");
+    drop(migrated);
+    let env = environment(&path).expect("environment");
+    assert_eq!(env.db_path(), path);
+    drop(env);
+    let key = signing_key(&dir).expect("key");
+    assert_eq!(key, signing_key(&dir).expect("stable key"));
+    let saved = backup_if_due(&path).expect("backup").expect("first backup");
+    assert!(backup_if_due(&path).expect("backup due").is_none());
+    let old = SystemTime::now() - Duration::from_secs(91 * 86400);
+    fs::File::open(&saved)
+        .expect("backup file")
+        .set_times(fs::FileTimes::new().set_modified(old))
+        .expect("age backup");
+    let second = backup(&path).expect("backup retention");
+    assert!(!saved.exists());
+    fs::remove_file(&path).expect("remove original");
+    fs::copy(&second, &path).expect("restore");
+    drop(open(&path).expect("restored backup"));
+    assert!(backup(&dir.join("missing.sqlite3")).is_err());
+    fs::write(dir.join("secret.key"), b"short").expect("short key");
+    assert!(environment(&path).is_err());
+    let bad = dir.join("unknown.sqlite3");
+    Connection::open(&bad)
+        .expect("unknown db")
+        .execute_batch("CREATE TABLE language_packs(id TEXT); PRAGMA user_version=99;")
+        .expect("unknown schema");
+    assert!(open(&bad).is_err());
+    let current = Connection::open(&path).expect("current db");
+    current
+        .execute("UPDATE schema_migrations SET name='unknown' WHERE id=5", [])
+        .expect("unknown migration name");
+    drop(current);
+    assert!(open(&path).is_err());
+    // Force a migration failure after BEGIN; the published version must not move.
+    let broken = dir.join("rollback.sqlite3");
+    let db = Connection::open(&broken).expect("rollback db");
+    db.execute_batch(INIT).expect("init");
+    db.execute_batch("CREATE TABLE schema_migrations(id INTEGER PRIMARY KEY,name TEXT UNIQUE NOT NULL);INSERT INTO schema_migrations VALUES(1,'0001_init.sql');PRAGMA user_version=1; CREATE TABLE planner_decisions(id TEXT);").expect("conflicting migration");
+    drop(db);
+    assert!(open(&broken).is_err());
+    let db = Connection::open(&broken).expect("rollback db");
+    assert_eq!(
+        db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .expect("version"),
+        1
+    );
+    drop(db);
+
+    // Exercise rollback paths at every migration boundary.
+    let init_broken = dir.join("init-rollback.sqlite3");
+    Connection::open(&init_broken)
+        .expect("init rollback db")
+        .execute_batch("CREATE TABLE learner_profile(id TEXT); PRAGMA user_version=0;")
+        .expect("conflicting initial schema");
+    assert!(open(&init_broken).is_err());
+
+    let v2_broken = dir.join("v2-rollback.sqlite3");
+    let db = Connection::open(&v2_broken).expect("v2 rollback db");
+    db.execute_batch(INIT).expect("v1");
+    db.execute_batch("CREATE TABLE schema_migrations(id INTEGER PRIMARY KEY,name TEXT UNIQUE NOT NULL,applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL);INSERT INTO schema_migrations VALUES(1,'0001_init.sql',CURRENT_TIMESTAMP);")
+        .expect("history");
+    db.execute_batch(MIGRATION_2).expect("v2");
+    db.execute_batch("INSERT INTO schema_migrations(id,name) VALUES(2,'0002_planner_history.sql');PRAGMA user_version=2;CREATE TABLE review_daily_budget(id TEXT);")
+        .expect("v2 conflict");
+    drop(db);
+    assert!(open(&v2_broken).is_err());
+
+    let v3_broken = dir.join("v3-rollback.sqlite3");
+    let db = Connection::open(&v3_broken).expect("v3 rollback db");
+    db.execute_batch(INIT).expect("v1");
+    db.execute_batch("CREATE TABLE schema_migrations(id INTEGER PRIMARY KEY,name TEXT UNIQUE NOT NULL,applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL);INSERT INTO schema_migrations VALUES(1,'0001_init.sql',CURRENT_TIMESTAMP);")
+        .expect("history");
+    db.execute_batch(MIGRATION_2).expect("v2");
+    db.execute_batch(MIGRATION_3).expect("v3");
+    db.execute_batch("INSERT INTO schema_migrations(id,name) VALUES(2,'0002_planner_history.sql');INSERT INTO schema_migrations(id,name) VALUES(3,'0003_review_methodology.sql');PRAGMA user_version=3;ALTER TABLE lesson_metrics ADD COLUMN task_attempt_count INTEGER NOT NULL DEFAULT 0;")
+        .expect("v3 conflict");
+    drop(db);
+    assert!(open(&v3_broken).is_err());
+
+    let v4_broken = dir.join("v4-rollback.sqlite3");
+    let db = Connection::open(&v4_broken).expect("v4 rollback db");
+    db.execute_batch(INIT).expect("v1");
+    db.execute_batch("CREATE TABLE schema_migrations(id INTEGER PRIMARY KEY,name TEXT UNIQUE NOT NULL,applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL);INSERT INTO schema_migrations VALUES(1,'0001_init.sql',CURRENT_TIMESTAMP);")
+        .expect("history");
+    db.execute_batch(MIGRATION_2).expect("v2");
+    db.execute_batch(MIGRATION_3).expect("v3");
+    db.execute_batch(MIGRATION_4).expect("v4");
+    db.execute_batch("INSERT INTO schema_migrations(id,name) VALUES(2,'0002_planner_history.sql');INSERT INTO schema_migrations(id,name) VALUES(3,'0003_review_methodology.sql');INSERT INTO schema_migrations(id,name) VALUES(4,'0004_methodology_calibration.sql');PRAGMA user_version=4;ALTER TABLE learning_item_evidence ADD COLUMN observation_order INTEGER NOT NULL DEFAULT 0;")
+        .expect("v4 conflict");
+    drop(db);
+    assert!(open(&v4_broken).is_err());
+
+    // Foreign-key validation must fail closed even when SQLite allowed the bad insert.
+    let invalid_fk = Connection::open_in_memory().expect("fk validation db");
+    invalid_fk
+        .execute_batch(
+            "PRAGMA foreign_keys=OFF;
+             CREATE TABLE parent(id INTEGER PRIMARY KEY);
+             CREATE TABLE child(parent_id INTEGER REFERENCES parent(id));
+             INSERT INTO child(parent_id) VALUES(99);",
+        )
+        .expect("invalid fk fixture");
+    assert!(validate(&invalid_fk).is_err());
+
+    if seed & 7 == 0 {
+        crate::assets::write_to(&dir.join("assets")).expect("embedded assets");
+    }
+    fs::remove_dir_all(dir).expect("cleanup");
+}

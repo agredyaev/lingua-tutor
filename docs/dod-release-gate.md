@@ -8,7 +8,7 @@ This decision is based on the final `refactor/core-data-path` working tree. Func
 
 ## Structural result
 
-- One native business implementation remains: explicit `operations_v2` processing/write passes plus direct read/boundary projections.
+- One native business implementation remains: explicit `operations` processing/write passes plus direct read/boundary projections.
 - `apps/local/src/old` and `crates/application` are removed.
 - `learning-core` no longer owns entity records/object graphs or string-ID wrappers; it contains only scalar contracts, timestamps, and pure rules/hashes with real consumers.
 - Review scheduling uses explicit `u32` algorithm IDs and free passes; no scheduler behavior trait remains.
@@ -30,7 +30,7 @@ This decision is based on the final `refactor/core-data-path` working tree. Func
 | `cargo deny --locked check` | PASS |
 | fuzz workspace `cargo check --locked` | PASS |
 | fuzz workspace `cargo deny --locked ... check` | PASS |
-| `lesson_result_parse` fuzz smoke | PASS, >=1,000 runs |
+| fuzz targets: parser/component/lifecycle/tunnel/error persistence | PASS; 5,000/5,000/1,000/5,000/5,000 local runs |
 | Trunk `wasm-release` build | PASS |
 | native debug build | PASS |
 | native release build | PASS |
@@ -48,7 +48,7 @@ Representative in-process release-profile latency is now measured on 5,000 cards
 
 ## CI hardening
 
-The fuzz workflow now runs the fuzz workspace through `cargo-deny`, has a valid shell-step shape, and schedules both existing fuzz targets. The fuzz manifest declares its license and the deny policy explicitly permits the NCSA component required by `libfuzzer-sys`.
+The fuzz workflow now runs the fuzz workspace through `cargo-deny`, has a valid shell-step shape, and schedules all five fuzz targets. The fuzz manifest declares its license and the deny policy explicitly permits the NCSA component required by `libfuzzer-sys`.
 
 ## Merge/release interpretation
 

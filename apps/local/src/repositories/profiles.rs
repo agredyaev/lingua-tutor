@@ -27,16 +27,36 @@ pub const INSERT_LANGUAGE_PROFILE: &str = "INSERT INTO learner_language_profiles
  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)";
 
 /// All language profiles, default first.
-pub const SELECT_LANGUAGE_PROFILES: &str = "SELECT id, learner_id, language_pack_id,
-    source_language, target_locale, estimated_level, current_lesson_number,
-    status, is_default, preferences_json
- FROM learner_language_profiles ORDER BY is_default DESC, created_at";
+pub const SELECT_LANGUAGE_PROFILES: &str = "SELECT p.id, p.learner_id, p.language_pack_id,
+    p.source_language, p.target_locale, p.estimated_level,
+    MAX(
+        p.current_lesson_number,
+        COALESCE(
+            (SELECT MAX(l.lesson_number)
+             FROM lessons l
+             WHERE l.learner_language_profile_id = p.id
+               AND l.status = 'completed'),
+            0
+        )
+    ) AS current_lesson_number,
+    p.status, p.is_default, p.preferences_json
+ FROM learner_language_profiles p ORDER BY p.is_default DESC, p.created_at";
 
 /// One language profile by ID.
-pub const SELECT_LANGUAGE_PROFILE: &str = "SELECT id, learner_id, language_pack_id,
-    source_language, target_locale, estimated_level, current_lesson_number,
-    status, is_default, preferences_json
- FROM learner_language_profiles WHERE id = ?1";
+pub const SELECT_LANGUAGE_PROFILE: &str = "SELECT p.id, p.learner_id, p.language_pack_id,
+    p.source_language, p.target_locale, p.estimated_level,
+    MAX(
+        p.current_lesson_number,
+        COALESCE(
+            (SELECT MAX(l.lesson_number)
+             FROM lessons l
+             WHERE l.learner_language_profile_id = p.id
+               AND l.status = 'completed'),
+            0
+        )
+    ) AS current_lesson_number,
+    p.status, p.is_default, p.preferences_json
+ FROM learner_language_profiles p WHERE p.id = ?1";
 
 /// Patch mutable profile fields.
 pub const UPDATE_LANGUAGE_PROFILE: &str = "UPDATE learner_language_profiles SET

@@ -7,9 +7,6 @@ license.workspace = true
 publish.workspace = true
 autobins = false
 
-[features]
-fuzzing = []
-
 [[bin]]
 name = "lingua-tutor"
 path = "src/main.rs"

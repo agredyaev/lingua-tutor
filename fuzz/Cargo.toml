@@ -10,6 +10,14 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+serde_json = "1"
+adaptation = { path = "../crates/adaptation" }
+language-pack-api = { path = "../crates/language-pack-api" }
+language-pack-es-es = { path = "../language-packs/es-es" }
+language-pack-registry = { path = "../crates/language-pack-registry" }
+learning-core = { path = "../crates/learning-core" }
+lingua-tutor-local = { path = "../apps/local" }
+review-engine = { path = "../crates/review-engine" }
 tutor-contract = { path = "../crates/tutor-contract" }
 
 [[bin]]
@@ -19,6 +27,104 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "component_smoke"
+path = "fuzz_targets/component_smoke.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lesson_lifecycle"
+path = "fuzz_targets/lesson_lifecycle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lesson_result_stateful"
+path = "fuzz_targets/lesson_result_stateful.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "card_lifecycle"
+path = "fuzz_targets/card_lifecycle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "review_lifecycle"
+path = "fuzz_targets/review_lifecycle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "adaptation_model"
+path = "fuzz_targets/adaptation_model.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "maintenance_writes"
+path = "fuzz_targets/maintenance_writes.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tunnel_wire"
+path = "fuzz_targets/tunnel_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "error_writes"
+path = "fuzz_targets/error_writes.rs"
+test = false
+doc = false
+bench = false
+
 # Fuzz binaries only; keep panic-abort profile cargo-fuzz expects.
 [profile.release]
 debug = 1
+
+[[bin]]
+name = "contract"
+path = "fuzz_targets/contract.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "card_model"
+path = "fuzz_targets/card_model.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "boundaries"
+path = "fuzz_targets/boundaries.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "storage_lifecycle"
+path = "fuzz_targets/storage_lifecycle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "system_state"
+path = "fuzz_targets/system_state.rs"
+test = false
+doc = false
+bench = false

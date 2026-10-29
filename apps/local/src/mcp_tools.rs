@@ -242,7 +242,7 @@ fn upsert_cards(
         return crate::api::operation_error(400, "invalid_arguments", "1-20 mutations allowed");
     }
 
-    crate::operations_v2::upsert_cards::upsert_cards(
+    crate::operations::upsert_cards::upsert_cards(
         registry,
         env,
         arg(arguments, "language_profile_id"),
@@ -251,7 +251,7 @@ fn upsert_cards(
 }
 
 fn suspend_cards(arguments: &serde_json::Value, env: &Env) -> Result<ToolOutcome> {
-    match crate::operations_v2::suspend_cards::suspend_cards_json(
+    match crate::operations::suspend_cards::suspend_cards_json(
         env,
         arguments
             .get("card_ids")
@@ -303,10 +303,10 @@ fn log_error_occurrence(
         None => learning_core::CommunicativeImpact::Medium,
     };
 
-    let outcome = crate::operations_v2::log_error::log_error_occurrence(
+    let outcome = crate::operations::log_error::log_error_occurrence(
         registry,
         env,
-        crate::operations_v2::log_error::LogErrorOccurrenceInput {
+        crate::operations::log_error::LogErrorOccurrenceInput {
             language_profile_id: arg(arguments, "language_profile_id").to_owned(),
             core_category,
             original_production: arg(arguments, "original_production").to_owned(),
@@ -346,7 +346,7 @@ fn correct_lesson_record(arguments: &serde_json::Value, env: &Env) -> Result<Too
         .get("duration_seconds")
         .and_then(serde_json::Value::as_i64);
 
-    match crate::operations_v2::lesson_correction::correct_lesson_record(
+    match crate::operations::lesson_correction::correct_lesson_record(
         env,
         arg(arguments, "lesson_id"),
         optional_arg(arguments, "tutor_summary"),
@@ -429,7 +429,7 @@ pub(crate) fn call(
                 env,
                 arg(arguments, "language_profile_id"),
             ),
-            "start_lesson" => crate::operations_v2::start_lesson::start_lesson(
+            "start_lesson" => crate::operations::start_lesson::start_lesson(
                 registry,
                 env,
                 arg(arguments, "language_profile_id"),
@@ -455,7 +455,7 @@ pub(crate) fn call(
                         )
                     })?;
                 let result = handlers::lessons::validate_lesson_result(result)?;
-                crate::operations_v2::complete_lesson::complete_lesson(registry, env, &result)
+                crate::operations::complete_lesson::complete_lesson(registry, env, &result)
             }
             "upsert_cards" => upsert_cards(arguments, env, registry),
             other => crate::api::operation_error(

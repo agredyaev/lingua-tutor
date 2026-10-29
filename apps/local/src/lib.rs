@@ -5,14 +5,12 @@ pub use runtime::*;
 
 pub mod api;
 pub mod assets;
+#[cfg(fuzzing)]
+pub mod fuzzing;
 pub mod handlers;
 pub mod mcp;
 pub mod mcp_tools;
-/// Explicit data-oriented operation passes; public only for the fuzz harness.
-#[cfg(feature = "fuzzing")]
-pub mod operations_v2;
-#[cfg(not(feature = "fuzzing"))]
-pub(crate) mod operations_v2;
+pub(crate) mod operations;
 pub mod repositories;
 pub mod server;
 pub mod storage;
