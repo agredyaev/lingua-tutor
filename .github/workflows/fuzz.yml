@@ -4,9 +4,18 @@ on:
   schedule:
     - cron: "0 4 * * 1" # weekly, Monday 04:00 UTC
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/local/**'
+      - 'crates/**'
+      - 'language-packs/**'
+      - 'fuzz/**'
+      - 'scripts/fuzz_coverage.py'
+      - '.github/workflows/fuzz.yml'
 
 jobs:
   fuzz:
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,5 +27,54 @@ jobs:
       - name: supply-chain policy
         run: cargo deny --locked --manifest-path fuzz/Cargo.toml --config deny.toml check
       - run: cargo install cargo-fuzz --locked
-      - name: fuzz lesson_result_parse (120s)
-        run: cargo +nightly fuzz run lesson_result_parse -- -max_total_time=120
+      - name: fuzz lesson result parser (60s)
+        run: cargo +nightly fuzz run lesson_result_parse -- -max_total_time=60 -max_len=4096
+      - name: fuzz pure/core components (60s)
+        run: cargo +nightly fuzz run component_smoke -- -max_total_time=60 -max_len=512
+      - name: fuzz adaptive model (90s)
+        run: cargo +nightly fuzz run adaptation_model -- -max_total_time=90 -max_len=512
+      - name: fuzz lesson lifecycle and SQLite invariants (120s)
+        run: cargo +nightly fuzz run lesson_lifecycle -- -max_total_time=120 -max_len=64
+      - name: fuzz rich lesson-result persistence (120s)
+        run: cargo +nightly fuzz run lesson_result_stateful -- -max_total_time=120 -max_len=64
+      - name: fuzz card lifecycle (120s)
+        run: cargo +nightly fuzz run card_lifecycle -- -max_total_time=120 -max_len=96
+      - name: fuzz review lifecycle (120s)
+        run: cargo +nightly fuzz run review_lifecycle -- -max_total_time=120 -max_len=96
+      - name: fuzz standalone maintenance writes (120s)
+        run: cargo +nightly fuzz run maintenance_writes -- -max_total_time=120 -max_len=96
+      - name: fuzz tunnel wire and retry policy (60s)
+        run: cargo +nightly fuzz run tunnel_wire -- -max_total_time=60 -max_len=2048
+      - name: fuzz error persistence (60s)
+        run: cargo +nightly fuzz run error_writes -- -max_total_time=60 -max_len=512
+      - name: fuzz structured contract validation (60s)
+        run: cargo +nightly fuzz run contract -- -max_total_time=60 -max_len=512
+      - name: fuzz mutation planner (60s)
+        run: cargo +nightly fuzz run card_model -- -max_total_time=60 -max_len=64
+      - name: fuzz HTTP and MCP boundaries (120s)
+        run: cargo +nightly fuzz run boundaries -- -max_total_time=120 -max_len=512
+      - name: fuzz migrations and backups (120s)
+        run: cargo +nightly fuzz run storage_lifecycle -- -max_total_time=120 -max_len=64
+      - name: fuzz complete system state (120s)
+        run: cargo +nightly fuzz run system_state -- -max_total_time=120 -max_len=96
+
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-fuzz --locked
+      - name: Fuzz executable-line coverage, minimum 86 percent per file
+        run: python3 scripts/fuzz_coverage.py --minimum 86
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fuzz-coverage
+          path: |
+            fuzz/coverage/system_state/summary.json
+            fuzz/coverage/system_state/metadata.json
+            fuzz/coverage/system_state/coverage.lcov
