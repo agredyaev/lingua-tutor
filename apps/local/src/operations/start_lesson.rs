@@ -158,8 +158,7 @@ mod tests {
 
         let next = crate::handlers::records::next_lesson_for(&env, "llp-1").unwrap();
         assert_eq!(next["lesson_number"], 5);
-        let context =
-            crate::handlers::records::tutor_context_for(&registry, &env, "llp-1").unwrap();
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
         assert_eq!(context["next_lesson_number"], 5);
         let dashboard = crate::handlers::records::dashboard_for(&env, "llp-1").unwrap();
         assert_eq!(dashboard["next_lesson_number"], 5);
@@ -172,12 +171,9 @@ mod tests {
     #[test]
     fn repeated_start_returns_existing_open_lesson() {
         let (path, env) = create_env("repeat-start");
-        let registry = built_in_language_packs().unwrap();
 
-        let first =
-            start_lesson(&registry, &env, "llp-1", "pharmacy", "buy medicine", "mcp").unwrap();
-        let second =
-            start_lesson(&registry, &env, "llp-1", "transport", "buy a ticket", "mcp").unwrap();
+        let first = start_lesson(&env, "llp-1", "pharmacy", "buy medicine", "mcp").unwrap();
+        let second = start_lesson(&env, "llp-1", "transport", "buy a ticket", "mcp").unwrap();
 
         assert_eq!(second["id"], first["id"]);
         assert_eq!(second["lesson_number"], first["lesson_number"]);
@@ -211,7 +207,6 @@ mod tests {
     #[test]
     fn start_uses_persisted_max_when_profile_counter_is_stale() {
         let (path, env) = create_env("stale-counter");
-        let registry = built_in_language_packs().unwrap();
         env.connection()
             .unwrap()
             .execute(
@@ -225,15 +220,7 @@ mod tests {
         let profiles = crate::handlers::profiles::list_profiles(&env).unwrap();
         assert_eq!(profiles[0]["current_lesson_number"], 4);
 
-        let result = start_lesson(
-            &registry,
-            &env,
-            "llp-1",
-            "pharmacy",
-            "repair counter",
-            "mcp",
-        )
-        .unwrap();
+        let result = start_lesson(&env, "llp-1", "pharmacy", "repair counter", "mcp").unwrap();
 
         assert_eq!(result["lesson_number"], 5);
         let db = env.connection().unwrap();
@@ -256,16 +243,15 @@ mod tests {
     #[test]
     fn abandoned_lesson_number_is_not_reused_by_reads_or_start() {
         let (path, env) = create_env("abandoned-number");
-        let registry = built_in_language_packs().unwrap();
         env.connection()
             .unwrap()
             .execute(
                 "INSERT INTO lessons
-                 (id,learner_language_profile_id,language_pack_id,language_pack_version,
+                 (id,learner_language_profile_id,
                   lesson_number,status,scenario,planned_goal,source,started_at,
                   created_at,updated_at)
                  VALUES
-                 ('abandoned-5','llp-1','es-ES','0.2.0',5,'abandoned',
+                 ('abandoned-5','llp-1',5,'abandoned',
                   'transport','','mcp','2026-10-16T00:00:00Z',
                   '2026-10-16T00:00:00Z','2026-10-16T00:00:00Z')",
                 [],
@@ -274,14 +260,12 @@ mod tests {
 
         let next = crate::handlers::records::next_lesson_for(&env, "llp-1").unwrap();
         assert_eq!(next["lesson_number"], 6);
-        let context =
-            crate::handlers::records::tutor_context_for(&registry, &env, "llp-1").unwrap();
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
         assert_eq!(context["next_lesson_number"], 6);
         let dashboard = crate::handlers::records::dashboard_for(&env, "llp-1").unwrap();
         assert_eq!(dashboard["next_lesson_number"], 6);
 
-        let started =
-            start_lesson(&registry, &env, "llp-1", "pharmacy", "new attempt", "mcp").unwrap();
+        let started = start_lesson(&env, "llp-1", "pharmacy", "new attempt", "mcp").unwrap();
         assert_eq!(started["lesson_number"], 6);
 
         let _ = std::fs::remove_file(path);

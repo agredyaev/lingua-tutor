@@ -184,11 +184,11 @@ mod tests {
             .unwrap()
             .execute(
                 "INSERT INTO lessons
-                 (id,learner_language_profile_id,language_pack_id,language_pack_version,
+                 (id,learner_language_profile_id,
                   lesson_number,status,scenario,planned_goal,source,started_at,completed_at,
                   created_at,updated_at)
                  VALUES
-                 ('lesson-8','llp-1','es-ES','0.2.0',8,'completed','seed','','import',
+                 ('lesson-8','llp-1',8,'completed','seed','','import',
                   'a','a','a','a')",
                 [],
             )

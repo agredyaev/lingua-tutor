@@ -824,21 +824,20 @@ pub(crate) fn fuzz_transport(env: &Env, data: &[u8]) {
     let mut client = Client::new(config).expect("client");
     Arc::get_mut(&mut client).expect("unique client").fuzz_peer =
         Some((seed, std::sync::atomic::AtomicUsize::new(0)));
-    let registry = Arc::new(crate::built_in_language_packs().expect("registry"));
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .expect("runtime");
     runtime.block_on(async {
         let _=client.validate().await;
-        assert!(client.poll_loop(env.clone(),Arc::clone(&registry)).await.is_err());
+        assert!(client.poll_loop(env.clone()).await.is_err());
         let base=serde_json::json!({"request_id":"r","shard_token":"s","command_type":"jsonrpc","jsonrpc":{"jsonrpc":"2.0","id":1,"method":"ping"}});
         for variant in 0..10 {
             let mut command=base.clone();
             match variant {0=>{},1=>command["command_type"]=serde_json::json!("session_termination"),2=>command["channel"]=serde_json::json!("other"),3=>command["jsonrpc"]=serde_json::json!({"method":"ping"}),4=>{command.as_object_mut().expect("object").remove("jsonrpc");},5=>command["jsonrpc"]=serde_json::json!({"id":1}),6=>command["command_type"]=serde_json::json!("future"),7=>command["request_id"]=serde_json::json!(""),8=>command["response_timeout"]=serde_json::json!("0s"),_=>{command=serde_json::json!({});}}
             if variant<8 {command["response_timeout"]=serde_json::json!(if seed%6>=4 {"1ms"} else {"1s"});}
             let raw=serde_json::value::to_raw_value(&command).expect("command");
-            let _=process_command(Arc::clone(&client),env.clone(),Arc::clone(&registry),raw,Instant::now()).await;
+            let _=process_command(Arc::clone(&client),env.clone(),raw,Instant::now()).await;
         }
         assert!(!sleep_with_deadline(Duration::from_secs(1),Some(Instant::now())).await);
         assert!(sleep_with_deadline(Duration::ZERO,None).await);

@@ -951,14 +951,7 @@ mod tests {
 /// Drive the real HTTP handler without binding a socket.
 #[cfg(fuzzing)]
 #[allow(clippy::expect_used, missing_docs)]
-pub(crate) fn fuzz_boundary(
-    env: &Env,
-    registry: &crate::BuiltInPackRegistry,
-    dir: &Path,
-    args: &serde_json::Value,
-    data: &[u8],
-) {
-    let _ = registry;
+pub(crate) fn fuzz_boundary(env: &Env, dir: &Path, args: &serde_json::Value, data: &[u8]) {
     let assets = dir.join("assets");
     std::fs::create_dir_all(&assets).expect("assets dir");
     for ext in [
@@ -968,7 +961,6 @@ pub(crate) fn fuzz_boundary(
     }
     let state = AppState {
         env: env.clone(),
-        registry: Arc::new(crate::built_in_language_packs().expect("registry")),
         assets: assets.canonicalize().expect("assets path"),
         port: 7777,
     };
@@ -980,8 +972,6 @@ pub(crate) fn fuzz_boundary(
         let methods = [
             "health",
             "list_language_profiles",
-            "list_language_packs",
-            "get_language_pack",
             "create_language_profile",
             "update_profile",
             "get_dashboard",

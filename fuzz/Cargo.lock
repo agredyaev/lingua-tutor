@@ -656,35 +656,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "language-pack-api"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "language-pack-es-es"
-version = "0.1.0"
-dependencies = [
- "language-pack-api",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "language-pack-registry"
-version = "0.1.0"
-dependencies = [
- "language-pack-api",
- "serde",
- "thiserror",
-]
-
-[[package]]
 name = "learning-core"
 version = "0.1.0"
 dependencies = [
- "language-pack-api",
  "serde",
 ]
 
@@ -720,9 +694,6 @@ name = "lingua-tutor-fuzz"
 version = "0.0.0"
 dependencies = [
  "adaptation",
- "language-pack-api",
- "language-pack-es-es",
- "language-pack-registry",
  "learning-core",
  "libfuzzer-sys",
  "lingua-tutor-local",
@@ -733,16 +704,13 @@ dependencies = [
 
 [[package]]
 name = "lingua-tutor-local"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "adaptation",
  "axum",
  "chrono",
  "hex",
  "hmac",
- "language-pack-api",
- "language-pack-es-es",
- "language-pack-registry",
  "learning-core",
  "review-engine",
  "rusqlite",
@@ -1330,7 +1298,6 @@ dependencies = [
 name = "tutor-contract"
 version = "0.1.0"
 dependencies = [
- "language-pack-api",
  "learning-core",
  "serde",
  "serde_json",

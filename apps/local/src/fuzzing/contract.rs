@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 /// Fuzz parsed invalid lesson-result documents and deterministic validation.
 pub fn exercise_contract(data: &[u8]) {
     let seed = data.first().copied().unwrap_or(0);
-    let mut doc = serde_json::to_value(rich_lesson_result("p", "0.2.0", "op".into(), None, 0))
+    let mut doc = serde_json::to_value(rich_lesson_result("p", "op".into(), None, 0))
         .expect("serialize fixture");
     let long = "ñ".repeat(tutor_contract::bounds::MAX_LONG_TEXT + 1);
     match seed % 16 {

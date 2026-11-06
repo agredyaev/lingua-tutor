@@ -9,24 +9,19 @@ pub fn exercise_boundaries(data: &[u8]) {
     let path = dir.join("db.sqlite3");
     crate::storage::open(&path).expect("database");
     let env = Env::new(path.clone(), "fuzz-key".into());
-    let registry = crate::built_in_language_packs().expect("registry");
-    let profile = crate::operations::profile_write::create_profile(&registry, &env, "es-ES", "ru")
-        .expect("profile");
+    let profile =
+        crate::operations::profile_write::create_profile(&env, "es-ES", "ru").expect("profile");
     let id = profile["id"].as_str().expect("profile id");
-    let version = language_pack_registry::manifest(&registry, "es-ES")
-        .expect("manifest")
-        .version
-        .to_string();
     seed_fuzz_learning_item(&env, id);
-    let result = rich_lesson_result(id, &version, "boundary-complete".into(), None, 0);
+    let result = rich_lesson_result(id, "boundary-complete".into(), None, 0);
     let text = serde_json::to_string(&result).expect("document");
     let preview =
         crate::handlers::lessons::validate_import_text(&text, &env).expect("valid import");
     let token = preview["validation_token"].as_str().expect("token");
-    let completion = crate::handlers::lessons::apply_import_text(&registry, &text, token, &env)
-        .expect("apply import");
+    let completion =
+        crate::handlers::lessons::apply_import_text(&text, token, &env).expect("apply import");
     let _ = no_storage_error(crate::handlers::lessons::apply_import_text(
-        &registry, &text, "bad", &env,
+        &text, "bad", &env,
     ));
     let _ = no_storage_error(crate::handlers::lessons::validate_import_text("{", &env));
     let mut invalid = result.clone();
@@ -57,7 +52,7 @@ pub fn exercise_boundaries(data: &[u8]) {
     let session =
         crate::operations::review_ops::create_session(&env, id, "online").expect("session");
     let at = crate::repositories::to_rfc3339(crate::api::now());
-    let mut args = json!({"language_profile_id":id,"language_pack_id":"es-ES","source_language":"ru","pack_id":"es-ES","scenario":"fuzz",
+    let mut args = json!({"language_profile_id":id,"source_language":"ru","target_locale":"es-ES","scenario":"fuzz",
     "lesson_id":lesson,"lesson_result":result,"text":text,"validation_token":token,
     "card_id":card,"card_ids":[card],"card_mutations":result.card_mutations,
     "core_category":"grammar","original_production":"wrong","corrected_production":"right","communicative_impact":"high",
@@ -91,7 +86,6 @@ pub fn exercise_boundaries(data: &[u8]) {
             let request = json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":name,"arguments":arguments}});
             let response = crate::mcp::dispatch_jsonrpc(
                 &env,
-                &registry,
                 &serde_json::to_vec(&request).expect("MCP request"),
             )
             .expect("MCP result");
@@ -110,13 +104,9 @@ pub fn exercise_boundaries(data: &[u8]) {
         json!({"id":1,"method":"unknown"}),
         json!({"method":"ping"}),
     ] {
-        let _ = crate::mcp::dispatch_jsonrpc(
-            &env,
-            &registry,
-            &serde_json::to_vec(&request).expect("request"),
-        );
+        let _ = crate::mcp::dispatch_jsonrpc(&env, &serde_json::to_vec(&request).expect("request"));
     }
-    let _ = crate::mcp::dispatch_jsonrpc(&env, &registry, data);
+    let _ = crate::mcp::dispatch_jsonrpc(&env, data);
     let _ = crate::handlers::records::health(&env).expect("health");
     let _ = crate::handlers::records::learning_state_for(&env, id).expect("state");
     let _ = crate::handlers::records::get_error_target(&env, &error).expect("error details");
@@ -128,8 +118,8 @@ pub fn exercise_boundaries(data: &[u8]) {
     let csv = crate::handlers::export::cards_csv_for(&env, id).expect("CSV export");
     assert!(!csv.body.is_empty());
     let _ = completion;
-    crate::server::fuzz_boundary(&env, &registry, &dir, &args, data);
-    negative_writes(&env, &registry, id, &error, &card);
+    crate::server::fuzz_boundary(&env, &dir, &args, data);
+    negative_writes(&env, id, &error, &card);
     let db_error = crate::repositories::RepoError::from(rusqlite::Error::InvalidQuery);
     assert!(db_error.to_string().contains("database"));
     let app_error = crate::repositories::RepoError::from(crate::Error::RustError("fixture".into()));
@@ -139,32 +129,33 @@ pub fn exercise_boundaries(data: &[u8]) {
     std::fs::remove_dir_all(dir).expect("cleanup boundaries");
 }
 
-fn negative_writes(
-    env: &Env,
-    registry: &crate::BuiltInPackRegistry,
-    profile: &str,
-    error: &str,
-    card: &str,
-) {
+fn negative_writes(env: &Env, profile: &str, error: &str, card: &str) {
     let make = |target: &str| crate::operations::log_error::LogErrorOccurrenceInput {
         language_profile_id: profile.into(),
         core_category: learning_core::CoreErrorCategory::Grammar,
         original_production: "wrong".into(),
         corrected_production: "right".into(),
-        pack_error_code: None,
+        error_code: None,
         explanation: None,
         error_target_id: Some(target.into()),
         communicative_impact: learning_core::CommunicativeImpact::High,
     };
     assert!(matches!(
-        crate::operations::log_error::log_error_occurrence(registry, env, make("missing")),
+        crate::operations::log_error::log_error_occurrence(env, make("missing")),
         Err(Error::Operation {
             code: "not_found",
             ..
         })
     ));
     let db = env.connection().expect("db");
-    db.execute("INSERT INTO learner_language_profiles(id,learner_id,language_pack_id,source_language,target_locale,status,is_default,created_at,updated_at) SELECT 'foreign-profile',learner_id,'es-ES','en','es-ES','archived',0,created_at,updated_at FROM learner_language_profiles WHERE id=?1",[profile]).expect("foreign archived profile fixture");
+    db.execute(
+        "INSERT INTO learner_language_profiles
+         (id,learner_id,source_language,target_locale,status,is_default,created_at,updated_at)
+         SELECT 'foreign-profile',learner_id,'en','es-ES','archived',0,created_at,updated_at
+         FROM learner_language_profiles WHERE id=?1",
+        [profile],
+    )
+    .expect("foreign archived profile fixture");
     let other = "foreign-profile";
     db.execute(
         "UPDATE error_targets SET learner_language_profile_id=?2 WHERE id=?1",
@@ -172,7 +163,7 @@ fn negative_writes(
     )
     .expect("foreign target fixture");
     assert!(matches!(
-        crate::operations::log_error::log_error_occurrence(registry, env, make(error)),
+        crate::operations::log_error::log_error_occurrence(env, make(error)),
         Err(Error::Operation {
             code: "profile_mismatch",
             ..
@@ -183,7 +174,8 @@ fn negative_writes(
         rusqlite::params![error, profile],
     )
     .expect("restore target");
-    let mut result = rich_lesson_result(profile, "0.2.0", "cosmetic-fixture".into(), None, 0);
+
+    let mut result = rich_lesson_result(profile, "cosmetic-fixture".into(), None, 0);
     let mut mutation = result.card_mutations.remove(0);
     mutation.operation = tutor_contract::MutationOperation::Update;
     mutation.client_operation_id = "standalone-cosmetic-unique".into();
@@ -193,31 +185,6 @@ fn negative_writes(
     payload.answer = db
         .query_row("SELECT answer FROM cards WHERE id=?1", [card], |r| r.get(0))
         .expect("answer");
-    crate::operations::upsert_cards::upsert_cards(registry, env, profile, &[mutation])
+    crate::operations::upsert_cards::upsert_cards(env, profile, &[mutation])
         .expect("cosmetic update");
-    db.execute("INSERT INTO language_packs(id,package_name,version,contract_version,target_language,target_locale,display_name,installed_at,updated_at) VALUES('unregistered','unregistered','0.1.0',1,'zz','zz','Unavailable','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')",[]).expect("unregistered pack fixture");
-    db.execute(
-        "UPDATE learner_language_profiles SET language_pack_id='unregistered' WHERE id=?1",
-        [profile],
-    )
-    .expect("unregistered profile");
-    assert!(matches!(
-        crate::operations::log_error::log_error_occurrence(registry, env, make(error)),
-        Err(Error::Operation {
-            code: "pack_unavailable",
-            ..
-        })
-    ));
-    assert!(matches!(
-        crate::operations::upsert_cards::upsert_cards(registry, env, profile, &[]),
-        Err(Error::Operation {
-            code: "pack_unavailable",
-            ..
-        })
-    ));
-    db.execute(
-        "UPDATE learner_language_profiles SET language_pack_id='es-ES' WHERE id=?1",
-        [profile],
-    )
-    .expect("restore profile");
 }

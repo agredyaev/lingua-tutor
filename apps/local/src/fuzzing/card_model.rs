@@ -45,7 +45,7 @@ pub fn exercise_card_model(data: &[u8]) {
         );
         assert!(find_card(&state, "bad").is_none());
     }
-    let payload = rich_lesson_result("p", "0.2.0", "op".into(), None, 0).card_mutations[0]
+    let payload = rich_lesson_result("p", "op".into(), None, 0).card_mutations[0]
         .card
         .clone()
         .expect("payload");
@@ -124,21 +124,21 @@ pub fn exercise_card_model(data: &[u8]) {
 
 pub(super) fn lesson_model(seed: u8) {
     use crate::operations::lesson_plan::*;
-    let mut state = new_lesson_plan_state("p", "es-ES", u32::from(seed));
-    let mut result = rich_lesson_result("p", "0.2.0", "pure-plan".into(), None, 0);
+    let mut state = new_lesson_plan_state("p", u32::from(seed));
+    let mut result = rich_lesson_result("p", "pure-plan".into(), None, 0);
     add_known_lesson_item(&mut state, "li-fuzz").expect("known item");
     for (i, item) in result.new_learning_items.iter().enumerate() {
         set_lesson_normalized_item(&mut state, i, &item.target_text).expect("normalize item");
     }
-    add_lesson_mastery_signal(
-        &mut state,
-        "li-fuzz",
-        seed & 1 == 0,
-        &["family-a", "family-b", "family-c", "family-a", ""],
+    let families: &[&str] = if seed & 1 == 0 {
+        &["family-a", "family-b", "family-c"]
+    } else {
+        &["family-a"]
+    };
+    crate::operations::lesson_plan::add_lesson_mastery_signal_from_episode(
+        &mut state, "li-fuzz", None, families,
     )
     .expect("mastery history");
-    set_lesson_mastery_latest_transfer_failed(&mut state, "li-fuzz", seed & 2 != 0)
-        .expect("transfer history");
     result.mastery_changes[0].new_status = match seed % 7 {
         0 => learning_core::LearningItemStatus::Candidate,
         1 => learning_core::LearningItemStatus::Introduced,

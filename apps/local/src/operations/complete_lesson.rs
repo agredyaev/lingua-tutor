@@ -561,16 +561,14 @@ mod tests {
     #[test]
     fn direct_completion_uses_persisted_max_when_profile_counter_is_stale() {
         let (path, env) = create_env("direct-stale-counter");
-        let registry = built_in_language_packs().unwrap();
         env.connection()
             .unwrap()
             .execute(
                 "INSERT INTO lessons
-                 (id, learner_language_profile_id, language_pack_id,
-                  language_pack_version, lesson_number, status, scenario,
+                 (id, learner_language_profile_id, lesson_number, status, scenario,
                   planned_goal, source, started_at, completed_at, created_at, updated_at)
                  VALUES
-                 ('lesson-stale-8', 'llp-1', 'es-ES', '0.2.0', 8, 'completed',
+                 ('lesson-stale-8', 'llp-1', 8, 'completed',
                   'seed', '', 'import', '2026-10-15T00:00:00Z',
                   '2026-10-15T00:20:00Z', '2026-10-15T00:00:00Z',
                   '2026-10-15T00:20:00Z')",
@@ -580,7 +578,7 @@ mod tests {
 
         let mut input = result();
         input.client_operation_id = "op-direct-stale".to_owned();
-        complete_lesson(&registry, &env, &input).unwrap();
+        complete_lesson(&env, &input).unwrap();
 
         let state = snapshot(&env);
         assert_eq!(state.profile_lesson_number, 9);

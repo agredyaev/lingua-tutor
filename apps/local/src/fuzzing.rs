@@ -17,7 +17,6 @@ fn no_storage_error<T>(result: crate::Result<T>) -> Option<T> {
 
 fn minimal_lesson_result(
     profile_id: &str,
-    pack_version: &str,
     operation_id: String,
     lesson_id: Option<String>,
     scenario: &str,
@@ -26,8 +25,6 @@ fn minimal_lesson_result(
         schema_version: tutor_contract::SCHEMA_VERSION.to_owned(),
         client_operation_id: operation_id,
         language_profile_id: profile_id.to_owned(),
-        language_pack_id: "es-ES".to_owned(),
-        language_pack_version: pack_version.to_owned(),
         lesson: tutor_contract::LessonBlock {
             lesson_id,
             scenario: scenario.to_owned(),
@@ -65,7 +62,7 @@ fn latest_open(env: &Env, profile_id: &str) -> Option<(String, u32)> {
         .flatten()
 }
 
-fn assert_lesson_invariants(env: &Env, registry: &crate::BuiltInPackRegistry, profile_id: &str) {
+fn assert_lesson_invariants(env: &Env, profile_id: &str) {
     let db = env.connection().expect("fuzz database must remain open");
     let integrity: String = db
         .query_row("PRAGMA integrity_check", [], |row| row.get(0))
@@ -143,7 +140,7 @@ fn assert_lesson_invariants(env: &Env, registry: &crate::BuiltInPackRegistry, pr
         Some(u64::from(expected_next))
     );
 
-    let context = crate::handlers::records::tutor_context_for(registry, env, profile_id)
+    let context = crate::handlers::records::tutor_context_for(env, profile_id)
         .expect("tutor context projection");
     assert_eq!(
         context["next_lesson_number"].as_u64(),
@@ -164,24 +161,18 @@ pub fn exercise_lesson_lifecycle(data: &[u8]) {
         path.clone(),
         "fuzz-signing-key-012345678901234567890123".to_owned(),
     );
-    let registry = crate::built_in_language_packs().expect("built-in pack registry");
 
-    let created = crate::operations::profile_write::create_profile(&registry, &env, "es-ES", "ru")
+    let created = crate::operations::profile_write::create_profile(&env, "es-ES", "ru")
         .expect("create fuzz profile");
     let profile_id = created["id"].as_str().expect("profile id").to_owned();
-    let pack_version = language_pack_registry::manifest(&registry, "es-ES")
-        .expect("manifest")
-        .version
-        .to_owned();
 
     seed_fuzz_learning_item(&env, &profile_id);
-    let _ = crate::mcp::dispatch_jsonrpc(&env, &registry, data);
+    let _ = crate::mcp::dispatch_jsonrpc(&env, data);
 
     for (step, byte) in data.iter().copied().take(32).enumerate() {
         match byte % 8 {
             0 => {
                 let _ = no_storage_error(crate::operations::start_lesson::start_lesson(
-                    &registry,
                     &env,
                     &profile_id,
                     "fuzz",
@@ -193,13 +184,12 @@ pub fn exercise_lesson_lifecycle(data: &[u8]) {
                 let lesson_id = latest_open(&env, &profile_id).map(|row| row.0);
                 let result = rich_lesson_result(
                     &profile_id,
-                    &pack_version,
                     format!("fuzz-complete-{step}-{byte}"),
                     lesson_id,
                     0,
                 );
                 let _ = no_storage_error(crate::operations::complete_lesson::complete_lesson(
-                    &registry, &env, &result,
+                    &env, &result,
                 ));
             }
             2 => {
@@ -229,7 +219,6 @@ pub fn exercise_lesson_lifecycle(data: &[u8]) {
             }
             5 => {
                 let first = no_storage_error(crate::operations::start_lesson::start_lesson(
-                    &registry,
                     &env,
                     &profile_id,
                     "fuzz",
@@ -237,7 +226,6 @@ pub fn exercise_lesson_lifecycle(data: &[u8]) {
                     "mcp",
                 ));
                 let second = no_storage_error(crate::operations::start_lesson::start_lesson(
-                    &registry,
                     &env,
                     &profile_id,
                     "fuzz-other",
@@ -250,15 +238,10 @@ pub fn exercise_lesson_lifecycle(data: &[u8]) {
                 }
             }
             6 => {
-                let result = rich_lesson_result(
-                    &profile_id,
-                    &pack_version,
-                    format!("fuzz-direct-{step}-{byte}"),
-                    None,
-                    0,
-                );
+                let result =
+                    rich_lesson_result(&profile_id, format!("fuzz-direct-{step}-{byte}"), None, 0);
                 let _ = no_storage_error(crate::operations::complete_lesson::complete_lesson(
-                    &registry, &env, &result,
+                    &env, &result,
                 ));
             }
             _ => {
@@ -275,7 +258,7 @@ pub fn exercise_lesson_lifecycle(data: &[u8]) {
                 ));
             }
         }
-        assert_lesson_invariants(&env, &registry, &profile_id);
+        assert_lesson_invariants(&env, &profile_id);
     }
 
     drop(env);
@@ -372,10 +355,10 @@ fn seed_fuzz_learning_item(env: &Env, profile_id: &str) {
         .expect("seed learning item connection")
         .execute(
             "INSERT OR IGNORE INTO learning_items
-             (id,learner_language_profile_id,language_pack_id,item_type,target_text,
-              normalized_target_text,status,language_metadata_json,created_at,updated_at)
-             VALUES ('li-fuzz',?1,'es-ES','phrase','quiero agua','quiero agua',
-                     'learning','{}',?2,?2)",
+             (id,learner_language_profile_id,item_type,target_text,
+              normalized_target_text,status,created_at,updated_at)
+             VALUES ('li-fuzz',?1,'phrase','quiero agua','quiero agua',
+                     'learning',?2,?2)",
             rusqlite::params![profile_id, at],
         )
         .expect("seed fuzz learning item");
@@ -383,18 +366,11 @@ fn seed_fuzz_learning_item(env: &Env, profile_id: &str) {
 
 fn rich_lesson_result(
     profile_id: &str,
-    pack_version: &str,
     operation_id: String,
     lesson_id: Option<String>,
     seed: u8,
 ) -> tutor_contract::LessonResult {
-    let mut result = minimal_lesson_result(
-        profile_id,
-        pack_version,
-        operation_id,
-        lesson_id,
-        "fuzz-rich",
-    );
+    let mut result = minimal_lesson_result(profile_id, operation_id, lesson_id, "fuzz-rich");
     result.lesson.duration_seconds = Some(30 + u32::from(seed));
     result.lesson.tutor_summary = Some(format!("summary-{seed}"));
     result.lesson.next_goal = Some(format!("goal-{seed}"));
@@ -488,7 +464,7 @@ fn rich_lesson_result(
                 1 => learning_core::CommunicativeImpact::Medium,
                 _ => learning_core::CommunicativeImpact::High,
             },
-            pack_error_code: None,
+            error_code: None,
             original_production: format!("error {seed}"),
             corrected_production: format!("correcto {seed}"),
             explanation: Some("fuzz grammar repair".to_owned()),
@@ -504,9 +480,9 @@ fn rich_lesson_result(
 
     let payload = tutor_contract::CardPayload {
         intent: if seed & 32 == 0 {
-            language_pack_api::CardIntent::Production
+            learning_core::CardIntent::Production
         } else {
-            language_pack_api::CardIntent::Listening
+            learning_core::CardIntent::Listening
         },
         prompt: format!("card prompt {seed}"),
         answer: format!("card answer {seed}"),
@@ -596,21 +572,15 @@ pub fn exercise_lesson_result_stateful(data: &[u8]) {
         path.clone(),
         "fuzz-signing-key-012345678901234567890123".to_owned(),
     );
-    let registry = crate::built_in_language_packs().expect("built-in pack registry");
-    let created = crate::operations::profile_write::create_profile(&registry, &env, "es-ES", "ru")
+    let created = crate::operations::profile_write::create_profile(&env, "es-ES", "ru")
         .expect("create fuzz profile");
     let profile_id = created["id"].as_str().expect("profile id").to_owned();
-    let pack_version = language_pack_registry::manifest(&registry, "es-ES")
-        .expect("manifest")
-        .version
-        .to_owned();
     seed_fuzz_learning_item(&env, &profile_id);
 
     let source = if data.is_empty() { &[0_u8][..] } else { data };
     for (step, seed) in source.iter().copied().take(8).enumerate() {
         if seed & 1 != 0 {
             let _ = no_storage_error(crate::operations::start_lesson::start_lesson(
-                &registry,
                 &env,
                 &profile_id,
                 "fuzz-rich",
@@ -621,26 +591,24 @@ pub fn exercise_lesson_result_stateful(data: &[u8]) {
         let lesson_id = latest_open(&env, &profile_id).map(|row| row.0);
         let mut result = rich_lesson_result(
             &profile_id,
-            &pack_version,
             format!("rich-complete-{step}-{seed}"),
             lesson_id,
             seed,
         );
         deepen_lesson_result(&env, &profile_id, &mut result, seed);
         let completed = no_storage_error(crate::operations::complete_lesson::complete_lesson(
-            &registry, &env, &result,
+            &env, &result,
         ));
         if completed.is_some() {
-            let repeat =
-                crate::operations::complete_lesson::complete_lesson(&registry, &env, &result)
-                    .expect("idempotent lesson completion");
+            let repeat = crate::operations::complete_lesson::complete_lesson(&env, &result)
+                .expect("idempotent lesson completion");
             assert_eq!(repeat["status"], "duplicate");
         }
         let _ = crate::handlers::lessons::list_lessons_for(&env, &profile_id)
             .expect("lesson list after rich completion");
         let _ = crate::handlers::records::dashboard_for(&env, &profile_id)
             .expect("dashboard after rich completion");
-        assert_lesson_invariants(&env, &registry, &profile_id);
+        assert_lesson_invariants(&env, &profile_id);
         assert_database_integrity(&env);
     }
 
@@ -650,12 +618,11 @@ pub fn exercise_lesson_result_stateful(data: &[u8]) {
 
 fn card_mutation_result(
     profile_id: &str,
-    pack_version: &str,
     operation_id: String,
     card_id: &str,
     seed: u8,
 ) -> tutor_contract::LessonResult {
-    let mut result = rich_lesson_result(profile_id, pack_version, operation_id, None, 0);
+    let mut result = rich_lesson_result(profile_id, operation_id, None, 0);
     result.card_mutations.clear();
     let (operation, accepted_answer, reason) = match seed % 6 {
         0 => (
@@ -711,24 +678,13 @@ pub fn exercise_card_lifecycle(data: &[u8]) {
         path.clone(),
         "fuzz-signing-key-012345678901234567890123".to_owned(),
     );
-    let registry = crate::built_in_language_packs().expect("built-in pack registry");
-    let created = crate::operations::profile_write::create_profile(&registry, &env, "es-ES", "ru")
+    let created = crate::operations::profile_write::create_profile(&env, "es-ES", "ru")
         .expect("create fuzz profile");
     let profile_id = created["id"].as_str().expect("profile id").to_owned();
-    let pack_version = language_pack_registry::manifest(&registry, "es-ES")
-        .expect("manifest")
-        .version
-        .to_owned();
     seed_fuzz_learning_item(&env, &profile_id);
 
-    let bootstrap = rich_lesson_result(
-        &profile_id,
-        &pack_version,
-        "card-bootstrap".to_owned(),
-        None,
-        0,
-    );
-    crate::operations::complete_lesson::complete_lesson(&registry, &env, &bootstrap)
+    let bootstrap = rich_lesson_result(&profile_id, "card-bootstrap".to_owned(), None, 0);
+    crate::operations::complete_lesson::complete_lesson(&env, &bootstrap)
         .expect("card fuzz bootstrap must complete");
     let Some(card_id) = first_card_id(&env, &profile_id) else {
         drop(env);
@@ -788,13 +744,12 @@ pub fn exercise_card_lifecycle(data: &[u8]) {
             _ => {
                 let result = card_mutation_result(
                     &profile_id,
-                    &pack_version,
                     format!("card-complete-{step}-{seed}"),
                     &card_id,
                     seed,
                 );
                 let _ = no_storage_error(crate::operations::complete_lesson::complete_lesson(
-                    &registry, &env, &result,
+                    &env, &result,
                 ));
             }
         }
@@ -818,24 +773,13 @@ pub fn exercise_review_lifecycle(data: &[u8]) {
         path.clone(),
         "fuzz-signing-key-012345678901234567890123".to_owned(),
     );
-    let registry = crate::built_in_language_packs().expect("built-in pack registry");
-    let created = crate::operations::profile_write::create_profile(&registry, &env, "es-ES", "ru")
+    let created = crate::operations::profile_write::create_profile(&env, "es-ES", "ru")
         .expect("create fuzz profile");
     let profile_id = created["id"].as_str().expect("profile id").to_owned();
-    let pack_version = language_pack_registry::manifest(&registry, "es-ES")
-        .expect("manifest")
-        .version
-        .to_owned();
     seed_fuzz_learning_item(&env, &profile_id);
 
-    let bootstrap = rich_lesson_result(
-        &profile_id,
-        &pack_version,
-        "review-bootstrap".to_owned(),
-        None,
-        0,
-    );
-    crate::operations::complete_lesson::complete_lesson(&registry, &env, &bootstrap)
+    let bootstrap = rich_lesson_result(&profile_id, "review-bootstrap".to_owned(), None, 0);
+    crate::operations::complete_lesson::complete_lesson(&env, &bootstrap)
         .expect("review fuzz bootstrap must complete");
     let Some(card_id) = first_card_id(&env, &profile_id) else {
         drop(env);
@@ -988,6 +932,7 @@ pub fn exercise_adaptation_model(data: &[u8]) {
     let mut response_present = Vec::with_capacity(len);
     let mut context_key = Vec::with_capacity(len);
     let mut context_family = Vec::with_capacity(len);
+    let mut episode_key = Vec::with_capacity(len);
     let mut recorded_at = Vec::with_capacity(len);
     const CONTEXTS: [&str; 4] = ["home", "school", "cafe", "transport"];
     const FAMILIES: [&str; 4] = [
@@ -1013,6 +958,7 @@ pub fn exercise_adaptation_model(data: &[u8]) {
         response_present.push(byte & 0x40 == 0);
         context_key.push((byte & 2 == 0).then_some(CONTEXTS[index % CONTEXTS.len()]));
         context_family.push((byte & 4 == 0).then_some(FAMILIES[index % FAMILIES.len()]));
+        episode_key.push(Some(CONTEXTS[index % CONTEXTS.len()]));
         recorded_at.push(1_800_000_000_i64.saturating_sub((index as i64) * 43_200));
     }
 
@@ -1038,6 +984,7 @@ pub fn exercise_adaptation_model(data: &[u8]) {
         &response_present,
         &context_key,
         &context_family,
+        &episode_key,
         &recorded_at,
         1_800_000_000,
     );
@@ -1080,7 +1027,6 @@ pub fn exercise_adaptation_model(data: &[u8]) {
             .get(offset % source.len())
             .map(|value| f64::from(*value) / 255.0)
     };
-    let scenarios = ["pharmacy", "transport"];
     let planner_input = adaptation::LessonPlannerInputView {
         due_reviews: u32::from(source[0]),
         overdue_reviews: u32::from(*source.get(1 % source.len()).unwrap_or(&0)),
@@ -1088,15 +1034,16 @@ pub fn exercise_adaptation_model(data: &[u8]) {
         active_errors: u32::from(*source.get(3 % source.len()).unwrap_or(&0) % 8),
         method_change_errors: u32::from(*source.get(4 % source.len()).unwrap_or(&0) % 3),
         open_recommendations: u32::from(*source.get(5 % source.len()).unwrap_or(&0) % 10),
-        new_card_budget: *source.get(6 % source.len()).unwrap_or(&0) % 10,
         recent: adaptation::RecentLearningSignals {
             lessons: *source.get(7 % source.len()).unwrap_or(&0) % 12,
             speaking_ratio: ratio(8),
+            recall_attempts: u16::from(*source.get(9 % source.len()).unwrap_or(&0) % 12),
+            recall_lessons: *source.get(10 % source.len()).unwrap_or(&0) % 8,
             unaided_recall_rate: ratio(9),
-            listening_score: ratio(10),
-            avg_answer_millis: Some(
-                250 + u32::from(*source.get(11 % source.len()).unwrap_or(&0)) * 60,
+            communicative_task_attempts: u16::from(
+                *source.get(11 % source.len()).unwrap_or(&0) % 12,
             ),
+            communicative_task_lessons: *source.get(12 % source.len()).unwrap_or(&0) % 8,
             communicative_task_success_rate: ratio(12),
             confidence: ratio(13),
         },
@@ -1107,7 +1054,6 @@ pub fn exercise_adaptation_model(data: &[u8]) {
                 1 => "balanced",
                 _ => "stretch",
             }),
-            priority_scenarios: &scenarios,
         },
     };
     let plan = adaptation::plan_next_lesson_fixed(&planner_input);
@@ -1146,7 +1092,15 @@ pub fn exercise_adaptation_model(data: &[u8]) {
             assert!(!recommendation.subject_id.is_empty());
         },
     );
-    let _ = adaptation::error_escalation_action(u32::from(source[0] % 8));
+    let _ = learning_core::error_escalation_due_for(
+        u32::from(source[0] % 8),
+        source[0] & 1 != 0,
+        match source[0] % 3 {
+            0 => learning_core::CommunicativeImpact::Low,
+            1 => learning_core::CommunicativeImpact::Medium,
+            _ => learning_core::CommunicativeImpact::High,
+        },
+    );
     let _ = adaptation::recheck_failed_fields(u32::from(source[0] % 30));
     let _ = adaptation::new_card_budget(
         source[0] % 12,
@@ -1204,24 +1158,13 @@ pub fn exercise_maintenance_writes(data: &[u8]) {
         path.clone(),
         "fuzz-signing-key-012345678901234567890123".to_owned(),
     );
-    let registry = crate::built_in_language_packs().expect("built-in pack registry");
-    let created = crate::operations::profile_write::create_profile(&registry, &env, "es-ES", "ru")
+    let created = crate::operations::profile_write::create_profile(&env, "es-ES", "ru")
         .expect("create fuzz profile");
     let profile_id = created["id"].as_str().expect("profile id").to_owned();
-    let pack_version = language_pack_registry::manifest(&registry, "es-ES")
-        .expect("manifest")
-        .version
-        .to_owned();
     seed_fuzz_learning_item(&env, &profile_id);
 
-    let bootstrap = rich_lesson_result(
-        &profile_id,
-        &pack_version,
-        "maintenance-bootstrap".to_owned(),
-        None,
-        0,
-    );
-    crate::operations::complete_lesson::complete_lesson(&registry, &env, &bootstrap)
+    let bootstrap = rich_lesson_result(&profile_id, "maintenance-bootstrap".to_owned(), None, 0);
+    crate::operations::complete_lesson::complete_lesson(&env, &bootstrap)
         .expect("maintenance fuzz bootstrap must complete");
 
     let db = env.connection().expect("maintenance lookup connection");
@@ -1265,7 +1208,7 @@ pub fn exercise_maintenance_writes(data: &[u8]) {
             },
             original_production: format!("fuzz original {step}"),
             corrected_production: format!("fuzz corrected {step}"),
-            pack_error_code: None,
+            error_code: None,
             explanation: Some("standalone fuzz error".to_owned()),
             error_target_id: None,
             communicative_impact: match seed % 3 {
@@ -1274,21 +1217,19 @@ pub fn exercise_maintenance_writes(data: &[u8]) {
                 _ => learning_core::CommunicativeImpact::High,
             },
         };
-        let target_id =
-            crate::operations::log_error::log_error_occurrence(&registry, &env, error_input)
-                .expect("new standalone error target");
+        let target_id = crate::operations::log_error::log_error_occurrence(&env, error_input)
+            .expect("new standalone error target");
 
         if seed & 2 != 0 {
             for repeat in 0..3 {
                 let _ = no_storage_error(crate::operations::log_error::log_error_occurrence(
-                    &registry,
                     &env,
                     crate::operations::log_error::LogErrorOccurrenceInput {
                         language_profile_id: profile_id.clone(),
                         core_category: learning_core::CoreErrorCategory::Grammar,
                         original_production: format!("repeat {step}-{repeat}"),
                         corrected_production: "corrected repeat".to_owned(),
-                        pack_error_code: None,
+                        error_code: None,
                         explanation: None,
                         error_target_id: Some(target_id.clone()),
                         communicative_impact: learning_core::CommunicativeImpact::High,
@@ -1417,7 +1358,7 @@ pub fn exercise_maintenance_writes(data: &[u8]) {
         }
 
         let standalone_payload = tutor_contract::CardPayload {
-            intent: language_pack_api::CardIntent::Production,
+            intent: learning_core::CardIntent::Production,
             prompt: format!("standalone prompt {step}-{seed}"),
             answer: format!("standalone answer {step}-{seed}"),
             accepted_answers: vec![format!("standalone alt {step}")],
@@ -1453,7 +1394,6 @@ pub fn exercise_maintenance_writes(data: &[u8]) {
             },
         ];
         let _ = no_storage_error(crate::operations::upsert_cards::upsert_cards(
-            &registry,
             &env,
             &profile_id,
             &mutations,
