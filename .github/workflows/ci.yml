@@ -51,3 +51,20 @@ jobs:
           test -n "$version"
           test "$version" = "$cargo_version"
           test "$version" = "$lock_version"
+
+  windows-check:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: stable-windows
+
+      - name: Windows compile check
+        run: cargo check --locked -p lingua-tutor-local --bin lingua-tutor
