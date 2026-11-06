@@ -73,7 +73,9 @@ test("create profile, import lesson, review the card", async ({ page }) => {
   // Profile
   await page.goto("/languages");
   await page.getByLabel("Target locale").fill("es-ES");
+  await page.getByRole("button", { name: /Spanish — Spain.*es-ES/ }).click();
   await page.getByLabel("Explanation language").fill("ru");
+  await page.getByRole("button", { name: /^Russian\s+ru$/ }).click();
   await page.getByRole("button", { name: "Create profile", exact: true }).click();
   await expect(page.getByRole("button", { name: /es-ES/ })).toBeVisible();
 
