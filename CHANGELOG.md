@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.4](https://github.com/agredyaev/lingua-tutor/compare/v0.1.3...v0.1.4) (2026-11-06)
+
+
+### Bug Fixes
+
+* **ci:** align fuzz and e2e with native runtime ([b57189f](https://github.com/agredyaev/lingua-tutor/commit/b57189f0d6f075cd7954208fa88bec825b57cc40))
+* **ci:** align profile smoke test with locale contract ([cd74ec1](https://github.com/agredyaev/lingua-tutor/commit/cd74ec16d1c9c3079dd783aa21c0507db5345d72))
+* **ci:** cover native calibration and current import UI ([7aa8e42](https://github.com/agredyaev/lingua-tutor/commit/7aa8e4206cd4b33622c78623bab61736c014f656))
+* **ci:** cover planner and current browser assertions ([f3f7733](https://github.com/agredyaev/lingua-tutor/commit/f3f773368cd3cbc007122628bbc98e55d596733a))
+* **ci:** repair fuzz fixtures and language profile flow ([2efa32a](https://github.com/agredyaev/lingua-tutor/commit/2efa32a0998c58ac3a5ae9ea322c9e05ba5d3e25))
+* **e2e:** select language autocomplete options ([2627b15](https://github.com/agredyaev/lingua-tutor/commit/2627b152ffe778d685bc1b305904f854a9f09145))
+
+
+### Refactoring
+
+* **core:** make tutor runtime language-neutral and native ([d346a8a](https://github.com/agredyaev/lingua-tutor/commit/d346a8a2d9d8fbd9c8b1fe86dd0c61a7aac06536))
+* **core:** make tutor runtime language-neutral and native ([0482960](https://github.com/agredyaev/lingua-tutor/commit/04829605227ce933eaa0fd8a0bf1fd70ffc86294))
+
 ## [0.1.3](https://github.com/agredyaev/lingua-tutor/compare/v0.1.2...v0.1.3) (2026-10-29)
 
 
