@@ -14,19 +14,13 @@ mod tests {
             .unwrap();
         connection
             .execute_batch(
-                "INSERT INTO language_packs
-                    (id, package_name, version, contract_version, target_language,
-                     target_locale, display_name, installed_at, updated_at)
-                 VALUES
-                    ('es-ES', 'language-pack-es-es', '0.2.0', 1, 'es', 'es-ES',
-                     'Spanish (Spain)', '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
-                 INSERT INTO learner_profile (id, created_at, updated_at)
+                "INSERT INTO learner_profile (id, created_at, updated_at)
                  VALUES ('learner-1', '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
                  INSERT INTO learner_language_profiles
-                    (id, learner_id, language_pack_id, source_language, target_locale,
+                    (id, learner_id, source_language, target_locale,
                      created_at, updated_at)
                  VALUES
-                    ('llp-1', 'learner-1', 'es-ES', 'ru', 'es-ES',
+                    ('llp-1', 'learner-1', 'ru', 'es-ES',
                      '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
                  INSERT INTO scheduler_parameter_sets
                     (id, learner_language_profile_id, algorithm, algorithm_version,
@@ -41,10 +35,9 @@ mod tests {
             connection
                 .execute(
                     "INSERT INTO lessons
-                    (id, learner_language_profile_id, language_pack_id,
-                     language_pack_version, lesson_number, status, scenario,
+                    (id, learner_language_profile_id, lesson_number, status, scenario,
                      planned_goal, source, started_at, created_at, updated_at)
-                 VALUES (?1, 'llp-1', 'es-ES', '0.2.0', ?2, 'completed',
+                 VALUES (?1, 'llp-1', ?2, 'completed',
                          'test', '', 'import', '2026-10-16T00:00:00Z',
                          '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z')",
                     rusqlite::params![format!("lesson-{i}"), i + 1],
@@ -53,22 +46,21 @@ mod tests {
             connection
                 .execute(
                     "INSERT INTO learning_items
-                    (id, learner_language_profile_id, language_pack_id, item_type,
+                    (id, learner_language_profile_id, item_type,
                      target_text, normalized_target_text, status,
-                     language_metadata_json, created_at, updated_at)
-                 VALUES (?1, 'llp-1', 'es-ES', 'word', ?2, ?2, 'introduced',
-                         '{}', '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z')",
+                      created_at, updated_at)
+                 VALUES (?1, 'llp-1', 'word', ?2, ?2, 'introduced',
+                         '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z')",
                     rusqlite::params![format!("li-{i}"), format!("seed-{i}")],
                 )
                 .unwrap();
             connection
                 .execute(
                     "INSERT INTO error_targets
-                    (id, learner_language_profile_id, language_pack_id,
-                     language_pack_version, core_category, original_production,
+                    (id, learner_language_profile_id, core_category, original_production,
                      corrected_production, occurrence_count,
                      method_change_required, status, created_at, updated_at)
-                 VALUES (?1, 'llp-1', 'es-ES', '0.2.0', 'grammar', 'wrong',
+                 VALUES (?1, 'llp-1', 'grammar', 'wrong',
                          'right', 1, 0, 'active',
                          '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z')",
                     [format!("et-{i}")],
@@ -97,8 +89,6 @@ mod tests {
                 &transaction,
                 &id,
                 "llp-1",
-                "es-ES",
-                "0.2.0",
                 "production",
                 if i % 2 == 0 { "new" } else { "candidate" },
                 &format!("prompt-{i}"),
@@ -106,7 +96,6 @@ mod tests {
                 &format!("answer-{i}"),
                 "es-ES",
                 &format!("[\"accepted-{i}\"]"),
-                "exact",
                 explanation.as_deref(),
                 None,
                 source_item.as_deref(),
@@ -176,12 +165,11 @@ mod tests {
         connection
             .execute(
                 "INSERT INTO cards
-             (id, learner_language_profile_id, language_pack_id, language_pack_version,
-              intent, status, prompt, prompt_language, answer, answer_language,
-              accepted_answers_json, answer_evaluation_mode, creation_reason,
+             (id, learner_language_profile_id, intent, status, prompt, prompt_language, answer, answer_language,
+              accepted_answers_json, creation_reason,
               content_hash, content_version, created_by, created_at, updated_at)
-             VALUES (?1, 'llp-1', 'es-ES', '0.2.0', 'production', 'new',
-                     'old prompt', 'ru', 'answer', 'es-ES', '[\"old\"]', 'exact',
+             VALUES (?1, 'llp-1', 'production', 'new',
+                     'old prompt', 'ru', 'answer', 'es-ES', '[\"old\"]',
                      'test', 'old-hash', 1, 'tutor', 'a', 'a')",
                 [id],
             )
@@ -402,8 +390,6 @@ mod tests {
                 Some("lesson-1"),
                 "tutor",
                 &format!("reason-{i}"),
-                "es-ES",
-                "0.2.0",
                 "applied",
                 "2026-10-16T00:00:00Z",
             )
@@ -421,8 +407,6 @@ mod tests {
             Some("lesson-1"),
             "tutor",
             "duplicate",
-            "es-ES",
-            "0.2.0",
             "applied",
             "2026-10-16T00:00:00Z",
         )
@@ -451,8 +435,6 @@ pub(crate) fn insert_card(
     database: &Connection,
     id: &str,
     profile_id: &str,
-    pack_id: &str,
-    pack_version: &str,
     intent: &str,
     status: &str,
     prompt: &str,
@@ -460,7 +442,6 @@ pub(crate) fn insert_card(
     answer: &str,
     answer_language: &str,
     accepted_answers_json: &str,
-    answer_evaluation_mode: &str,
     explanation: Option<&str>,
     pronunciation_note: Option<&str>,
     source_learning_item_id: Option<&str>,
@@ -479,8 +460,6 @@ pub(crate) fn insert_card(
     statement.execute(params![
         id,
         profile_id,
-        pack_id,
-        pack_version,
         intent,
         status,
         prompt,
@@ -488,7 +467,6 @@ pub(crate) fn insert_card(
         answer,
         answer_language,
         accepted_answers_json,
-        answer_evaluation_mode,
         explanation,
         pronunciation_note,
         source_learning_item_id,
@@ -624,8 +602,6 @@ pub(crate) fn insert_card_mutation(
     source_lesson_id: Option<&str>,
     actor: &str,
     reason: &str,
-    pack_id: &str,
-    pack_version: &str,
     validation_result: &str,
     created_at: &str,
 ) -> Result<()> {
@@ -640,8 +616,6 @@ pub(crate) fn insert_card_mutation(
         source_lesson_id,
         actor,
         reason,
-        pack_id,
-        pack_version,
         validation_result,
         created_at,
     ])?;

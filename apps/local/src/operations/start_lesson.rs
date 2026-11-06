@@ -6,7 +6,7 @@
 #[allow(clippy::unwrap_used, clippy::type_complexity)]
 mod tests {
     use super::*;
-    use crate::{Env, built_in_language_packs};
+    use crate::Env;
     use std::path::PathBuf;
 
     fn create_env(label: &str) -> (PathBuf, Env) {
@@ -16,26 +16,22 @@ mod tests {
         ));
         let db = crate::storage::open(&path).unwrap();
         db.execute_batch(
-            r#"INSERT INTO language_packs
-                (id,package_name,version,contract_version,target_language,target_locale,
-                 display_name,installed_at,updated_at)
-               VALUES('es-ES','language-pack-es-es','0.2.0',1,'es','es-ES','Spanish','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
+            r#"
                INSERT INTO learner_profile(id,created_at,updated_at)
                VALUES('learner-1','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
                INSERT INTO learner_language_profiles
-                (id,learner_id,language_pack_id,source_language,target_locale,
+                (id,learner_id,source_language,target_locale,
                  estimated_level,current_lesson_number,status,is_default,preferences_json,
                  created_at,updated_at)
-               VALUES('llp-1','learner-1','es-ES','ru','es-ES','A1',4,'active',1,
-                 '{"max_new_items_per_lesson":2,"preferred_difficulty":"balanced",
-                   "priority_scenarios":["pharmacy","transport"]}',
+               VALUES('llp-1','learner-1', 'ru','es-ES','A1',4,'active',1,
+                 '{"max_new_items_per_lesson":2,"preferred_difficulty":"balanced"}',
                  '2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
 
                INSERT INTO lessons
-                (id,learner_language_profile_id,language_pack_id,language_pack_version,
+                (id,learner_language_profile_id,
                  lesson_number,status,scenario,planned_goal,source,started_at,
                  completed_at,duration_seconds,created_at,updated_at)
-               VALUES('done-1','llp-1','es-ES','0.2.0',4,'completed','shop','old','pwa',
+               VALUES('done-1','llp-1',4,'completed','shop','old','pwa',
                  '2026-10-15T10:00:00Z','2026-10-15T10:20:00Z',1200,
                  '2026-10-15T10:00:00Z','2026-10-15T10:20:00Z');
                INSERT INTO lesson_metrics
@@ -44,15 +40,15 @@ mod tests {
                VALUES('done-1',480,2,3,0.65,6500,1,0.50,'2026-10-15T10:20:00Z');
 
                INSERT INTO learning_items
-                (id,learner_language_profile_id,language_pack_id,item_type,target_text,
+                (id,learner_language_profile_id,item_type,target_text,
                  normalized_target_text,prompt_text,prompt_language,status,
-                 language_metadata_json,introduced_lesson_id,created_at,updated_at)
-               VALUES('li-1','llp-1','es-ES','phrase','¿Dónde está?','¿dónde está?',
-                 'Где находится?','ru','learning','{}','done-1',
+                 introduced_lesson_id,created_at,updated_at)
+               VALUES('li-1','llp-1', 'phrase','¿Dónde está?','¿dónde está?',
+                 'Где находится?','ru','learning','done-1',
                  '2026-10-15T10:00:00Z','2026-10-16T10:00:00Z');
 
                INSERT INTO learning_item_evidence
-                (id,learning_item_id,lesson_id,kind,success,detail,pack_metadata_json,recorded_at)
+                (id,learning_item_id,lesson_id,kind,success,detail,metadata_json,recorded_at)
                VALUES
                 ('ev-1','li-1','done-1','prompted_production',1,NULL,
                  '{"assistance_level":1,"response_millis":3200,"context_key":"shop:a",
@@ -67,10 +63,10 @@ mod tests {
                VALUES('la-1','llp-1','li-1','done-1',NULL,NULL,0,'2026-10-15T10:12:00Z');
 
                INSERT INTO error_targets
-                (id,learner_language_profile_id,language_pack_id,language_pack_version,
+                (id,learner_language_profile_id,
                  core_category,original_production,corrected_production,occurrence_count,
                  method_change_required,status,created_at,updated_at)
-               VALUES('et-1','llp-1','es-ES','0.2.0','grammar','x','y',5,1,'recheck',
+               VALUES('et-1','llp-1','grammar','x','y',5,1,'recheck',
                  '2026-10-15T00:00:00Z','2026-10-16T00:00:00Z');
                INSERT INTO error_rechecks(id,error_target_id,offset_days,due_at)
                VALUES('rc-1','et-1',1,'2020-01-01T00:00:00Z');
@@ -82,19 +78,20 @@ mod tests {
                  '2026-10-16T00:00:00Z');
 
                INSERT INTO cards
-                (id,learner_language_profile_id,language_pack_id,language_pack_version,
+                (id,learner_language_profile_id,
                  intent,status,prompt,prompt_language,answer,answer_language,
-                 accepted_answers_json,answer_evaluation_mode,creation_reason,content_hash,
+                 accepted_answers_json,creation_reason,content_hash,
                  content_version,created_by,created_at,updated_at)
-               VALUES('card-1','llp-1','es-ES','0.2.0','production','review',
-                 'p','ru','a','es-ES','[]','exact','seed','hash',1,'tutor',
+               VALUES('card-1','llp-1','production','review',
+                 'p','ru','a','es-ES','[]','seed','hash',1,'tutor',
                  '2026-10-15T00:00:00Z','2026-10-15T00:00:00Z');
                INSERT INTO card_schedule_state
                 (card_id,algorithm,algorithm_version,due_at,lapse_count,review_count,
                  state_version,state_hash,updated_at)
                VALUES('card-1','fallback','fallback-1','2020-01-01T00:00:00Z',0,2,2,
-                 'not-used-by-planner','2026-10-16T00:00:00Z');"#
-        ).unwrap();
+                 'not-used-by-planner','2026-10-16T00:00:00Z');"#,
+        )
+        .unwrap();
         drop(db);
         (path.clone(), Env::new(path, "key".to_owned()))
     }
@@ -138,11 +135,13 @@ mod tests {
     #[test]
     fn bounded_start_persists_active_lesson_and_planner_decision() {
         let (path, env) = create_env("new");
-        let registry = built_in_language_packs().unwrap();
-        let result =
-            start_lesson(&registry, &env, "llp-1", "pharmacy", "buy medicine", "pwa").unwrap();
+        let result = start_lesson(&env, "llp-1", "pharmacy", "buy medicine", "pwa").unwrap();
         assert_eq!(result["lesson_number"], 5);
+        assert_eq!(result["planner_version"], "planner-v3");
+        assert!(result["adaptive_lesson_plan"].is_object());
+        assert!(result["tutor_tasks"].is_array());
         let state = snapshot(&env);
+        assert_eq!(result["adaptive_lesson_plan"], state.1[1]);
         assert_eq!(
             state.0,
             (
@@ -159,8 +158,7 @@ mod tests {
 
         let next = crate::handlers::records::next_lesson_for(&env, "llp-1").unwrap();
         assert_eq!(next["lesson_number"], 5);
-        let context =
-            crate::handlers::records::tutor_context_for(&registry, &env, "llp-1").unwrap();
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
         assert_eq!(context["next_lesson_number"], 5);
         let dashboard = crate::handlers::records::dashboard_for(&env, "llp-1").unwrap();
         assert_eq!(dashboard["next_lesson_number"], 5);
@@ -173,12 +171,9 @@ mod tests {
     #[test]
     fn repeated_start_returns_existing_open_lesson() {
         let (path, env) = create_env("repeat-start");
-        let registry = built_in_language_packs().unwrap();
 
-        let first =
-            start_lesson(&registry, &env, "llp-1", "pharmacy", "buy medicine", "mcp").unwrap();
-        let second =
-            start_lesson(&registry, &env, "llp-1", "transport", "buy a ticket", "mcp").unwrap();
+        let first = start_lesson(&env, "llp-1", "pharmacy", "buy medicine", "mcp").unwrap();
+        let second = start_lesson(&env, "llp-1", "transport", "buy a ticket", "mcp").unwrap();
 
         assert_eq!(second["id"], first["id"]);
         assert_eq!(second["lesson_number"], first["lesson_number"]);
@@ -212,7 +207,6 @@ mod tests {
     #[test]
     fn start_uses_persisted_max_when_profile_counter_is_stale() {
         let (path, env) = create_env("stale-counter");
-        let registry = built_in_language_packs().unwrap();
         env.connection()
             .unwrap()
             .execute(
@@ -226,15 +220,7 @@ mod tests {
         let profiles = crate::handlers::profiles::list_profiles(&env).unwrap();
         assert_eq!(profiles[0]["current_lesson_number"], 4);
 
-        let result = start_lesson(
-            &registry,
-            &env,
-            "llp-1",
-            "pharmacy",
-            "repair counter",
-            "mcp",
-        )
-        .unwrap();
+        let result = start_lesson(&env, "llp-1", "pharmacy", "repair counter", "mcp").unwrap();
 
         assert_eq!(result["lesson_number"], 5);
         let db = env.connection().unwrap();
@@ -257,16 +243,15 @@ mod tests {
     #[test]
     fn abandoned_lesson_number_is_not_reused_by_reads_or_start() {
         let (path, env) = create_env("abandoned-number");
-        let registry = built_in_language_packs().unwrap();
         env.connection()
             .unwrap()
             .execute(
                 "INSERT INTO lessons
-                 (id,learner_language_profile_id,language_pack_id,language_pack_version,
+                 (id,learner_language_profile_id,
                   lesson_number,status,scenario,planned_goal,source,started_at,
                   created_at,updated_at)
                  VALUES
-                 ('abandoned-5','llp-1','es-ES','0.2.0',5,'abandoned',
+                 ('abandoned-5','llp-1',5,'abandoned',
                   'transport','','mcp','2026-10-16T00:00:00Z',
                   '2026-10-16T00:00:00Z','2026-10-16T00:00:00Z')",
                 [],
@@ -275,14 +260,12 @@ mod tests {
 
         let next = crate::handlers::records::next_lesson_for(&env, "llp-1").unwrap();
         assert_eq!(next["lesson_number"], 6);
-        let context =
-            crate::handlers::records::tutor_context_for(&registry, &env, "llp-1").unwrap();
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
         assert_eq!(context["next_lesson_number"], 6);
         let dashboard = crate::handlers::records::dashboard_for(&env, "llp-1").unwrap();
         assert_eq!(dashboard["next_lesson_number"], 6);
 
-        let started =
-            start_lesson(&registry, &env, "llp-1", "pharmacy", "new attempt", "mcp").unwrap();
+        let started = start_lesson(&env, "llp-1", "pharmacy", "new attempt", "mcp").unwrap();
         assert_eq!(started["lesson_number"], 6);
 
         let _ = std::fs::remove_file(path);
@@ -291,7 +274,6 @@ mod tests {
     #[test]
     fn record_views_preserve_seeded_profile_contract() {
         let (path, env) = create_env("profile-read");
-        let registry = built_in_language_packs().unwrap();
         let next = crate::handlers::records::next_lesson_for(&env, "llp-1").unwrap();
         assert_eq!(next["lesson_number"], 5);
         assert_eq!(next["estimated_level"], "A1");
@@ -299,13 +281,51 @@ mod tests {
         assert_eq!(next["tracked_item_count"], 1);
         assert_eq!(next["learner_preferences"]["max_new_items_per_lesson"], 2);
 
-        let context =
-            crate::handlers::records::tutor_context_for(&registry, &env, "llp-1").unwrap();
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
         assert_eq!(context["language_profile_id"], "llp-1");
         assert_eq!(context["next_lesson_number"], 5);
         assert_eq!(context["estimated_level"], "A1");
+        for required in [
+            "source_language",
+            "target_locale",
+            "learner_preferences",
+            "tutor_instructions",
+            "planner_input",
+            "adaptive_lesson_plan",
+            "tutor_tasks",
+            "planner_history",
+            "intervention_effectiveness",
+            "active_error_targets",
+            "learning_items",
+            "due_error_rechecks",
+            "existing_card_answers",
+            "review_summary_7d",
+            "redesign_candidates",
+            "open_recommendations",
+            "lesson_result_contract",
+        ] {
+            assert!(
+                !context[required].is_null(),
+                "authoritative LLM context lost decision-critical block: {required}"
+            );
+        }
         assert!(context["tutor_instructions"].is_object());
+        assert!(context["adaptive_lesson_plan"].is_object());
+        assert!(context["tutor_tasks"].is_array());
         assert!(context["lesson_result_contract"].is_object());
+        let contract_instructions = context["lesson_result_contract"]["instructions"]
+            .as_str()
+            .unwrap();
+        assert!(
+            contract_instructions.contains(
+                "минимум 1 diagnostic baseline и минимум 2 независимых measured probes overall"
+            ),
+            "LLM-facing lesson contract drifted from runtime validator"
+        );
+        assert!(
+            !contract_instructions.contains("минимум 2 полностью измеренных diagnostic probes"),
+            "stale duplicate-diagnostic rule leaked into LLM context"
+        );
 
         let dashboard = crate::handlers::records::dashboard_for(&env, "llp-1").unwrap();
         assert_eq!(dashboard["next_lesson_number"], 5);
@@ -314,9 +334,44 @@ mod tests {
     }
 
     #[test]
+    fn lesson_contract_uses_profile_source_language() {
+        let (path, env) = create_env("source-language-contract");
+        {
+            let db = env.connection().unwrap();
+            db.execute(
+                "UPDATE learner_language_profiles SET source_language='en' WHERE id='llp-1'",
+                [],
+            )
+            .unwrap();
+        }
+
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
+        let template = &context["lesson_result_contract"]["template"];
+        assert_eq!(template["new_learning_items"][0]["prompt_language"], "en");
+        assert_eq!(
+            template["card_mutations"][0]["card"]["prompt_language"],
+            "en"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn llm_lesson_result_template_is_backend_valid() {
+        let (path, env) = create_env("valid-llm-template");
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
+        let template = context["lesson_result_contract"]["template"].clone();
+        let parsed = tutor_contract::parse_lesson_result(&template.to_string()).unwrap();
+        let issues = tutor_contract::validate(&parsed);
+        assert!(
+            issues.is_empty(),
+            "LLM-facing template must be accepted by the same backend contract it documents: {issues:?}"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn record_views_reject_corrupt_profile_before_planning() {
         let (path, env) = create_env("profile-invalid");
-        let registry = built_in_language_packs().unwrap();
         for (column, bad) in [("preferences_json", "not-json"), ("status", "invalid")] {
             let db = env.connection().unwrap();
             let statement =
@@ -333,7 +388,7 @@ mod tests {
                 .unwrap();
             db.execute(&statement, [bad]).unwrap();
             assert!(crate::handlers::records::next_lesson_for(&env, "llp-1").is_err());
-            assert!(crate::handlers::records::tutor_context_for(&registry, &env, "llp-1").is_err());
+            assert!(crate::handlers::records::tutor_context_for(&env, "llp-1").is_err());
             assert!(crate::handlers::records::dashboard_for(&env, "llp-1").is_err());
             db.execute(&statement, [original]).unwrap();
         }
@@ -343,7 +398,6 @@ mod tests {
     #[test]
     fn planner_history_preserves_latest_five_and_calibration_window() {
         let (path, env) = create_env("planner-history-window");
-        let registry = built_in_language_packs().unwrap();
         {
             let db = env.connection().unwrap();
             for i in 0..8_u32 {
@@ -376,7 +430,7 @@ mod tests {
                 .unwrap();
             }
         }
-        let actual = crate::handlers::records::tutor_context_for(&registry, &env, "llp-1").unwrap();
+        let actual = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
         let history = actual["planner_history"].as_array().unwrap();
         assert_eq!(history.len(), 5);
         assert!(history.iter().any(|entry| {
@@ -393,7 +447,6 @@ mod tests {
     #[test]
     fn tutor_context_read_only_sections_expose_seeded_state() {
         let (path, env) = create_env("tutor-context-rows");
-        let registry = built_in_language_packs().unwrap();
         env.connection()
             .unwrap()
             .execute(
@@ -405,8 +458,7 @@ mod tests {
                 [],
             )
             .unwrap();
-        let current =
-            crate::handlers::records::tutor_context_for(&registry, &env, "llp-1").unwrap();
+        let current = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
         assert_eq!(current["open_recommendations"].as_array().unwrap().len(), 2);
         assert_eq!(current["redesign_candidates"].as_array().unwrap().len(), 1);
         assert_eq!(current["due_error_rechecks"].as_array().unwrap().len(), 1);
@@ -421,9 +473,9 @@ mod tests {
         let db = env.connection().unwrap();
         db.execute(
             "INSERT INTO learning_items
-             (id,learner_language_profile_id,language_pack_id,item_type,target_text,
-              normalized_target_text,status,language_metadata_json,created_at,updated_at)
-             VALUES('li-empty','llp-1','es-ES','phrase','empty','empty','learning','{}',
+             (id,learner_language_profile_id,item_type,target_text,
+              normalized_target_text,status,created_at,updated_at)
+             VALUES('li-empty','llp-1', 'phrase','empty','empty','learning',
                     '2026-10-16T09:00:00Z','2026-10-16T09:00:00Z')",
             [],
         )
@@ -471,25 +523,6 @@ mod tests {
         drop(db);
         let _ = std::fs::remove_file(path);
     }
-
-    #[test]
-    fn missing_registered_pack_fails_closed_without_lesson() {
-        let (path, env) = create_env("missing-pack");
-        let empty: crate::BuiltInPackRegistry =
-            language_pack_registry::build_registry(std::iter::empty()).unwrap();
-        assert!(start_lesson(&empty, &env, "llp-1", "x", "y", "pwa").is_err());
-        let count: u32 = env
-            .connection()
-            .unwrap()
-            .query_row(
-                "SELECT COUNT(*) FROM lessons WHERE status='active'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(count, 0);
-        let _ = std::fs::remove_file(path);
-    }
 }
 
 use crate::repositories::{lessons, to_rfc3339};
@@ -498,7 +531,6 @@ use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use serde::Serialize;
 
 pub(crate) fn start_lesson(
-    registry: &crate::BuiltInPackRegistry,
     env: &Env,
     profile_id: &str,
     scenario: &str,
@@ -510,17 +542,14 @@ pub(crate) fn start_lesson(
 
     let profile = transaction
         .query_row(
-            "SELECT p.learner_id,p.language_pack_id,p.current_lesson_number,
-                    p.preferences_json
-             FROM learner_language_profiles p
-             WHERE p.id=?1",
+            "SELECT learner_id,current_lesson_number,preferences_json
+             FROM learner_language_profiles WHERE id=?1",
             params![profile_id],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, u32>(2)?,
-                    row.get::<_, String>(3)?,
+                    row.get::<_, u32>(1)?,
+                    row.get::<_, String>(2)?,
                 ))
             },
         )
@@ -528,17 +557,7 @@ pub(crate) fn start_lesson(
         .ok_or_else(|| {
             crate::Error::operation(404, "not_found", "unknown profile", serde_json::Value::Null)
         })?;
-    let (_learner_id, pack_id, current_lesson_number, preferences_json) = profile;
-
-    let Some(manifest) = language_pack_registry::manifest(registry, &pack_id) else {
-        return Err(crate::Error::operation(
-            409,
-            "pack_unavailable",
-            "active language pack manifest is not available",
-            serde_json::Value::Null,
-        ));
-    };
-    let pack_version = manifest.version;
+    let (_learner_id, current_lesson_number, preferences_json) = profile;
 
     if let Some((id, lesson_number)) = transaction
         .query_row(
@@ -581,18 +600,6 @@ pub(crate) fn start_lesson(
     let preferred_difficulty = preferences
         .get("preferred_difficulty")
         .and_then(serde_json::Value::as_str);
-    let mut scenario_refs = [""; 20];
-    let mut scenario_len = 0usize;
-    if let Some(values) = preferences
-        .get("priority_scenarios")
-        .and_then(serde_json::Value::as_array)
-    {
-        for value in values.iter().filter_map(serde_json::Value::as_str).take(20) {
-            scenario_refs[scenario_len] = value;
-            scenario_len += 1;
-        }
-    }
-
     let planner_input = super::planner_read::read_planner_input(
         &transaction,
         profile_id,
@@ -600,12 +607,14 @@ pub(crate) fn start_lesson(
         adaptation::PlannerPreferencesView {
             max_new_items_per_lesson,
             preferred_difficulty,
-            priority_scenarios: &scenario_refs[..scenario_len],
         },
     )?;
     let plan = adaptation::plan_next_lesson_fixed(&planner_input);
 
-    let mut selection = super::adaptive_selection::new_selection(20, 30);
+    let mut selection = super::adaptive_selection::new_selection(
+        super::adaptive_selection::DEFAULT_CANDIDATE_LIMIT,
+        super::adaptive_selection::DEFAULT_FOCUS_LIMIT,
+    );
     let mut capability_json = String::from("[");
     let mut capability_count = 0usize;
 
@@ -638,7 +647,6 @@ pub(crate) fn start_lesson(
         diagnostic_probes: &'a [&'static str],
         success_criteria: &'static [&'static str],
         recent_signals: adaptation::RecentLearningSignals,
-        priority_scenarios: &'a [&'a str],
     }
     let mut probes = [""; 3];
     let mut probe_len = 0usize;
@@ -648,7 +656,7 @@ pub(crate) fn start_lesson(
             probe_len += 1;
         }
     }
-    let plan_json = serde_json::to_string(&PlanJson {
+    let plan_value = serde_json::to_value(PlanJson {
         primary_objective: plan.primary_objective,
         difficulty: plan.difficulty,
         max_new_items: plan.max_new_items,
@@ -656,8 +664,9 @@ pub(crate) fn start_lesson(
         diagnostic_probes: &probes[..probe_len],
         success_criteria: adaptation::plan_success_criteria(&plan),
         recent_signals: plan.recent_signals,
-        priority_scenarios: plan.priority_scenarios,
     })?;
+    let plan_json = plan_value.to_string();
+    let tutor_tasks = super::adaptive_selection::selection_tutor_tasks(&selection, 16);
     let input_json = serde_json::to_string(&planner_input)?;
 
     let lesson_id = crate::api::new_id("les");
@@ -666,8 +675,6 @@ pub(crate) fn start_lesson(
         params![
             lesson_id,
             profile_id,
-            pack_id,
-            pack_version,
             next_lesson_number,
             "active",
             scenario,
@@ -704,6 +711,9 @@ pub(crate) fn start_lesson(
     transaction.commit()?;
     crate::json(&serde_json::json!({
         "id": lesson_id,
-        "lesson_number": next_lesson_number
+        "lesson_number": next_lesson_number,
+        "planner_version": "planner-v3",
+        "adaptive_lesson_plan": plan_value,
+        "tutor_tasks": tutor_tasks,
     }))
 }

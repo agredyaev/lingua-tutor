@@ -9,12 +9,16 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 const INIT: &str = include_str!("../migrations/0001_init.sql");
+#[cfg(any(test, fuzzing))]
+const LEGACY_INIT: &str = include_str!("test_fixtures_legacy_0001.sql");
 const MIGRATION_2: &str = include_str!("../migrations/0002_planner_history.sql");
 const MIGRATION_3: &str = include_str!("../migrations/0003_review_methodology.sql");
 const MIGRATION_4: &str = include_str!("../migrations/0004_methodology_calibration.sql");
 const MIGRATION_5: &str = include_str!("../migrations/0005_methodology_semantics.sql");
-const SCHEMA_VERSION: i64 = 5;
-const SCHEMA_NAME: &str = "0005_methodology_semantics.sql";
+const MIGRATION_6: &str = include_str!("../migrations/0006_language_neutral_storage.sql");
+const MIGRATION_7: &str = include_str!("../migrations/0007_semantic_metadata.sql");
+const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_NAME: &str = "0007_semantic_metadata.sql";
 
 fn private_dir(path: &Path) -> Result<(), String> {
     let mut builder = DirBuilder::new();
@@ -73,7 +77,9 @@ fn initialize(connection: &Connection) -> Result<(), String> {
         .and_then(|_| {
             connection.execute_batch(
                 "INSERT INTO schema_migrations(id,name) VALUES (5,'0005_methodology_semantics.sql');
-                 PRAGMA user_version=5;
+                 INSERT INTO schema_migrations(id,name) VALUES (6,'0006_language_neutral_storage.sql');
+                 INSERT INTO schema_migrations(id,name) VALUES (7,'0007_semantic_metadata.sql');
+                 PRAGMA user_version=7;
                  COMMIT;",
             )
         });
@@ -156,6 +162,42 @@ fn migrate_v4_to_v5(connection: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn migrate_v5_to_v6(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch("BEGIN IMMEDIATE;")
+        .map_err(|e| e.to_string())?;
+    let result = connection.execute_batch(MIGRATION_6).and_then(|_| {
+        connection.execute_batch(
+            "INSERT INTO schema_migrations(id,name) VALUES (6,'0006_language_neutral_storage.sql');
+             PRAGMA user_version=6;
+             COMMIT;",
+        )
+    });
+    if let Err(error) = result {
+        let _ = connection.execute_batch("ROLLBACK");
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+fn migrate_v6_to_v7(connection: &Connection) -> Result<(), String> {
+    connection
+        .execute_batch("BEGIN IMMEDIATE;")
+        .map_err(|e| e.to_string())?;
+    let result = connection.execute_batch(MIGRATION_7).and_then(|_| {
+        connection.execute_batch(
+            "INSERT INTO schema_migrations(id,name) VALUES (7,'0007_semantic_metadata.sql');
+             PRAGMA user_version=7;
+             COMMIT;",
+        )
+    });
+    if let Err(error) = result {
+        let _ = connection.execute_batch("ROLLBACK");
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
 /// Open a fresh or existing local SQLite database. Unknown schemas fail closed.
 pub fn open(path: &Path) -> Result<Connection, String> {
     private_dir(path.parent().ok_or("database path has no parent")?)?;
@@ -171,7 +213,7 @@ pub fn open(path: &Path) -> Result<Connection, String> {
     let version: i64 = connection
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|e| e.to_string())?;
-    let has_schema = table_exists(&connection, "language_packs")?;
+    let has_schema = table_exists(&connection, "learner_profile")?;
 
     match (version, has_schema) {
         (0, false) => initialize(&connection)?,
@@ -180,17 +222,32 @@ pub fn open(path: &Path) -> Result<Connection, String> {
             migrate_v2_to_v3(&connection)?;
             migrate_v3_to_v4(&connection)?;
             migrate_v4_to_v5(&connection)?;
+            migrate_v5_to_v6(&connection)?;
+            migrate_v6_to_v7(&connection)?;
         }
         (2, true) => {
             migrate_v2_to_v3(&connection)?;
             migrate_v3_to_v4(&connection)?;
             migrate_v4_to_v5(&connection)?;
+            migrate_v5_to_v6(&connection)?;
+            migrate_v6_to_v7(&connection)?;
         }
         (3, true) => {
             migrate_v3_to_v4(&connection)?;
             migrate_v4_to_v5(&connection)?;
+            migrate_v5_to_v6(&connection)?;
+            migrate_v6_to_v7(&connection)?;
         }
-        (4, true) => migrate_v4_to_v5(&connection)?,
+        (4, true) => {
+            migrate_v4_to_v5(&connection)?;
+            migrate_v5_to_v6(&connection)?;
+            migrate_v6_to_v7(&connection)?;
+        }
+        (5, true) => {
+            migrate_v5_to_v6(&connection)?;
+            migrate_v6_to_v7(&connection)?;
+        }
+        (6, true) => migrate_v6_to_v7(&connection)?,
         (SCHEMA_VERSION, true) => {
             let name: String = connection
                 .query_row(
@@ -462,7 +519,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("lingua.sqlite3");
         let connection = Connection::open(&path).unwrap();
-        connection.execute_batch(INIT).unwrap();
+        connection.execute_batch(LEGACY_INIT).unwrap();
         connection
             .execute_batch(
                 "CREATE TABLE schema_migrations(
@@ -494,9 +551,9 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 7);
         assert_eq!(table_exists, 1);
-        assert_eq!(latest, "0005_methodology_semantics.sql");
+        assert_eq!(latest, "0007_semantic_metadata.sql");
         drop(migrated);
         fs::remove_dir_all(dir).unwrap();
     }
@@ -506,7 +563,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("lingua.sqlite3");
         let connection = Connection::open(&path).unwrap();
-        connection.execute_batch(INIT).unwrap();
+        connection.execute_batch(LEGACY_INIT).unwrap();
         connection
             .execute_batch(
                 "CREATE TABLE schema_migrations(
@@ -538,7 +595,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 7);
         assert_eq!(budget_table, 1);
         drop(migrated);
         fs::remove_dir_all(dir).unwrap();
@@ -549,7 +606,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("lingua.sqlite3");
         let connection = Connection::open(&path).unwrap();
-        connection.execute_batch(INIT).unwrap();
+        connection.execute_batch(LEGACY_INIT).unwrap();
         connection.execute_batch("CREATE TABLE schema_migrations(id INTEGER PRIMARY KEY,name TEXT UNIQUE NOT NULL,applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL); INSERT INTO schema_migrations(id,name) VALUES (1,'0001_init.sql');").unwrap();
         connection.execute_batch(MIGRATION_2).unwrap();
         connection.execute_batch(MIGRATION_3).unwrap();
@@ -561,9 +618,226 @@ mod tests {
             .unwrap();
         let task_column: i64 = migrated.query_row("SELECT COUNT(*) FROM pragma_table_info('lesson_metrics') WHERE name='task_success_count'", [], |row| row.get(0)).unwrap();
         let listening_column: i64 = migrated.query_row("SELECT COUNT(*) FROM pragma_table_info('listening_attempts') WHERE name='source_variant_id'", [], |row| row.get(0)).unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 7);
         assert_eq!(task_column, 1);
         assert_eq!(listening_column, 1);
+        drop(migrated);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn migrates_v5_pack_storage_to_language_neutral_schema_without_data_loss() {
+        let dir = std::env::temp_dir().join(format!("lingua-migrate-v5-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lingua.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(LEGACY_INIT).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_migrations(
+                id INTEGER PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
+             );
+             INSERT INTO schema_migrations(id,name) VALUES (1,'0001_init.sql');",
+            )
+            .unwrap();
+        connection.execute_batch(MIGRATION_2).unwrap();
+        connection.execute_batch(MIGRATION_3).unwrap();
+        connection.execute_batch(MIGRATION_4).unwrap();
+        connection.execute_batch(MIGRATION_5).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO schema_migrations(id,name) VALUES (2,'0002_planner_history.sql');
+             INSERT INTO schema_migrations(id,name) VALUES (3,'0003_review_methodology.sql');
+             INSERT INTO schema_migrations(id,name) VALUES (4,'0004_methodology_calibration.sql');
+             INSERT INTO schema_migrations(id,name) VALUES (5,'0005_methodology_semantics.sql');
+             INSERT INTO language_packs
+                (id,package_name,version,contract_version,target_language,target_locale,
+                 display_name,installed_at,updated_at)
+             VALUES('es-ES','legacy','0.2.0',1,'es','es-ES','Spanish','a','a');
+             INSERT INTO learner_profile(id,created_at,updated_at)
+             VALUES('learner-1','a','a');
+             INSERT INTO learner_language_profiles
+                (id,learner_id,language_pack_id,source_language,target_locale,created_at,updated_at)
+             VALUES('llp-1','learner-1','es-ES','ru','es-ES','a','a');
+             INSERT INTO cards
+                (id,learner_language_profile_id,language_pack_id,language_pack_version,
+                 intent,status,prompt,prompt_language,answer,answer_language,
+                 accepted_answers_json,answer_evaluation_mode,creation_reason,
+                 content_hash,created_by,created_at,updated_at)
+             VALUES('card-1','llp-1','es-ES','0.2.0','production','new','p','ru','respuesta',
+                    'es-ES','[]','exact','legacy','h','system','a','a');
+             PRAGMA user_version=5;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let migrated = open(&path).unwrap();
+        let version: i64 = migrated
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let pack_table: i64 = migrated
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='language_packs')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let profile_pack_column: i64 = migrated
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('learner_language_profiles') WHERE name='language_pack_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let card_pack_columns: i64 = migrated
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('cards')
+                 WHERE name IN ('language_pack_id','language_pack_version')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let (source, target): (String, String) = migrated
+            .query_row(
+                "SELECT source_language,target_locale FROM learner_language_profiles WHERE id='llp-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let answer: String = migrated
+            .query_row("SELECT answer FROM cards WHERE id='card-1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+
+        assert_eq!(version, 7);
+        assert_eq!(pack_table, 0);
+        assert_eq!(profile_pack_column, 0);
+        assert_eq!(card_pack_columns, 0);
+        assert_eq!((source.as_str(), target.as_str()), ("ru", "es-ES"));
+        assert_eq!(answer, "respuesta");
+        drop(migrated);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn migrates_v6_semantic_metadata_without_data_loss() {
+        let dir = std::env::temp_dir().join(format!("lingua-migrate-v6-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("lingua.sqlite3");
+        let connection = Connection::open(&path).unwrap();
+        connection.execute_batch(LEGACY_INIT).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE schema_migrations(
+                id INTEGER PRIMARY KEY,
+                name TEXT UNIQUE NOT NULL,
+                applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL
+             );
+             INSERT INTO schema_migrations(id,name) VALUES (1,'0001_init.sql');",
+            )
+            .unwrap();
+        connection.execute_batch(MIGRATION_2).unwrap();
+        connection.execute_batch(MIGRATION_3).unwrap();
+        connection.execute_batch(MIGRATION_4).unwrap();
+        connection.execute_batch(MIGRATION_5).unwrap();
+        connection.execute_batch(MIGRATION_6).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO schema_migrations(id,name) VALUES (2,'0002_planner_history.sql');
+             INSERT INTO schema_migrations(id,name) VALUES (3,'0003_review_methodology.sql');
+             INSERT INTO schema_migrations(id,name) VALUES (4,'0004_methodology_calibration.sql');
+             INSERT INTO schema_migrations(id,name) VALUES (5,'0005_methodology_semantics.sql');
+             INSERT INTO schema_migrations(id,name) VALUES (6,'0006_language_neutral_storage.sql');
+             INSERT INTO learner_profile(id,created_at,updated_at)
+             VALUES('learner-1','a','a');
+             INSERT INTO learner_language_profiles
+                (id,learner_id,source_language,target_locale,created_at,updated_at)
+             VALUES('llp-1','learner-1','ru','es-ES','a','a');
+             INSERT INTO learning_items
+                (id,learner_language_profile_id,item_type,target_text,normalized_target_text,
+                 status,language_metadata_json,created_at,updated_at)
+             VALUES('li-1','llp-1','phrase','hola','hola','learning','{\"legacy\":true}','a','a');
+             INSERT INTO lessons
+                (id,learner_language_profile_id,lesson_number,status,scenario,planned_goal,
+                 source,created_at,updated_at)
+             VALUES('lesson-1','llp-1',1,'completed','s','g','pwa','a','a');
+             INSERT INTO learning_item_evidence
+                (id,learning_item_id,lesson_id,kind,success,detail,pack_metadata_json,recorded_at)
+             VALUES('ev-1','li-1','lesson-1','transfer',1,'d',
+                    '{\"context_family\":\"service.request_bill\"}','a');
+             INSERT INTO error_targets
+                (id,learner_language_profile_id,core_category,pack_error_code,
+                 original_production,corrected_production,created_at,updated_at)
+             VALUES('et-1','llp-1','grammar','verb.copula','wrong','right','a','a');
+             INSERT INTO cards
+                (id,learner_language_profile_id,intent,status,prompt,prompt_language,answer,
+                 answer_language,accepted_answers_json,answer_evaluation_mode,creation_reason,
+                 content_hash,created_by,created_at,updated_at)
+             VALUES('card-1','llp-1','production','new','p','ru','a','es-ES','[]',
+                    'exact','legacy','h','system','a','a');
+             PRAGMA user_version=6;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let migrated = open(&path).unwrap();
+        let version: i64 = migrated
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let error_code: Option<String> = migrated
+            .query_row(
+                "SELECT error_code FROM error_targets WHERE id='et-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let metadata: Option<String> = migrated
+            .query_row(
+                "SELECT metadata_json FROM learning_item_evidence WHERE id='ev-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let dead_card_column: i64 = migrated
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('cards') WHERE name='answer_evaluation_mode'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let dead_item_column: i64 = migrated
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('learning_items') WHERE name='language_metadata_json'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let target_text: String = migrated
+            .query_row(
+                "SELECT target_text FROM learning_items WHERE id='li-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let answer: String = migrated
+            .query_row("SELECT answer FROM cards WHERE id='card-1'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+
+        assert_eq!(version, 7);
+        assert_eq!(error_code.as_deref(), Some("verb.copula"));
+        assert_eq!(
+            metadata.as_deref(),
+            Some("{\"context_family\":\"service.request_bill\"}")
+        );
+        assert_eq!(dead_card_column, 0);
+        assert_eq!(dead_item_column, 0);
+        assert_eq!(target_text, "hola");
+        assert_eq!(answer, "a");
         drop(migrated);
         fs::remove_dir_all(dir).unwrap();
     }
@@ -581,13 +855,13 @@ pub(crate) fn fuzz_storage(data: &[u8]) {
     let path = dir.join("db.sqlite3");
     let version = 1 + i64::from(seed % 5);
     let db = Connection::open(&path).expect("db");
-    db.execute_batch(INIT).expect("v1 schema");
+    db.execute_batch(LEGACY_INIT).expect("v1 schema");
     db.execute_batch("CREATE TABLE schema_migrations(id INTEGER PRIMARY KEY,name TEXT UNIQUE NOT NULL,applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL); INSERT INTO schema_migrations(id,name) VALUES(1,'0001_init.sql');PRAGMA user_version=1;").expect("history");
     for (v, sql, name) in [
         (2, MIGRATION_2, "0002_planner_history.sql"),
         (3, MIGRATION_3, "0003_review_methodology.sql"),
         (4, MIGRATION_4, "0004_methodology_calibration.sql"),
-        (5, MIGRATION_5, SCHEMA_NAME),
+        (5, MIGRATION_5, "0005_methodology_semantics.sql"),
     ] {
         if v <= version {
             db.execute_batch(sql).expect("seed schema");
@@ -632,7 +906,7 @@ pub(crate) fn fuzz_storage(data: &[u8]) {
     assert!(open(&bad).is_err());
     let current = Connection::open(&path).expect("current db");
     current
-        .execute("UPDATE schema_migrations SET name='unknown' WHERE id=5", [])
+        .execute("UPDATE schema_migrations SET name='unknown' WHERE id=7", [])
         .expect("unknown migration name");
     drop(current);
     assert!(open(&path).is_err());

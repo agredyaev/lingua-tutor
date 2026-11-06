@@ -12,12 +12,10 @@ use axum::http::{Method as HttpMethod, Request as HttpRequest, Response as HttpR
 use axum::routing::any;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 #[derive(Clone)]
 struct AppState {
     env: Env,
-    registry: Arc<crate::BuiltInPackRegistry>,
     assets: PathBuf,
     port: u16,
 }
@@ -99,11 +97,7 @@ fn rpc_error(id: serde_json::Value, code: i64, message: &str) -> HttpResponse<Bo
     )
 }
 
-fn dispatch_rpc(
-    call: RpcRequest,
-    env: &Env,
-    registry: &crate::BuiltInPackRegistry,
-) -> crate::Result<serde_json::Value> {
+fn dispatch_rpc(call: RpcRequest, env: &Env) -> crate::Result<serde_json::Value> {
     let params = &call.params;
     let required = |name: &str| {
         rpc_param(params, name).ok_or_else(|| {
@@ -146,12 +140,9 @@ fn dispatch_rpc(
     match call.method.as_str() {
         "health" => handlers::records::health(env),
         "list_language_profiles" => handlers::profiles::list_profiles(env),
-        "list_language_packs" => handlers::profiles::list_packs(registry),
-        "get_language_pack" => handlers::profiles::get_pack(registry, required("pack_id")?),
         "create_language_profile" => crate::operations::profile_write::create_profile(
-            registry,
             env,
-            required("language_pack_id")?,
+            required("target_locale")?,
             required("source_language")?,
         ),
         "update_profile" => {
@@ -177,7 +168,6 @@ fn dispatch_rpc(
             handlers::records::next_lesson_for(env, required("language_profile_id")?)
         }
         "start_lesson" => crate::operations::start_lesson::start_lesson(
-            registry,
             env,
             required("language_profile_id")?,
             required("scenario")?,
@@ -207,11 +197,10 @@ fn dispatch_rpc(
                         serde_json::json!({ "detail": error.to_string() }),
                     )
                 })?;
-            handlers::lessons::complete_lesson_result(registry, env, &lesson_id, result)
+            handlers::lessons::complete_lesson_result(env, &lesson_id, result)
         }
         "validate_lesson_result" => handlers::lessons::validate_import_text(required("text")?, env),
         "apply_lesson_result" => handlers::lessons::apply_import_text(
-            registry,
             required("text")?,
             required("validation_token")?,
             env,
@@ -252,7 +241,7 @@ fn dispatch_rpc(
             )
         }
         "get_tutor_context" => {
-            handlers::records::tutor_context_for(registry, env, required("language_profile_id")?)
+            handlers::records::tutor_context_for(env, required("language_profile_id")?)
         }
         "list_cards" => handlers::cards::list_for(
             env,
@@ -349,12 +338,9 @@ fn dispatch_rpc(
             u32_param("card_count")?,
             u32_param("review_seconds")?,
         ),
-        "evaluate_review_answer" => handlers::review::evaluate(
-            registry,
-            env,
-            required("card_id")?,
-            required("learner_answer")?,
-        ),
+        "evaluate_review_answer" => {
+            handlers::review::evaluate(env, required("card_id")?, required("learner_answer")?)
+        }
         "get_review_summary" => {
             handlers::review::summary_for(env, required("language_profile_id")?)
         }
@@ -467,7 +453,7 @@ async fn handle(State(state): State<AppState>, request: HttpRequest<Body>) -> Ht
             return rpc_error(call.id, -32600, "invalid request");
         }
         let id = call.id.clone();
-        return match dispatch_rpc(call, &state.env, &state.registry) {
+        return match dispatch_rpc(call, &state.env) {
             Ok(result) => rpc_response(id, result),
             Err(error) => {
                 if matches!(error, Error::RustError(_)) {
@@ -518,24 +504,14 @@ async fn handle(State(state): State<AppState>, request: HttpRequest<Body>) -> Ht
 }
 
 /// Serve the PWA and JSON-RPC boundary on a loopback socket.
-pub async fn serve(
-    env: Env,
-    registry: Arc<crate::BuiltInPackRegistry>,
-    assets: &Path,
-    port: u16,
-) -> Result<(), String> {
+pub async fn serve(env: Env, assets: &Path, port: u16) -> Result<(), String> {
     let assets = assets
         .canonicalize()
         .map_err(|error| format!("assets: {error}"))?;
     if !assets.join("index.html").is_file() {
         return Err("assets directory lacks index.html".into());
     }
-    let state = AppState {
-        env,
-        registry,
-        assets,
-        port,
-    };
+    let state = AppState { env, assets, port };
     let app = Router::new().fallback(any(handle)).with_state(state);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
@@ -553,12 +529,7 @@ mod tests {
     use super::*;
     use crate::storage;
 
-    fn call(
-        env: &Env,
-        registry: &crate::BuiltInPackRegistry,
-        method: &str,
-        params: serde_json::Value,
-    ) -> serde_json::Value {
+    fn call(env: &Env, method: &str, params: serde_json::Value) -> serde_json::Value {
         dispatch_rpc(
             RpcRequest {
                 jsonrpc: "2.0".to_owned(),
@@ -567,7 +538,6 @@ mod tests {
                 params,
             },
             env,
-            registry,
         )
         .unwrap()
     }
@@ -578,8 +548,6 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("lingua.sqlite3");
         let env = storage::environment(&db).unwrap();
-        let registry = crate::built_in_language_packs().unwrap();
-
         let result = dispatch_rpc(
             RpcRequest {
                 jsonrpc: "2.0".to_owned(),
@@ -588,7 +556,6 @@ mod tests {
                 params: serde_json::json!({}),
             },
             &env,
-            &registry,
         )
         .unwrap();
 
@@ -604,14 +571,11 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("lingua.sqlite3");
         let env = storage::environment(&db).unwrap();
-        let registry = crate::built_in_language_packs().unwrap();
-
         let profile = call(
             &env,
-            &registry,
             "create_language_profile",
             serde_json::json!({
-                "language_pack_id": "es-ES",
+                "target_locale": "es-ES",
                 "source_language": "ru"
             }),
         );
@@ -619,7 +583,6 @@ mod tests {
 
         let before = call(
             &env,
-            &registry,
             "get_next_lesson",
             serde_json::json!({ "language_profile_id": profile_id }),
         );
@@ -627,7 +590,6 @@ mod tests {
 
         let started = call(
             &env,
-            &registry,
             "start_lesson",
             serde_json::json!({
                 "language_profile_id": profile_id,
@@ -640,7 +602,6 @@ mod tests {
 
         let completed = call(
             &env,
-            &registry,
             "complete_lesson",
             serde_json::json!({
                 "lesson_id": lesson_id,
@@ -648,8 +609,6 @@ mod tests {
                     "schema_version": "2",
                     "client_operation_id": "op-rpc-cycle-lesson",
                     "language_profile_id": profile_id,
-                    "language_pack_id": "es-ES",
-                    "language_pack_version": "0.2.0",
                     "lesson": {
                         "scenario": "restaurant",
                         "duration_seconds": 720,
@@ -690,13 +649,24 @@ mod tests {
                             "response_millis": 900,
                             "probe_phase": "diagnostic",
                             "context": "restaurant:bill-recognition"
+                        },
+                        {
+                            "client_item_key": "bill",
+                            "kind": "prompted_production",
+                            "success": true,
+                            "assistance_level": 1,
+                            "response_millis": 1400,
+                            "probe_phase": "practice",
+                            "context": "restaurant:bill-post-guidance",
+                            "pronunciation_intelligible": true,
+                            "pronunciation_repeat_required": false
                         }
                     ],
                     "interventions": [{
                         "action": "guided_retrieval",
                         "client_item_key": "bill",
                         "target_capability": "prompted_production",
-                        "evidence_index": 0
+                        "evidence_index": 2
                     }],
                     "card_mutations": [{
                         "operation": "create",
@@ -716,7 +686,6 @@ mod tests {
 
         let cards = call(
             &env,
-            &registry,
             "list_cards",
             serde_json::json!({ "language_profile_id": profile_id }),
         );
@@ -726,7 +695,6 @@ mod tests {
 
         let session = call(
             &env,
-            &registry,
             "create_review_session",
             serde_json::json!({
                 "language_profile_id": profile_id,
@@ -736,7 +704,6 @@ mod tests {
         let session_id = session["id"].as_str().unwrap();
         let queue = call(
             &env,
-            &registry,
             "get_review_queue",
             serde_json::json!({ "session_id": session_id }),
         );
@@ -749,7 +716,6 @@ mod tests {
 
         let graded = call(
             &env,
-            &registry,
             "review_card",
             serde_json::json!({
                 "session_id": session_id,
@@ -769,7 +735,6 @@ mod tests {
 
         call(
             &env,
-            &registry,
             "complete_review_session",
             serde_json::json!({
                 "session_id": session_id,
@@ -780,7 +745,6 @@ mod tests {
 
         let next = call(
             &env,
-            &registry,
             "get_next_lesson",
             serde_json::json!({ "language_profile_id": profile_id }),
         );
@@ -789,7 +753,6 @@ mod tests {
 
         let dashboard = call(
             &env,
-            &registry,
             "get_dashboard",
             serde_json::json!({ "language_profile_id": profile_id }),
         );
@@ -812,21 +775,17 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("lingua.sqlite3");
         let env = storage::environment(&db).unwrap();
-        let registry = crate::built_in_language_packs().unwrap();
-
         let profile = call(
             &env,
-            &registry,
             "create_language_profile",
             serde_json::json!({
-                "language_pack_id": "es-ES",
+                "target_locale": "es-ES",
                 "source_language": "ru"
             }),
         );
         let profile_id = profile["id"].as_str().unwrap().to_owned();
         let session = call(
             &env,
-            &registry,
             "create_review_session",
             serde_json::json!({
                 "language_profile_id": profile_id,
@@ -844,12 +803,12 @@ mod tests {
                 let mut card = transaction
                     .prepare(
                         "INSERT INTO cards
-                         (id,learner_language_profile_id,language_pack_id,language_pack_version,
+                         (id,learner_language_profile_id,
                           intent,status,prompt,prompt_language,answer,answer_language,
-                          accepted_answers_json,answer_evaluation_mode,creation_reason,
+                          accepted_answers_json,creation_reason,
                           content_hash,created_by,created_at,updated_at)
-                         VALUES(?1,?2,'es-ES','0.2.0','production','new',?3,'ru',?4,'es',
-                                '[]','canonical','performance fixture',?5,'system',?6,?6)",
+                         VALUES(?1,?2,'production','new',?3,'ru',?4,'es-ES',
+                                '[]','performance fixture',?5,'system',?6,?6)",
                     )
                     .unwrap();
                 let mut schedule = transaction
@@ -934,9 +893,9 @@ mod tests {
         let queue_params = serde_json::json!({ "session_id": session_id });
 
         // Warm caches and prepared SQLite pages before collecting samples.
-        let dashboard = call(&env, &registry, "get_dashboard", dashboard_params.clone());
+        let dashboard = call(&env, "get_dashboard", dashboard_params.clone());
         assert_eq!(dashboard["reviews_today"], REVIEW_EVENT_COUNT);
-        let queue = call(&env, &registry, "get_review_queue", queue_params.clone());
+        let queue = call(&env, "get_review_queue", queue_params.clone());
         assert_eq!(queue["queue"].as_array().unwrap().len(), 8);
 
         fn sample(mut operation: impl FnMut(), count: usize) -> (Duration, Duration, Duration) {
@@ -955,14 +914,14 @@ mod tests {
 
         let (dashboard_p50, dashboard_p95, dashboard_max) = sample(
             || {
-                let result = call(&env, &registry, "get_dashboard", dashboard_params.clone());
+                let result = call(&env, "get_dashboard", dashboard_params.clone());
                 std::hint::black_box(result);
             },
             SAMPLES,
         );
         let (queue_p50, queue_p95, queue_max) = sample(
             || {
-                let result = call(&env, &registry, "get_review_queue", queue_params.clone());
+                let result = call(&env, "get_review_queue", queue_params.clone());
                 std::hint::black_box(result);
             },
             SAMPLES,
@@ -992,14 +951,7 @@ mod tests {
 /// Drive the real HTTP handler without binding a socket.
 #[cfg(fuzzing)]
 #[allow(clippy::expect_used, missing_docs)]
-pub(crate) fn fuzz_boundary(
-    env: &Env,
-    registry: &crate::BuiltInPackRegistry,
-    dir: &Path,
-    args: &serde_json::Value,
-    data: &[u8],
-) {
-    let _ = registry;
+pub(crate) fn fuzz_boundary(env: &Env, dir: &Path, args: &serde_json::Value, data: &[u8]) {
     let assets = dir.join("assets");
     std::fs::create_dir_all(&assets).expect("assets dir");
     for ext in [
@@ -1009,7 +961,6 @@ pub(crate) fn fuzz_boundary(
     }
     let state = AppState {
         env: env.clone(),
-        registry: Arc::new(crate::built_in_language_packs().expect("registry")),
         assets: assets.canonicalize().expect("assets path"),
         port: 7777,
     };
@@ -1021,8 +972,6 @@ pub(crate) fn fuzz_boundary(
         let methods = [
             "health",
             "list_language_profiles",
-            "list_language_packs",
-            "get_language_pack",
             "create_language_profile",
             "update_profile",
             "get_dashboard",

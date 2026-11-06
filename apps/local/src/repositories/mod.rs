@@ -3,7 +3,6 @@
 
 pub mod cards;
 pub mod lessons;
-pub mod packs;
 pub mod profiles;
 pub mod recommendations;
 pub mod records;
@@ -119,7 +118,7 @@ db_enum_passes!(learning_core::CardActor, card_actor_from_db, card_actor_db, {
     User => "user",
     System => "system",
 });
-db_enum_passes!(language_pack_api::CoreErrorCategory, core_error_category_from_db, core_error_category_db, {
+db_enum_passes!(learning_core::CoreErrorCategory, core_error_category_from_db, core_error_category_db, {
     Grammar => "grammar",
     Vocabulary => "vocabulary",
     WordOrder => "word_order",
@@ -128,7 +127,7 @@ db_enum_passes!(language_pack_api::CoreErrorCategory, core_error_category_from_d
     Orthography => "orthography",
     Other => "other",
 });
-db_enum_passes!(language_pack_api::CardIntent, card_intent_from_db, card_intent_db, {
+db_enum_passes!(learning_core::CardIntent, card_intent_from_db, card_intent_db, {
     Production => "production",
     Listening => "listening",
     Contrast => "contrast",

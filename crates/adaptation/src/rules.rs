@@ -44,13 +44,8 @@ pub const REDESIGN_AGAIN_THRESHOLD: usize = 3;
 pub const REDESIGN_HARD_THRESHOLD: usize = 3;
 /// Latency threshold for a Hard-driven redesign.
 pub const HIGH_LATENCY_MILLIS: u32 = 10_000;
-/// Review volume required before low-utility retirement can be proposed.
-pub const RETIREMENT_MIN_REVIEWS: u32 = 10;
-
 const AGAIN: u8 = 1;
 const HARD: u8 = 2;
-const ERROR_ESCALATION: u32 = 3;
-const ERROR_METHOD_CHANGE: u32 = 5;
 
 /// Emit card recommendations without allocating a collection.
 pub fn visit_card_rules<'a>(
@@ -84,13 +79,14 @@ pub fn visit_card_rules<'a>(
     }
     if success_rate >= 0.8
         && signals.spontaneous_failures > 0
+        && !last_failed
         && let Some(item) = signals.learning_item_id
     {
         emit(RecommendationView {
             subject_type: "learning_item",
             subject_id: item,
-            action: "schedule_transfer_practice",
-            detail: "review passes but spontaneous speech fails — schedule role-play transfer",
+            action: "practice_in_lesson",
+            detail: "review passes but unaided production fails — return to contextual speaking practice",
         });
     }
     if signals.listening_failures >= 2
@@ -103,18 +99,6 @@ pub fn visit_card_rules<'a>(
             detail: "repeated listening failures — create/activate a listening card",
         });
     }
-    if signals.prompted_successes >= 2
-        && signals.spontaneous_successes == 0
-        && let Some(item) = signals.learning_item_id
-    {
-        emit(RecommendationView {
-            subject_type: "learning_item",
-            subject_id: item,
-            action: "create_transfer_target",
-            detail: "produced only with hints — create a transfer target",
-        });
-    }
-
     if again_count >= REDESIGN_AGAIN_THRESHOLD {
         emit(RecommendationView {
             subject_type: "card",
@@ -139,19 +123,6 @@ pub fn visit_card_rules<'a>(
             detail: "redesign candidate: review success but conversational failure",
         });
     }
-
-    if signals.review_count >= RETIREMENT_MIN_REVIEWS
-        && success_rate >= 0.9
-        && signals.spontaneous_successes == 0
-        && signals.spontaneous_failures == 0
-    {
-        emit(RecommendationView {
-            subject_type: "card",
-            subject_id: signals.card_id,
-            action: "consider_retirement",
-            detail: "high review success but never used in conversation — low utility",
-        });
-    }
 }
 
 fn count(grades: &[u8], grade: u8) -> usize {
@@ -159,18 +130,6 @@ fn count(grades: &[u8], grade: u8) -> usize {
         .iter()
         .filter(|candidate| **candidate == grade)
         .count()
-}
-
-/// Return the escalation action for an error occurrence count.
-#[must_use]
-pub const fn error_escalation_action(occurrence_count: u32) -> Option<&'static str> {
-    if occurrence_count >= ERROR_METHOD_CHANGE {
-        Some("require_method_change")
-    } else if occurrence_count >= ERROR_ESCALATION {
-        Some("activate_mini_target")
-    } else {
-        None
-    }
 }
 
 /// Return failed-recheck fields without copying the target ID.
@@ -209,6 +168,25 @@ mod tests {
     }
 
     #[test]
+    fn review_success_with_spontaneous_failure_returns_to_unaided_practice_not_transfer() {
+        let mut value = signals(&[3, 3, 3, 3]);
+        value.spontaneous_failures = 1;
+        let mut actions = Vec::new();
+        visit_card_rules(value, |rec| actions.push(rec.action));
+        assert!(actions.contains(&"practice_in_lesson"));
+        assert!(!actions.contains(&"schedule_transfer_practice"));
+    }
+
+    #[test]
+    fn prompted_success_without_spontaneous_probe_does_not_skip_to_transfer() {
+        let mut value = signals(&[3, 3, 3]);
+        value.prompted_successes = 2;
+        let mut actions = Vec::new();
+        visit_card_rules(value, |rec| actions.push(rec.action));
+        assert!(!actions.contains(&"create_transfer_target"));
+    }
+
+    #[test]
     fn repeated_again_emits_redesign() {
         let mut actions = Vec::new();
         visit_card_rules(signals(&[1, 1, 3, 1, 3]), |rec| actions.push(rec.action));
@@ -231,10 +209,16 @@ mod tests {
     }
 
     #[test]
-    fn scalar_error_rules_preserve_thresholds() {
-        assert_eq!(error_escalation_action(2), None);
-        assert_eq!(error_escalation_action(3), Some("activate_mini_target"));
-        assert_eq!(error_escalation_action(5), Some("require_method_change"));
+    fn review_success_without_conversation_does_not_imply_low_utility() {
+        let mut value = signals(&[3, 3, 3, 3, 3, 3, 3, 3, 3, 3]);
+        value.review_count = 10;
+        let mut actions = Vec::new();
+        visit_card_rules(value, |rec| actions.push(rec.action));
+        assert!(!actions.contains(&"consider_retirement"));
+    }
+
+    #[test]
+    fn failed_recheck_returns_to_active_practice() {
         assert_eq!(recheck_failed_fields(3).1, "practice_again");
     }
 }

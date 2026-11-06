@@ -126,8 +126,6 @@ pub(crate) fn apply_card_mutations(
     plan: &CardPlan,
     mutations: &[tutor_contract::CardMutation],
     profile_id: &str,
-    pack_id: &str,
-    pack_version: &str,
     source_language: &str,
     target_locale: &str,
     source_lesson_id: Option<&str>,
@@ -162,8 +160,6 @@ pub(crate) fn apply_card_mutations(
                     database,
                     &card_id,
                     profile_id,
-                    pack_id,
-                    pack_version,
                     crate::repositories::card_intent_db(&payload.intent),
                     card_plan_status(plan, i),
                     &payload.prompt,
@@ -174,7 +170,6 @@ pub(crate) fn apply_card_mutations(
                     &payload.answer,
                     target_locale,
                     &accepted_json,
-                    "exact",
                     payload.explanation.as_deref(),
                     None,
                     payload.source_learning_item_id.as_deref(),
@@ -348,8 +343,6 @@ pub(crate) fn apply_card_mutations(
             source_lesson_id,
             "tutor",
             reason,
-            pack_id,
-            pack_version,
             verdict,
             at,
         )?;
@@ -392,28 +385,24 @@ mod tests {
         ));
         let db = crate::storage::open(&path).unwrap();
         db.execute_batch(
-            "INSERT INTO language_packs
-             (id,package_name,version,contract_version,target_language,target_locale,
-              display_name,installed_at,updated_at)
-             VALUES('es-ES','language-pack-es-es','0.2.0',1,'es','es-ES','Spanish',
-                    '2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
+            "
              INSERT INTO learner_profile(id,created_at,updated_at)
              VALUES('learner-a','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z'),
                    ('learner-b','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
              INSERT INTO learner_language_profiles
-             (id,learner_id,language_pack_id,source_language,target_locale,
+             (id,learner_id,source_language,target_locale,
               estimated_level,current_lesson_number,status,is_default,preferences_json,
               created_at,updated_at)
              VALUES
-             ('profile-a','learner-a','es-ES','ru','es-ES','A1',0,'active',1,'{}',
+             ('profile-a','learner-a','ru','es-ES','A1',0,'active',1,'{}',
               '2026-10-10T00:00:00Z','2026-10-10T00:00:00Z'),
-             ('profile-b','learner-b','es-ES','ru','es-ES','A1',0,'active',1,'{}',
+             ('profile-b','learner-b','ru','es-ES','A1',0,'active',1,'{}',
               '2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');",
         )
         .unwrap();
 
         let payload = tutor_contract::CardPayload {
-            intent: language_pack_api::CardIntent::Production,
+            intent: learning_core::CardIntent::Production,
             prompt: "Where?".to_owned(),
             answer: "¿Dónde?".to_owned(),
             accepted_answers: vec![],
@@ -434,12 +423,12 @@ mod tests {
         );
         db.execute(
             "INSERT INTO cards
-             (id,learner_language_profile_id,language_pack_id,language_pack_version,
+             (id,learner_language_profile_id,
               intent,status,prompt,prompt_language,answer,answer_language,
-              accepted_answers_json,answer_evaluation_mode,creation_reason,content_hash,
+              accepted_answers_json,creation_reason,content_hash,
               content_version,created_by,created_at,updated_at)
-             VALUES('foreign','profile-b','es-ES','0.2.0','production','review',
-                    ?1,'ru',?2,'es-ES','[]','exact','lesson',?3,1,'tutor',
+             VALUES('foreign','profile-b','production','review',
+                    ?1,'ru',?2,'es-ES','[]','lesson',?3,1,'tutor',
                     '2026-10-10T00:00:00Z','2026-10-10T00:00:00Z')",
             params![payload.prompt, payload.answer, hash],
         )
@@ -481,12 +470,12 @@ mod tests {
         // and accepted-answer order when building the bounded mutation state.
         db.execute(
             "INSERT INTO cards
-             (id,learner_language_profile_id,language_pack_id,language_pack_version,
+             (id,learner_language_profile_id,
               intent,status,prompt,prompt_language,answer,answer_language,
-              accepted_answers_json,answer_evaluation_mode,creation_reason,content_hash,
+              accepted_answers_json,creation_reason,content_hash,
               content_version,created_by,created_at,updated_at)
-             VALUES('own','profile-a','es-ES','0.2.0','production','review',
-                    ?1,'ru',?2,'es-ES',?3,'exact','lesson','own-hash',1,'tutor',
+             VALUES('own','profile-a','production','review',
+                    ?1,'ru',?2,'es-ES',?3,'lesson','own-hash',1,'tutor',
                     '2026-10-10T00:00:00Z','2026-10-10T00:00:00Z')",
             params![
                 "¿Dónde está?",

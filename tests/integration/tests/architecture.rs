@@ -130,6 +130,115 @@ fn adaptation_internal_relationships_use_dense_u32_keys() {
 }
 
 #[test]
+fn native_llm_surface_preserves_authoritative_methodology_contract() {
+    let records = include_str!("../../../apps/local/src/handlers/records.rs");
+    let mcp = include_str!("../../../apps/local/src/mcp_tools.rs");
+    let start = include_str!("../../../apps/local/src/operations/start_lesson.rs");
+    let selection = include_str!("../../../apps/local/src/operations/adaptive_selection.rs");
+    let queue = include_str!("../../../crates/adaptation/src/queue.rs");
+    let validation = include_str!("../../../crates/tutor-contract/src/validate.rs");
+
+    assert!(
+        mcp.contains("Authoritative adaptive tutor context")
+            && mcp.contains("Fetch this before every lesson")
+            && mcp.contains("final authoritative snapshot"),
+        "MCP tool descriptions no longer make the context-first LLM flow explicit"
+    );
+    for name in [
+        "Partial inspection only: learning items",
+        "Partial plan inspection only",
+        "Partial inspection only: open error targets",
+        "Partial inspection only: review workload summary",
+        "Partial inspection only: failing cards",
+    ] {
+        assert!(
+            mcp.contains(name),
+            "partial MCP read can again masquerade as sufficient teaching context: {name}"
+        );
+    }
+
+    assert!(
+        records.contains(
+            "минимум 1 diagnostic baseline и минимум 2 независимых measured probes overall"
+        ) && validation
+            .contains("at least 1 diagnostic baseline and 2 independent measured probes overall"),
+        "LLM lesson-result instructions drifted from backend measurement validation"
+    );
+    assert!(
+        !records.contains("минимум 2 полностью измеренных diagnostic probes"),
+        "stale duplicate-diagnostic rule returned to the live LLM contract"
+    );
+    assert!(
+        records.contains("lesson_result_contract(profile_id, &source_language)")
+            && records
+                .matches("\"prompt_language\": source_language")
+                .count()
+                >= 2
+            && !records.contains("\"prompt_language\": \"ru\""),
+        "live LLM contract reintroduced a compiled source-language default"
+    );
+
+    for required in [
+        "\"planner_version\": \"planner-v3\"",
+        "\"adaptive_lesson_plan\": plan_value",
+        "\"tutor_tasks\": tutor_tasks",
+        "let plan_json = plan_value.to_string()",
+    ] {
+        assert!(
+            start.contains(required),
+            "start_lesson no longer returns the exact persisted final plan snapshot: {required}"
+        );
+    }
+
+    assert!(
+        selection.contains("criterion_for_action(&action, entry.capability)")
+            && queue.contains("pub fn criterion_for_action(")
+            && queue.contains("\"diagnostic_spontaneous\"")
+            && queue.contains("\"listening_probe\"")
+            && queue.contains("\"listening_repair\""),
+        "LLM task criteria can again collapse diagnostic and intervention semantics"
+    );
+}
+
+#[test]
+fn adaptation_processing_has_no_pointer_or_map_object_graphs() {
+    let files = [
+        include_str!("../../../crates/adaptation/src/capability.rs"),
+        include_str!("../../../crates/adaptation/src/focus.rs"),
+        include_str!("../../../crates/adaptation/src/tasks.rs"),
+        include_str!("../../../crates/adaptation/src/queue.rs"),
+        include_str!("../../../crates/adaptation/src/planner.rs"),
+        include_str!("../../../crates/adaptation/src/rules.rs"),
+        include_str!("../../../crates/adaptation/src/calibration.rs"),
+        include_str!("../../../apps/local/src/operations/adaptive_selection.rs"),
+        include_str!("../../../apps/local/src/operations/capability_read.rs"),
+        include_str!("../../../apps/local/src/operations/planner_read.rs"),
+        include_str!("../../../apps/local/src/operations/lesson_plan.rs"),
+    ];
+    for source in files {
+        for forbidden in [
+            "HashMap<",
+            "HashSet<",
+            "BTreeMap<",
+            "BTreeSet<",
+            "Rc<",
+            "Arc<",
+            "Weak<",
+            "Box<",
+            "&dyn ",
+            "*const ",
+            "*mut ",
+            "UnsafeCell<",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "pointer/map object graph reintroduced into processing path: {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
 fn learning_core_contains_only_scalar_contracts_and_pure_rules() {
     for obsolete in [
         "pub struct LearnerProfile",
@@ -312,7 +421,7 @@ fn answer_evaluation_uses_only_required_sql_columns() {
     let path = review.split_once("pub(crate) fn evaluate(").unwrap().1;
     assert!(!path.contains("CardRow::from_row"));
     assert!(!path.contains("into_domain()"));
-    assert!(path.contains("SELECT language_pack_id, answer, accepted_answers_json"));
+    assert!(path.contains("SELECT answer, accepted_answers_json, intent, status, created_by"));
 }
 
 #[test]
@@ -363,7 +472,6 @@ fn repository_domain_row_adapters_are_absent() {
         include_str!("../../../apps/local/src/repositories/records.rs"),
         include_str!("../../../apps/local/src/repositories/cards.rs"),
         include_str!("../../../apps/local/src/repositories/review.rs"),
-        include_str!("../../../apps/local/src/repositories/packs.rs"),
     ] {
         for obsolete in [
             "LanguageProfileRow",
@@ -548,12 +656,10 @@ fn review_runtime_uses_persisted_profile_policy() {
 }
 
 #[test]
-fn adaptation_and_pack_storage_have_no_processing_methods() {
+fn adaptation_storage_has_no_processing_methods() {
     let queue = include_str!("../../../crates/adaptation/src/queue.rs");
     let planner = include_str!("../../../crates/adaptation/src/planner.rs");
     let capability = include_str!("../../../crates/adaptation/src/capability.rs");
-    let registry = include_str!("../../../crates/language-pack-registry/src/lib.rs");
-    let spanish = include_str!("../../../language-packs/es-es/src/lib.rs");
 
     for (name, source, forbidden) in [
         (
@@ -564,8 +670,6 @@ fn adaptation_and_pack_storage_have_no_processing_methods() {
         ("planner", planner, "impl<'a> AdaptiveLessonPlanFixed"),
         ("capability-context", capability, "impl<'a> ContextSetView"),
         ("capability-text-set", capability, "impl<'a> TextSetRef"),
-        ("registry", registry, "impl<P> LanguagePackRegistry<P>"),
-        ("spanish-pack", spanish, "impl EsEsPack"),
     ] {
         assert!(
             !source.contains(forbidden),
@@ -617,98 +721,11 @@ fn review_scheduler_uses_explicit_algorithm_passes_not_object_dispatch() {
 }
 
 #[test]
-fn runtime_lesson_contract_has_no_virtual_language_pack_dispatch() {
+fn runtime_lesson_contract_has_no_language_pack_dispatch() {
     let source = include_str!("../../../apps/local/src/handlers/records.rs");
-    assert!(!source.contains("&dyn language_pack_api::LanguagePack"));
-    assert!(source.contains("manifest: &language_pack_registry::ManifestView<'_>"));
-}
-
-#[test]
-fn spanish_pack_behavior_uses_direct_passes() {
-    let pack = include_str!("../../../language-packs/es-es/src/lib.rs");
-    for expected in [
-        "pub fn register() -> (LanguagePackManifest, EsEsPack)",
-        "pub fn normalize_target_text(",
-        "pub fn evaluate_answer(",
-        "pub fn classify_error(",
-        "pub fn card_template_at(",
-        "pub fn tutor_instructions(",
-        "pub fn scenario_at(",
-        "pub fn seed_at(",
-    ] {
-        assert!(pack.contains(expected), "missing Spanish pass: {expected}");
-    }
-    let native = [
-        include_str!("../../../apps/local/src/operations/start_lesson.rs"),
-        include_str!("../../../apps/local/src/operations/complete_lesson.rs"),
-        include_str!("../../../apps/local/src/operations/review_ops.rs"),
-    ];
-    for source in native {
-        assert!(
-            !source.contains("use language_pack_api::LanguagePack as _;"),
-            "production still imports LanguagePack behavior"
-        );
-    }
-}
-
-#[test]
-fn language_pack_contract_is_data_and_explicit_passes_only() {
-    let api = include_str!("../../../crates/language-pack-api/src/lib.rs");
-    let registry = include_str!("../../../crates/language-pack-registry/src/lib.rs");
-    let spanish = include_str!("../../../language-packs/es-es/src/lib.rs");
-    let synthetic = include_str!("../../../language-packs/synthetic-test-pack/src/lib.rs");
-    let conformance = include_str!("../../../crates/test-support/src/lib.rs");
-
-    for (name, source) in [
-        ("api", api),
-        ("registry", registry),
-        ("spanish", spanish),
-        ("synthetic", synthetic),
-        ("conformance", conformance),
-    ] {
-        for forbidden in [
-            "trait LanguagePack",
-            "impl LanguagePack",
-            "dyn LanguagePack",
-            "LanguagePack as _",
-        ] {
-            assert!(
-                !source.contains(forbidden),
-                "{name} retains object-style language-pack behavior: {forbidden}"
-            );
-        }
-    }
-
-    assert!(!registry.contains("manifests: Vec<LanguagePackManifest>"));
-    for column in [
-        "manifest_id: Vec<String>",
-        "source_language_end: Vec<u32>",
-        "capability_end: Vec<u32>",
-        "packs: Vec<P>",
-    ] {
-        assert!(
-            registry.contains(column),
-            "missing registry SoA/CSR column: {column}"
-        );
-    }
-    assert!(registry.contains("pub type PackIndex = u32;"));
-    assert!(
-        registry.contains("pub fn index_of<P>(registry: &LanguagePackRegistry<P>, pack_id: &str)")
-    );
-    assert!(registry.contains("pub fn build_registry<P>("));
-
-    for (name, source) in [("spanish", spanish), ("synthetic", synthetic)] {
-        for forbidden in [
-            "templates: Vec<CardTemplate>",
-            "catalog: CurriculumCatalog",
-            "taxonomy: Vec<",
-        ] {
-            assert!(
-                !source.contains(forbidden),
-                "{name} retains pack AoS storage: {forbidden}"
-            );
-        }
-    }
+    assert!(!source.contains("language_pack_registry"));
+    assert!(!source.contains("language_pack_es_es"));
+    assert!(!source.contains("dyn LanguagePack"));
 }
 
 #[test]
@@ -767,4 +784,758 @@ fn lesson_planning_retains_bounded_indexed_layout() {
     assert!(!LESSON_PLAN.contains("Arc<"));
     assert!(!LESSON_PLAN.contains("Rc<"));
     assert!(!LESSON_PLAN.contains("HashMap<"));
+}
+
+#[test]
+fn runtime_and_workspace_do_not_compile_language_packs() {
+    assert!(
+        !ROOT_MANIFEST.contains("language-packs/"),
+        "workspace still compiles concrete language-pack crates"
+    );
+    assert!(
+        !ROOT_MANIFEST.contains("language-pack-registry"),
+        "workspace still carries the obsolete language-pack registry"
+    );
+    for removed in [
+        "language-pack-registry",
+        "language-pack-es-es",
+        "synthetic-test-pack",
+    ] {
+        assert!(
+            !LOCAL_MANIFEST.contains(removed),
+            "local runtime still links removed component {removed}"
+        );
+    }
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    assert!(
+        !root.join("language-packs").exists(),
+        "concrete language-pack source remains in the repository"
+    );
+}
+
+#[test]
+fn obsolete_language_pack_api_is_removed() {
+    assert!(
+        !ROOT_MANIFEST.contains("language-pack-api"),
+        "workspace still carries the transitional language-pack API"
+    );
+}
+
+#[test]
+fn tutor_wire_contract_does_not_expose_language_pack_metadata() {
+    let contract = include_str!("../../../crates/tutor-contract/src/lib.rs");
+    let validation = include_str!("../../../crates/tutor-contract/src/validate.rs");
+    let records = include_str!("../../../apps/local/src/handlers/records.rs");
+    for forbidden in ["pub language_pack_id:", "pub language_pack_version:"] {
+        assert!(
+            !contract.contains(forbidden),
+            "obsolete tutor field remains: {forbidden}"
+        );
+    }
+    assert!(!validation.contains("r.language_pack_id"));
+    assert!(!validation.contains("r.language_pack_version"));
+    assert!(!records.contains("\"language_pack\": manifest"));
+}
+
+#[test]
+fn current_storage_schema_has_no_language_pack_identity() {
+    let init = include_str!("../../../apps/local/migrations/0001_init.sql");
+    for forbidden in [
+        "CREATE TABLE language_packs",
+        "language_pack_id",
+        "language_pack_version",
+    ] {
+        assert!(
+            !init.contains(forbidden),
+            "obsolete storage identity remains: {forbidden}"
+        );
+    }
+    let production = [
+        include_str!("../../../apps/local/src/repositories/profiles.rs"),
+        include_str!("../../../apps/local/src/repositories/lessons.rs"),
+        include_str!("../../../apps/local/src/repositories/records.rs"),
+        include_str!("../../../apps/local/src/repositories/cards.rs"),
+    ];
+    for source in production {
+        assert!(!source.contains("language_pack_id"));
+        assert!(!source.contains("language_pack_version"));
+    }
+}
+
+#[test]
+fn current_schema_has_no_pack_semantics_or_dead_language_fields() {
+    let init = include_str!("../../../apps/local/migrations/0001_init.sql");
+    for forbidden in [
+        "pack_error_code",
+        "pack_metadata_json",
+        "answer_evaluation_mode",
+        "language_metadata_json",
+    ] {
+        assert!(
+            !init.contains(forbidden),
+            "obsolete semantic field remains in current schema: {forbidden}"
+        );
+    }
+
+    let contract = include_str!("../../../crates/tutor-contract/src/lib.rs");
+    let shared = include_str!("../../../crates/shared-schema/src/lib.rs");
+    assert!(!contract.contains("pack_error_code"));
+    assert!(!shared.contains("pack_error_code"));
+}
+
+#[test]
+fn current_runtime_surface_has_no_language_pack_vocabulary() {
+    let current = [
+        include_str!("../../../apps/local/migrations/0001_init.sql"),
+        include_str!("../../../apps/local/src/handlers/profiles.rs"),
+        include_str!("../../../apps/local/src/handlers/review.rs"),
+        include_str!("../../../crates/shared-schema/src/lib.rs"),
+    ];
+    for source in current {
+        for forbidden in [
+            "language_pack",
+            "language pack",
+            "language-pack",
+            "pack_upgrade_warning",
+            "pack tags",
+            "active pack",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "obsolete pack vocabulary remains: {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
+fn current_architecture_docs_do_not_describe_removed_language_pack_model() {
+    let current_specs = [
+        include_str!("../../../docs/spec/02-workspace.md"),
+        include_str!("../../../docs/spec/03-domain-model.md"),
+        include_str!("../../../docs/spec/04-database.md"),
+        include_str!("../../../docs/spec/06-language-boundary.md"),
+        include_str!("../../../docs/spec/07-tutor-contract.md"),
+        include_str!("../../../docs/spec/12-testing.md"),
+        include_str!("../../../docs/spec/13-roadmap.md"),
+        include_str!("../../../docs/spec/14-traceability.md"),
+        include_str!("../../../docs/spec/15-wbs.md"),
+        include_str!("../../../docs/spec/17-documentation.md"),
+    ];
+    for source in current_specs {
+        for forbidden in [
+            "language-pack-api",
+            "language-pack-registry",
+            "language-pack-es-es",
+            "language_pack_id",
+            "language_pack_version",
+            "PackUpgradeWarning",
+            "language-pack discovery",
+            "Language-pack contract",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "current docs retain removed architecture: {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
+fn language_profile_creation_has_no_compiled_default_language() {
+    let page = include_str!("../../../apps/web/src/pages/languages.rs");
+    assert!(
+        page.contains("RwSignal::new(String::new())"),
+        "language profile form must start without a compiled target language"
+    );
+    assert!(
+        !page.contains("RwSignal::new(\"es-ES\".to_owned())"),
+        "Spanish target locale is still compiled as the UI default"
+    );
+    assert!(
+        !page.contains("RwSignal::new(\"ru\".to_owned())"),
+        "Russian source language is still compiled as the UI default"
+    );
+}
+
+#[test]
+fn language_profile_picker_is_searchable_but_not_an_engine_allowlist() {
+    let page = include_str!("../../../apps/web/src/pages/languages.rs");
+    let write = include_str!("../../../apps/local/src/operations/profile_write.rs");
+    let catalog = between(
+        page,
+        "const LANGUAGE_SUGGESTIONS:",
+        "const TARGET_LOCALE_VARIANTS:",
+    );
+
+    assert!(
+        catalog.matches("(\"").count() >= 180,
+        "language search catalog must cover the complete ISO 639-1 base set"
+    );
+    for required in [
+        "(\"nl\", \"Dutch\")",
+        "(\"cy\", \"Welsh\")",
+        "(\"zu\", \"Zulu\")",
+        "(\"nl-NL\", \"Dutch — Netherlands\")",
+        "(\"nl-BE\", \"Dutch — Belgium\")",
+        "class=\"language-search\"",
+        "class=\"language-search-menu\"",
+    ] {
+        assert!(
+            page.contains(required),
+            "language picker lost searchable coverage: {required}"
+        );
+    }
+    assert!(
+        !page.contains("<datalist"),
+        "native datalist search is inconsistent across browsers and must not be the picker"
+    );
+
+    assert!(
+        !write.contains("SUPPORTED_LANGUAGES")
+            && !write.contains("SUPPORTED_LOCALES")
+            && !write.contains("match target_locale"),
+        "UI suggestions must not become a compiled backend language allowlist"
+    );
+}
+
+#[test]
+fn learner_navigation_exposes_only_learner_workflows() {
+    let app = include_str!("../../../apps/web/src/app.rs");
+    let dashboard = include_str!("../../../apps/web/src/pages/dashboard.rs");
+    let nav = between(app, "<nav", "</nav>");
+
+    for required in [
+        "label=\"Home\"",
+        "label=\"Review\"",
+        "label=\"Library\"",
+        "label=\"Progress\"",
+        "label=\"History\"",
+        "label=\"Languages\"",
+    ] {
+        assert!(
+            nav.contains(required),
+            "learner navigation lost required workflow: {required}"
+        );
+    }
+
+    for forbidden in [
+        "Import",
+        "Export",
+        "Settings",
+        "System",
+        "More",
+        "/learn",
+        "/errors",
+        "/learning-items",
+    ] {
+        assert!(
+            !nav.contains(forbidden),
+            "operator/manual workflow leaked into learner navigation: {forbidden}"
+        );
+    }
+
+    for forbidden in [
+        r#"href="/learn""#,
+        r#"href="/errors""#,
+        r#"href="/learning-items""#,
+    ] {
+        assert!(
+            !dashboard.contains(forbidden),
+            "dashboard exposes engine/manual workflow to learner: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn learner_home_hides_engine_control_state() {
+    let dashboard = include_str!("../../../apps/web/src/pages/dashboard.rs");
+
+    for required in [
+        "Due for review",
+        "Reviewed today",
+        "Current focus areas",
+        "Next lesson",
+        "Tutor focus",
+    ] {
+        assert!(
+            dashboard.contains(required),
+            "learner home lost meaningful state: {required}"
+        );
+    }
+
+    for forbidden in [
+        "new_card_budget",
+        "due_error_rechecks",
+        "items_by_status",
+        "Active error targets",
+        "Learning items",
+        "Open inventory",
+    ] {
+        assert!(
+            !dashboard.contains(forbidden),
+            "engine-control state leaked into learner home: {forbidden}"
+        );
+    }
+}
+
+#[test]
+fn web_ui_has_compact_hierarchy_and_structured_learning_surfaces() {
+    let css = include_str!("../../../apps/web/style.css");
+    let app = include_str!("../../../apps/web/src/app.rs");
+    let lessons = include_str!("../../../apps/web/src/pages/lessons.rs");
+    let cards = include_str!("../../../apps/web/src/pages/cards.rs");
+    let review = include_str!("../../../apps/web/src/pages/review.rs");
+
+    for required in [
+        "--font-display:",
+        "--sidebar-width:",
+        "--sidebar-collapsed-width:",
+        "--color-bg: #0f0f11",
+        "@media (min-width: 960px)",
+        ".page-header .eyebrow",
+        ".page {",
+        ".page-header",
+        ".entity-list",
+        ".metric-grid",
+        ".lesson-summary",
+        ".lesson-next-goal",
+        ".review-stage",
+        ".field",
+        ".language-search-menu",
+    ] {
+        assert!(
+            css.contains(required),
+            "shared visual hierarchy is missing: {required}"
+        );
+    }
+
+    assert!(app.contains("class=\"brand\""));
+    assert!(app.contains("sidebar_collapsed"));
+    assert!(app.contains("class=\"sidebar-toggle\""));
+    assert!(app.contains("class=\"nav-icon\""));
+    assert!(css.contains(".topnav.sidebar-collapsed"));
+    assert!(css.contains("main.sidebar-collapsed-main"));
+    assert!(lessons.contains("class=\"lesson-summary\""));
+    assert!(lessons.contains("class=\"lesson-next-goal\""));
+    assert!(cards.contains("class=\"entity-list card-list\""));
+    assert!(review.contains("class=\"review-stage\""));
+    for forbidden in [
+        "border: 1px dashed",
+        "radial-gradient(",
+        "inset 0 1px",
+        "font-weight: 430",
+        "font-weight: 520",
+        "font-weight: 540",
+        "font-weight: 560",
+        "font-weight: 570",
+        "font-weight: 580",
+        "font-weight: 590",
+        "font-weight: 620",
+        "font-weight: 650",
+    ] {
+        assert!(
+            !css.contains(forbidden),
+            "premium minimal UI reintroduced visual drift: {forbidden}"
+        );
+    }
+
+    for source in [app, lessons, cards, review] {
+        assert!(
+            !source.contains("style="),
+            "web UI must keep presentation in the shared stylesheet"
+        );
+    }
+}
+
+#[test]
+fn planner_reads_use_fixed_sql_bind_shapes_without_trait_objects() {
+    let source = include_str!("../../../apps/local/src/operations/planner_read.rs");
+    assert!(
+        !source.contains("dyn rusqlite::ToSql"),
+        "planner read path reintroduced virtual SQL bind dispatch"
+    );
+}
+
+#[test]
+fn methodology_distinguishes_stabilization_from_retention_and_transfer() {
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+
+    for required in [
+        "exact-repetition попытки только для первичной стабилизации/процедурализации",
+        "не трактуй его как доказательство retention или transfer",
+        "procedural/semantic variation",
+        "не считаются несколькими spaced-success stages",
+    ] {
+        assert!(
+            methodology.contains(required),
+            "methodology lost repetition-vs-learning distinction: {required}"
+        );
+    }
+}
+
+#[test]
+fn methodology_decomposes_task_failure_before_intervention() {
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+
+    for required in [
+        "Провал communicative task — это outcome, а не диагноз",
+        "короткий discriminating probe",
+        "Focus-on-form применяй реактивно",
+        "Не лечи все причины одновременно",
+    ] {
+        assert!(
+            methodology.contains(required),
+            "methodology lost bottleneck-decomposition rule: {required}"
+        );
+    }
+}
+
+#[test]
+fn methodology_optimizes_communicative_outcome_not_proxies() {
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+
+    for required in [
+        "минимизировать число учебных взаимодействий и время",
+        "Оптимизируй реальный communicative outcome, а не proxy",
+        "наблюдение → предполагаемый bottleneck → intervention → измеримый post/delayed outcome",
+        "Если evidence недостаточно, сначала уменьши неопределённость коротким probe",
+        "Вовлечённость, естественность разговора и чувство прогресса — важные constraints",
+        "Объяснение — это intervention, а не доказательство learning",
+        "Новый материал — это expansion после контроля текущих ограничений",
+        "Если bottleneck остаётся нестабильным, новых элементов должно быть 0",
+        "какой latent state пытается оценить",
+    ] {
+        assert!(
+            methodology.contains(required),
+            "methodology lost optimization-policy invariant: {required}"
+        );
+    }
+}
+
+#[test]
+fn methodology_treats_intervention_effects_as_observational() {
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let tutor_spec = include_str!("../../../docs/spec/07-tutor-contract.md");
+
+    for required in [
+        "один delayed sample — только preliminary signal",
+        "не менее 2 независимых delayed samples",
+    ] {
+        assert!(
+            methodology.contains(required),
+            "methodology lost intervention-effect uncertainty guard: {required}"
+        );
+    }
+    for required in [
+        "One delayed sample is preliminary observational evidence only",
+        "at least two independent delayed samples",
+    ] {
+        assert!(
+            tutor_spec.contains(required),
+            "tutor contract lost intervention-effect uncertainty guard: {required}"
+        );
+    }
+}
+
+#[test]
+fn tutor_owns_curriculum_direction_and_engine_persists_observed_context() {
+    let records = include_str!("../../../apps/local/src/handlers/records.rs");
+    let start_lesson = include_str!("../../../apps/local/src/operations/start_lesson.rs");
+    let mcp_tools = include_str!("../../../apps/local/src/mcp_tools.rs");
+    let complete_lesson = include_str!("../../../apps/local/src/operations/complete_lesson.rs");
+    let planner = include_str!("../../../crates/adaptation/src/planner.rs");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let tutor_spec = include_str!("../../../docs/spec/07-tutor-contract.md");
+    let init = include_str!("../../../apps/local/migrations/0001_init.sql");
+    let planner_history_migration =
+        include_str!("../../../apps/local/migrations/0002_planner_history.sql");
+
+    for forbidden in [
+        "priority_scenarios",
+        "curriculum_scenarios",
+        "suggested_new_phrases",
+        "canonical_context_families",
+    ] {
+        assert!(
+            !records.contains(forbidden),
+            "runtime still publishes compiled curriculum direction: {forbidden}"
+        );
+        assert!(
+            !start_lesson.contains(forbidden),
+            "lesson start still reads compiled/profile curriculum direction: {forbidden}"
+        );
+        assert!(
+            !mcp_tools.contains(forbidden),
+            "MCP surface still advertises compiled curriculum direction: {forbidden}"
+        );
+        assert!(
+            !planner.contains(forbidden),
+            "adaptation still owns curriculum direction: {forbidden}"
+        );
+        assert!(
+            !methodology.contains(forbidden),
+            "methodology still depends on compiled curriculum direction: {forbidden}"
+        );
+        assert!(
+            !tutor_spec.contains(forbidden),
+            "tutor contract still documents engine-owned curriculum direction: {forbidden}"
+        );
+    }
+
+    for persisted in [
+        "scenario",
+        "next_goal",
+        "CREATE TABLE learning_item_evidence",
+        "CREATE TABLE error_occurrences",
+    ] {
+        assert!(
+            init.contains(persisted),
+            "current schema lost persisted learner/tutor state: {persisted}"
+        );
+    }
+    assert!(
+        planner_history_migration.contains("CREATE TABLE planner_decisions"),
+        "planner history storage is no longer persisted"
+    );
+    for persisted_write in [
+        "\"scenario\": result.lesson.scenario",
+        "\"next_goal\": result.lesson.next_goal",
+        "SET outcome_json = ?2",
+    ] {
+        assert!(
+            complete_lesson.contains(persisted_write),
+            "lesson completion stopped persisting tutor-owned context: {persisted_write}"
+        );
+    }
+    for exposed in [
+        "\"planner_history\"",
+        "\"previous_next_goal_hypothesis\"",
+        "\"learner_preferences\"",
+    ] {
+        assert!(
+            records.contains(exposed),
+            "tutor context lost persisted/adaptive state: {exposed}"
+        );
+    }
+}
+
+#[test]
+fn methodology_requires_distributed_evidence_and_fresh_mastery() {
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+
+    for required in [
+        "Сила evidence и decision-rate для capability растут по независимым learning episodes",
+        "Recall/task decision-rates усредняй по урокам",
+        "старше 28 дней не используй как authority",
+        "Переход в provisionally_mastered требует свежего unaided productive success",
+        "как минимум 2 независимых предыдущих lesson episodes",
+        "непустым `context_family`",
+        "Свежий unresolved spontaneous-production failure блокирует full mastery",
+        "84-дневном окне revalidation",
+        "diagnostic baseline для того же learning item и той же target_capability",
+        "`probe_phase=practice` фиксирует acquisition/repair performance",
+        "не используй его для повышения operational capability state, profile-level unaided recall или mastery",
+        "Успех по другой capability не закрывает этот failure",
+        "assisted/unqualified success той же capability тоже не закрывает independent failure",
+        "legacy-записи без этого флага fail closed",
+        "использует exit-observation каждого prior episode",
+        "Item-level weighted_success_rate и unaided_success_rate должны быть recency/episode-weighted",
+        "Evidence с неизвестным assistance_level не создаёт independent episode",
+        "до минимум 3 независимых episodes предпочитай discriminating diagnostic probe",
+        "successful_contexts/successful_context_families — не пожизненные достижения",
+        "учитывай последний независимый outcome",
+        "самой давно не подтверждённой из listening/spontaneous_production/transfer",
+        "Recognition/prompted-only failure не должен занимать дефицитный focus-revalidation reserve",
+        "Bounded top-K не должен менять смысл решения",
+        "сохраняй только лучшую action для каждой пары item+capability",
+        "baseline расположен строго раньше explicit immediate outcome",
+        "Numeric effectiveness delta считай между pre-lesson capability snapshot и delayed future snapshot",
+        "Если один следующий независимый success/failure способен перевести решение через operational threshold",
+        "оба исхода ведут к одному и тому же action, не трать отдельный diagnostic slot",
+        "Prompt dependence считай установленной только когда достаточно evidence есть и на prompted, и на spontaneous стороне",
+        "устойчиво подтверждённый gap (`listening_repair`)",
+        "latency измерена как минимум в 2 независимых qualified episodes",
+        "минимум 1 diagnostic baseline и минимум 2 независимых measured probes overall",
+        "не увеличивай допустимый порог автоматически из-за числа слов в target_text",
+    ] {
+        assert!(
+            methodology.contains(required),
+            "methodology lost distributed-evidence/mastery invariant: {required}"
+        );
+    }
+}
+
+#[test]
+fn planner_recall_state_comes_from_persisted_evidence_not_tutor_counters() {
+    let source = include_str!("../../../apps/local/src/operations/planner_read.rs");
+
+    assert!(
+        source.contains("FROM learning_item_evidence e"),
+        "planner recall state must be derived from persisted evidence"
+    );
+    assert!(
+        source.contains("GROUP BY e.lesson_id"),
+        "planner recall state must retain lesson-level independence"
+    );
+    assert!(
+        source.contains("RECENT_SIGNAL_WINDOW_SECONDS"),
+        "planner current-state evidence must have an explicit freshness window"
+    );
+    assert!(
+        !source.contains("m.unaided_recall_count"),
+        "planner reintroduced tutor-reported unaided counters as operational state"
+    );
+    assert!(
+        !source.contains("m.aided_recall_count"),
+        "planner reintroduced tutor-reported aided counters as operational state"
+    );
+}
+
+#[test]
+fn lesson_snapshot_and_live_tutor_use_same_selection_capacity() {
+    let start = include_str!("../../../apps/local/src/operations/start_lesson.rs");
+    let records = include_str!("../../../apps/local/src/handlers/records.rs");
+
+    for source in [start, records] {
+        assert!(
+            source.contains("adaptive_selection::DEFAULT_CANDIDATE_LIMIT")
+                && source.contains("adaptive_selection::DEFAULT_FOCUS_LIMIT"),
+            "lesson-start snapshot and live tutor context must share one selection-capacity contract"
+        );
+    }
+}
+
+#[test]
+fn adaptive_state_regressions_keep_episode_freshness_and_revalidation() {
+    let capability_read = include_str!("../../../apps/local/src/operations/capability_read.rs");
+    let planner_read = include_str!("../../../apps/local/src/operations/planner_read.rs");
+    let lesson_plan = include_str!("../../../apps/local/src/operations/lesson_plan.rs");
+    let complete_lesson = include_str!("../../../apps/local/src/operations/complete_lesson.rs");
+    let selection = include_str!("../../../apps/local/src/operations/adaptive_selection.rs");
+    let contract_validate = include_str!("../../../crates/tutor-contract/src/validate.rs");
+    let capability = include_str!("../../../crates/adaptation/src/capability.rs");
+    let tasks = include_str!("../../../crates/adaptation/src/tasks.rs");
+    let calibration = include_str!("../../../crates/adaptation/src/calibration.rs");
+
+    for required in [
+        "episode_rn=1",
+        "MASTERED_REVALIDATION_SLOTS",
+        "status='mastered' AND class_ord<=?3",
+        "COALESCE(json_extract(e.metadata_json,'$.probe_phase'),'legacy') != 'practice'",
+        "PARTITION BY e.learning_item_id,e.kind",
+        "qualified_success",
+        "revalidation_activity_at",
+        "revalidation_capability_count",
+        "operational_missing_focus",
+        "kind IN ('listening','spontaneous_production','transfer')",
+        "operational_unresolved_failure=1",
+        "unresolved_failure",
+    ] {
+        assert!(
+            capability_read.contains(required),
+            "capability sampling lost anti-massing/revalidation invariant: {required}"
+        );
+    }
+    for required in [
+        "GROUP BY e.lesson_id",
+        "RECENT_SIGNAL_WINDOW_SECONDS",
+        "completed_at>=?2",
+        "COALESCE(json_extract(e.metadata_json,'$.probe_phase'),'legacy') != 'practice'",
+    ] {
+        assert!(
+            planner_read.contains(required),
+            "planner lost lesson-balanced/fresh-state invariant: {required}"
+        );
+    }
+    assert!(
+        lesson_plan.contains("prior_episode_count >= 2"),
+        "full mastery no longer requires distributed prior transfer episodes"
+    );
+    assert!(
+        lesson_plan.contains("evidence.probe_phase != Some(tutor_contract::ProbePhase::Practice)"),
+        "guided practice can again grant mastery"
+    );
+    assert!(
+        lesson_plan.contains("evidence.probe_phase == Some(tutor_contract::ProbePhase::Transfer)"),
+        "full mastery no longer requires a fresh transfer-phase success"
+    );
+    assert!(
+        lesson_plan.contains("latest_fresh_spontaneous_qualified != Some(false)")
+            && lesson_plan.contains(".context_family")
+            && lesson_plan.contains("!family.trim().is_empty()"),
+        "full mastery can again ignore unresolved spontaneous failure or empty transfer family"
+    );
+    for required in [
+        "MIN_CONTEXT_EVIDENCE_WEIGHT",
+        "let mut observed_families = ContextSetView::default()",
+        "let mut unaided_weighted_total = 0.0",
+        "effective_evidence_weight",
+        "unaided_evidence_weight",
+        "unaided_evidence_episodes",
+        "latency_evidence_episodes",
+        "assistance_present[source] && !repeated_known_episode",
+    ] {
+        assert!(
+            capability.contains(required),
+            "capability estimator lost uncertainty/decay invariant: {required}"
+        );
+    }
+    assert!(
+        tasks.contains("let spontaneous_uncertain = needs_diagnostic(spontaneous)")
+            && tasks.contains("if !spontaneous_uncertain")
+            && tasks.contains("estimate.independent_evidence_episodes < 3")
+            && tasks.contains(".weighted_success_rate")
+            && tasks.contains("probe_prompt_independence")
+            && tasks.contains("decision_fragile")
+            && tasks.contains("listening_repair")
+            && tasks.contains("latency_evidence_episodes >= 2")
+            && tasks.contains("rate >= 0.80"),
+        "task scoring can again skip diagnostic value-of-information or automaticity accuracy gates"
+    );
+    assert!(
+        selection.contains("columns.item_key[index] == item_key")
+            && selection
+                .contains("columns.expected_evidence[index] == candidate.expected_evidence")
+            && selection.contains("diagnostic_spontaneous")
+            && selection.contains("independent_evidence_episodes[fi] < 3"),
+        "bounded candidate selection can again lose diagnostic semantics or waste slots on alternatives"
+    );
+    assert!(
+        complete_lesson.contains("MASTERY_HISTORY_WINDOW_SECONDS")
+            && complete_lesson
+                .contains("PARTITION BY CASE WHEN lesson_id IS NULL THEN id ELSE lesson_id END")
+            && complete_lesson.contains("FROM ranked\n         WHERE episode_rn=1"),
+        "mastery history lost its bounded non-practice episode-exit semantics"
+    );
+    assert!(
+        complete_lesson.contains("\"calibration_eligible\": intervention_calibration_eligible")
+            && complete_lesson.contains("result.evidence[..outcome_index]")
+            && complete_lesson.contains("result.listening_attempts[..outcome_index]")
+            && complete_lesson.contains("baseline_qualified")
+            && complete_lesson.contains("ProbePhase::Diagnostic"),
+        "lesson completion lost ordered qualified causal-baseline eligibility"
+    );
+    assert!(
+        contract_validate
+            .contains("intervention immediate outcome must be post-intervention, not diagnostic"),
+        "contract again permits a diagnostic baseline to masquerade as intervention outcome"
+    );
+    assert!(
+        contract_validate
+            .contains("at least 1 diagnostic baseline and 2 independent measured probes overall"),
+        "lesson measurement coverage drifted away from baseline plus independent delayed/transfer evidence"
+    );
+    assert!(
+        !include_str!("../../../apps/local/src/methodology_instructions_ru.md")
+            .contains("минимум 2 diagnostic probes"),
+        "Tutor methodology reintroduced mandatory duplicate diagnostic probing"
+    );
+    assert!(
+        calibration.contains("if !intervention.calibration_eligible")
+            && calibration.contains("#[serde(default)]\n    calibration_eligible: bool")
+            && !calibration.contains("default_true"),
+        "calibration eligibility no longer fails closed for legacy outcomes"
+    );
 }

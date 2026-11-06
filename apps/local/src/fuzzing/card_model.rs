@@ -45,7 +45,7 @@ pub fn exercise_card_model(data: &[u8]) {
         );
         assert!(find_card(&state, "bad").is_none());
     }
-    let payload = rich_lesson_result("p", "0.2.0", "op".into(), None, 0).card_mutations[0]
+    let payload = rich_lesson_result("p", "op".into(), None, 0).card_mutations[0]
         .card
         .clone()
         .expect("payload");
@@ -124,21 +124,49 @@ pub fn exercise_card_model(data: &[u8]) {
 
 pub(super) fn lesson_model(seed: u8) {
     use crate::operations::lesson_plan::*;
-    let mut state = new_lesson_plan_state("p", "es-ES", u32::from(seed));
-    let mut result = rich_lesson_result("p", "0.2.0", "pure-plan".into(), None, 0);
+    let mut state = new_lesson_plan_state("p", u32::from(seed));
+    let mut result = rich_lesson_result("p", "pure-plan".into(), None, 0);
     add_known_lesson_item(&mut state, "li-fuzz").expect("known item");
     for (i, item) in result.new_learning_items.iter().enumerate() {
         set_lesson_normalized_item(&mut state, i, &item.target_text).expect("normalize item");
     }
-    add_lesson_mastery_signal(
-        &mut state,
-        "li-fuzz",
-        seed & 1 == 0,
-        &["family-a", "family-b", "family-c", "family-a", ""],
+    let families: &[&str] = if seed & 1 == 0 {
+        &["family-a", "family-b", "family-c"]
+    } else {
+        &["family-a"]
+    };
+    crate::operations::lesson_plan::add_lesson_mastery_signal_from_episode(
+        &mut state, "li-fuzz", None, families,
     )
     .expect("mastery history");
-    set_lesson_mastery_latest_transfer_failed(&mut state, "li-fuzz", seed & 2 != 0)
-        .expect("transfer history");
+    add_known_lesson_item(&mut state, "li-fuzz").expect("duplicate known item is idempotent");
+    let mut capacity_state = new_lesson_plan_state("p", 0);
+    let normalized_capacity_hit = (0..128)
+        .any(|index| set_lesson_normalized_item(&mut capacity_state, index, "bounded").is_err());
+    assert!(normalized_capacity_hit);
+    let existing_capacity_hit = (0..128).any(|index| {
+        add_lesson_existing_normalized(&mut capacity_state, "bounded", &format!("existing-{index}"))
+            .is_err()
+    });
+    assert!(existing_capacity_hit);
+    let error_capacity_hit = (0..128).any(|index| {
+        add_lesson_error_target(
+            &mut capacity_state,
+            &format!("error-{index}"),
+            index as u32,
+            false,
+        )
+        .is_err()
+    });
+    assert!(error_capacity_hit);
+
+    let mut mismatched = result.clone();
+    mismatched.language_profile_id = "other-profile".to_owned();
+    assert!(matches!(
+        plan_lesson_completion(&mismatched, &state),
+        Err(LessonPlanError::ProfileMismatch(_))
+    ));
+
     result.mastery_changes[0].new_status = match seed % 7 {
         0 => learning_core::LearningItemStatus::Candidate,
         1 => learning_core::LearningItemStatus::Introduced,
@@ -149,4 +177,12 @@ pub(super) fn lesson_model(seed: u8) {
         _ => learning_core::LearningItemStatus::Suspended,
     };
     let _ = plan_lesson_completion(&result, &state);
+
+    set_lesson_existing(&mut state, "lesson-fuzz-open");
+    let existing = plan_lesson_completion(&result, &state).expect("existing lesson plan");
+    assert_eq!(existing.lesson_kind, LessonPlanKind::CompleteExisting);
+
+    state.duplicate_import = true;
+    let duplicate = plan_lesson_completion(&result, &state).expect("duplicate import plan");
+    assert_eq!(duplicate.lesson_kind, LessonPlanKind::DuplicateNoop);
 }

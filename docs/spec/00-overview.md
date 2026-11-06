@@ -13,18 +13,19 @@ Help a learner start speaking quickly while preserving durable learner state, re
 - Native `lingua-tutor` CLI/runtime.
 - One SQLite database.
 - FSRS-compatible review scheduling through explicit integer-selected processing passes; no scheduler behavior interface.
-- Versioned language packs.
+- Language-neutral methodology with scalar target/source language profile metadata.
 - ChatGPT integration through bounded MCP tools and an in-process OpenAI Secure MCP Tunnel transport adapted from Rivet.
 
 ## Topology
 
-One local runtime serves the PWA and browser JSON-RPC boundary on `127.0.0.1:8787`, dispatches MCP in-process through the built-in secure tunnel, and accesses the same SQLite database. There is no remote application deployment or secondary database.
+One local runtime serves the PWA and browser JSON-RPC boundary on `127.0.0.1:8787`, dispatches MCP in-process through the built-in secure tunnel, and accesses the same SQLite database. There is no remote application deployment, secondary database, language-pack registry or concrete-language runtime module.
 
 ## Core invariants
 
 - SQLite is the sole application system of record.
 - Review events are immutable; current schedule state is derived/updated atomically.
-- Language-specific behavior lives in language packs, not core.
+- Deterministic methodology stays language-neutral.
+- Linguistic interpretation belongs to the tutor contract boundary, not concrete-language core heuristics.
 - Tutor and UI use the same application rules and persistence.
 - No raw SQL or arbitrary code is exposed through MCP.
 - Local backup and integrity checking are mandatory operations.

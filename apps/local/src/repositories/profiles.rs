@@ -21,13 +21,13 @@ pub const SELECT_LEARNER: &str = "SELECT id, timezone, daily_session_target,
 
 /// Insert a language profile.
 pub const INSERT_LANGUAGE_PROFILE: &str = "INSERT INTO learner_language_profiles
-    (id, learner_id, language_pack_id, source_language, target_locale,
+    (id, learner_id, source_language, target_locale,
      estimated_level, current_lesson_number, status, is_default,
      preferences_json, created_at, updated_at)
- VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)";
+ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)";
 
 /// All language profiles, default first.
-pub const SELECT_LANGUAGE_PROFILES: &str = "SELECT p.id, p.learner_id, p.language_pack_id,
+pub const SELECT_LANGUAGE_PROFILES: &str = "SELECT p.id, p.learner_id,
     p.source_language, p.target_locale, p.estimated_level,
     MAX(
         p.current_lesson_number,
@@ -43,7 +43,7 @@ pub const SELECT_LANGUAGE_PROFILES: &str = "SELECT p.id, p.learner_id, p.languag
  FROM learner_language_profiles p ORDER BY p.is_default DESC, p.created_at";
 
 /// One language profile by ID.
-pub const SELECT_LANGUAGE_PROFILE: &str = "SELECT p.id, p.learner_id, p.language_pack_id,
+pub const SELECT_LANGUAGE_PROFILE: &str = "SELECT p.id, p.learner_id,
     p.source_language, p.target_locale, p.estimated_level,
     MAX(
         p.current_lesson_number,

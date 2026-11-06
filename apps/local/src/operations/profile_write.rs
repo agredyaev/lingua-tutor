@@ -6,7 +6,7 @@
 #[allow(clippy::unwrap_used, clippy::type_complexity)]
 mod tests {
     use super::*;
-    use crate::{Env, built_in_language_packs};
+    use crate::Env;
     use std::path::PathBuf;
 
     fn create_env(label: &str) -> (PathBuf, Env) {
@@ -22,45 +22,15 @@ mod tests {
     fn create_snapshot(
         env: &Env,
     ) -> (
-        Vec<(String, String, String, String, String, String)>,
         Vec<(String, u8, u16, u8, f64, u16)>,
-        Vec<(
-            String,
-            String,
-            String,
-            Option<String>,
-            u32,
-            String,
-            u8,
-            String,
-        )>,
+        Vec<(String, String, Option<String>, u32, String, u8, String)>,
     ) {
         let db = env.connection().unwrap();
-        let packs = db
-            .prepare(
-                "SELECT id,package_name,version,target_language,target_locale,display_name
-             FROM language_packs ORDER BY id",
-            )
-            .unwrap()
-            .query_map([], |r| {
-                Ok((
-                    r.get(0)?,
-                    r.get(1)?,
-                    r.get(2)?,
-                    r.get(3)?,
-                    r.get(4)?,
-                    r.get(5)?,
-                ))
-            })
-            .unwrap()
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .unwrap();
-
         let learners = db
             .prepare(
                 "SELECT timezone,daily_session_target,session_minutes_target,max_new_cards,
                     desired_retention,max_review_minutes
-             FROM learner_profile",
+                 FROM learner_profile",
             )
             .unwrap()
             .query_map([], |r| {
@@ -79,9 +49,9 @@ mod tests {
 
         let profiles = db
             .prepare(
-                "SELECT language_pack_id,source_language,target_locale,estimated_level,
+                "SELECT source_language,target_locale,estimated_level,
                     current_lesson_number,status,is_default,preferences_json
-             FROM learner_language_profiles",
+                 FROM learner_language_profiles",
             )
             .unwrap()
             .query_map([], |r| {
@@ -93,26 +63,24 @@ mod tests {
                     r.get(4)?,
                     r.get(5)?,
                     r.get(6)?,
-                    r.get(7)?,
                 ))
             })
             .unwrap()
             .collect::<rusqlite::Result<Vec<_>>>()
             .unwrap();
 
-        (packs, learners, profiles)
+        (learners, profiles)
     }
 
     #[test]
-    fn unsupported_source_cannot_create_profile_or_mutate_database() {
-        let (path, env) = create_env("unsupported-source");
-        let registry = built_in_language_packs().unwrap();
-        let error = create_profile(&registry, &env, "es-ES", "invalid-language").unwrap_err();
+    fn empty_locale_cannot_create_profile_or_mutate_database() {
+        let (path, env) = create_env("empty-locale");
+        let error = create_profile(&env, " ", "ru").unwrap_err();
         assert!(matches!(
             error,
             crate::Error::Operation {
-                status: 409,
-                code: "pack_incompatible",
+                status: 400,
+                code: "invalid_field",
                 ..
             }
         ));
@@ -130,24 +98,11 @@ mod tests {
     }
 
     #[test]
-    fn create_persists_pack_learner_and_profile_contract() {
+    fn create_persists_locale_metadata_learner_and_profile_contract() {
         let (path, env) = create_env("create");
-        let registry = built_in_language_packs().unwrap();
-        let manifest = language_pack_registry::manifest(&registry, "es-ES").unwrap();
-        create_profile(&registry, &env, "es-ES", "ru").unwrap();
+        create_profile(&env, "de-DE", "en").unwrap();
 
-        let (packs, learners, profiles) = create_snapshot(&env);
-        assert_eq!(
-            packs,
-            vec![(
-                manifest.id.to_owned(),
-                manifest.package.to_owned(),
-                manifest.version.to_owned(),
-                manifest.target_language.to_owned(),
-                manifest.target_locale.to_owned(),
-                manifest.display_name.to_owned(),
-            )]
-        );
+        let (learners, profiles) = create_snapshot(&env);
         assert_eq!(
             learners,
             vec![("Europe/Madrid".to_owned(), 2, 20, 8, 0.90, 12)]
@@ -155,9 +110,8 @@ mod tests {
         assert_eq!(
             profiles,
             vec![(
-                "es-ES".to_owned(),
-                "ru".to_owned(),
-                manifest.target_locale.to_owned(),
+                "en".to_owned(),
+                "de-DE".to_owned(),
                 None,
                 0,
                 "active".to_owned(),
@@ -171,16 +125,14 @@ mod tests {
     fn seed_profile(env: &Env) {
         let db = env.connection().unwrap();
         db.execute_batch(
-            r#"INSERT INTO language_packs
-                (id,package_name,version,contract_version,target_language,target_locale,
-                 display_name,installed_at,updated_at)
-               VALUES ('es-ES','language-pack-es-es','0.2.0',1,'es','es-ES','Spanish (Spain)','a','a');
+            r#"
                INSERT INTO learner_profile(id,created_at,updated_at) VALUES('learner-1','a','a');
                INSERT INTO learner_language_profiles
-                (id,learner_id,language_pack_id,source_language,target_locale,estimated_level,
+                (id,learner_id,source_language,target_locale,estimated_level,
                  current_lesson_number,status,is_default,preferences_json,created_at,updated_at)
-               VALUES('llp-1','learner-1','es-ES','ru','es-ES','A1',7,'active',1,'{"x":1}','a','a');"#
-        ).unwrap();
+               VALUES('llp-1','learner-1', 'ru','es-ES','A1',7,'active',1,'{"x":1}','a','a');"#,
+        )
+        .unwrap();
     }
 
     fn patch_snapshot(env: &Env) -> (Option<String>, String, u8, String, u32) {
@@ -232,11 +184,11 @@ mod tests {
             .unwrap()
             .execute(
                 "INSERT INTO lessons
-                 (id,learner_language_profile_id,language_pack_id,language_pack_version,
+                 (id,learner_language_profile_id,
                   lesson_number,status,scenario,planned_goal,source,started_at,completed_at,
                   created_at,updated_at)
                  VALUES
-                 ('lesson-8','llp-1','es-ES','0.2.0',8,'completed','seed','','import',
+                 ('lesson-8','llp-1',8,'completed','seed','','import',
                   'a','a','a','a')",
                 [],
             )
@@ -260,7 +212,7 @@ mod tests {
     }
 }
 
-use crate::repositories::{packs, profiles, to_rfc3339};
+use crate::repositories::{profiles, to_rfc3339};
 use crate::{Env, Result};
 use rusqlite::{TransactionBehavior, params};
 
@@ -272,61 +224,25 @@ pub(crate) struct PatchProfileInput<'a> {
 }
 
 pub(crate) fn create_profile(
-    registry: &crate::BuiltInPackRegistry,
     env: &Env,
-    language_pack_id: &str,
+    target_locale: &str,
     source_language: &str,
 ) -> Result<serde_json::Value> {
-    let Some(manifest) = language_pack_registry::manifest(registry, language_pack_id) else {
-        return crate::api::operation_error(404, "not_found", "unknown language pack");
-    };
-    if manifest.contract_version != language_pack_api::CONTRACT_VERSION {
+    if target_locale.trim().is_empty() || source_language.trim().is_empty() {
         return crate::api::operation_error(
-            409,
-            "pack_incompatible",
-            &format!(
-                "pack '{}' is contract-incompatible with this build",
-                manifest.id
-            ),
-        );
-    }
-    if !manifest
-        .supported_source_languages
-        .iter()
-        .any(|source| source == source_language)
-    {
-        return crate::api::operation_error(
-            409,
-            "pack_incompatible",
-            &format!(
-                "pack '{}' does not support source language '{}'",
-                manifest.id, source_language
-            ),
+            400,
+            "invalid_field",
+            "target_locale and source_language must be non-empty",
         );
     }
 
     let profile_id = crate::api::new_id("llp");
     let at = to_rfc3339(crate::api::now());
-    let capabilities_json = serde_json::to_string(&manifest.capabilities)?;
 
     let mut database = env.connection()?;
     let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
     let result = (|| -> rusqlite::Result<()> {
-        transaction.execute(
-            packs::UPSERT_PACK,
-            params![
-                manifest.id,
-                manifest.package,
-                manifest.version,
-                manifest.contract_version,
-                manifest.target_language,
-                manifest.target_locale,
-                manifest.display_name,
-                capabilities_json,
-                at,
-            ],
-        )?;
         transaction.execute(
             profiles::UPSERT_LEARNER,
             params!["learner-1", "Europe/Madrid", 2, 20, 8, 0.90, 12, at],
@@ -336,9 +252,8 @@ pub(crate) fn create_profile(
             params![
                 profile_id,
                 "learner-1",
-                manifest.id,
                 source_language,
-                manifest.target_locale,
+                target_locale,
                 Option::<String>::None,
                 0_u32,
                 "active",
@@ -355,7 +270,7 @@ pub(crate) fn create_profile(
             return crate::api::operation_error(
                 409,
                 "profile_exists",
-                "active profile for this pack exists",
+                "active profile for this target locale exists",
             );
         }
         return Err(error.into());
@@ -406,7 +321,6 @@ pub(crate) fn patch_profile(
 
     let (
         learner_id,
-        language_pack_id,
         source_language,
         target_locale,
         estimated_level,
@@ -415,7 +329,7 @@ pub(crate) fn patch_profile(
         is_default,
         preferences_json,
     ) = transaction.query_row(
-        "SELECT learner_id,language_pack_id,source_language,target_locale,
+        "SELECT learner_id,source_language,target_locale,
                 estimated_level,
                 MAX(
                     current_lesson_number,
@@ -435,12 +349,11 @@ pub(crate) fn patch_profile(
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, Option<String>>(4)?,
-                row.get::<_, u32>(5)?,
-                row.get::<_, String>(6)?,
-                row.get::<_, u8>(7)?,
-                row.get::<_, String>(8)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, u32>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, u8>(6)?,
+                row.get::<_, String>(7)?,
             ))
         },
     )?;
@@ -451,7 +364,6 @@ pub(crate) fn patch_profile(
     crate::json(&serde_json::json!({
         "id": profile_id,
         "learner_id": learner_id,
-        "language_pack_id": language_pack_id,
         "source_language": source_language,
         "target_locale": target_locale,
         "estimated_level": estimated_level,

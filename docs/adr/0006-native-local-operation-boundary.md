@@ -17,7 +17,7 @@ Keeping REST-shaped internal calls, Worker/WASM scheduler constraints, credentia
 - SQLite migrations belong to `apps/local/migrations`.
 - `review-engine` is native-only. The PWA does not depend on it, so workspace-wide WASM `getrandom` configuration is removed.
 - Tunnel ID and Runtime API key are prompted securely for each run and remain process-memory-only.
-- Build-time language packs remain unchanged.
+- Language behavior is not compiled into the runtime; target/source language selection is scalar profile metadata and linguistic interpretation crosses the tutor contract.
 
 ## Consequences
 

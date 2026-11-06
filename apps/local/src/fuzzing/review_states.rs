@@ -42,17 +42,12 @@ pub fn exercise_review_states(data: &[u8]) {
     let path = dir.join("db.sqlite3");
     crate::storage::open(&path).expect("database");
     let env = Env::new(path, "fuzz-key".into());
-    let registry = crate::built_in_language_packs().expect("registry");
-    let created = crate::operations::profile_write::create_profile(&registry, &env, "es-ES", "ru")
-        .expect("profile");
+    let created =
+        crate::operations::profile_write::create_profile(&env, "es-ES", "ru").expect("profile");
     let profile = created["id"].as_str().expect("id");
-    let version = language_pack_registry::manifest(&registry, "es-ES")
-        .expect("manifest")
-        .version;
     seed_fuzz_learning_item(&env, profile);
-    let result = rich_lesson_result(profile, version, "review-states-bootstrap".into(), None, 0);
-    crate::operations::complete_lesson::complete_lesson(&registry, &env, &result)
-        .expect("bootstrap");
+    let result = rich_lesson_result(profile, "review-states-bootstrap".into(), None, 0);
+    crate::operations::complete_lesson::complete_lesson(&env, &result).expect("bootstrap");
     let card = first_card_id(&env, profile).expect("card");
     let db = env.connection().expect("db");
     let now = crate::api::now();
@@ -144,13 +139,10 @@ pub fn exercise_review_states(data: &[u8]) {
         .map(|r| r["card_id"].as_str().expect("queue card id"))
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(ids.len(), rows.len());
-    // All answer evaluation paths use the real stored card and language pack.
+    // All answer evaluation paths use the real stored card.
     let answer = String::from_utf8_lossy(data);
-    let _ = crate::handlers::review::evaluate(&registry, &env, &card, &answer)
-        .expect("answer evaluation");
-    let _ = no_storage_error(crate::handlers::review::evaluate(
-        &registry, &env, "missing", &answer,
-    ));
+    let _ = crate::handlers::review::evaluate(&env, &card, &answer).expect("answer evaluation");
+    let _ = no_storage_error(crate::handlers::review::evaluate(&env, "missing", &answer));
     // A long effective event stream followed by undo drives replay and recommendation rules.
     for n in 0..12 {
         let prior = schedule_hash(&env, &card).expect("current hash");
@@ -213,13 +205,13 @@ pub fn exercise_review_states(data: &[u8]) {
     }
 
     let field = match seed % 8 {
-        0 => "language_pack_version",
-        1 => "intent",
-        2 => "status",
-        3 => "created_by",
-        4 => "accepted_answers_json",
-        5 => "answer_evaluation_mode",
-        6 => "language_pack_id",
+        0 => "intent",
+        1 => "status",
+        2 => "created_by",
+        3 => "accepted_answers_json",
+        4 => "prompt_language",
+        5 => "answer_language",
+        6 => "creation_reason",
         _ => "created_at",
     };
     let original: String = db
@@ -229,20 +221,18 @@ pub fn exercise_review_states(data: &[u8]) {
             |r| r.get(0),
         )
         .expect("original card field");
-    if field != "language_pack_id" {
-        db.execute(
-            &format!("UPDATE cards SET {field}='invalid' WHERE id=?1"),
-            [&card],
-        )
-        .expect("corrupt field");
-        let _ = crate::handlers::review::evaluate(&registry, &env, &card, &answer);
-        let _ = crate::operations::review_queue::queue(&env, sid);
-        db.execute(
-            &format!("UPDATE cards SET {field}=?2 WHERE id=?1"),
-            params![card, original],
-        )
-        .expect("restore field");
-    }
+    db.execute(
+        &format!("UPDATE cards SET {field}='invalid' WHERE id=?1"),
+        [&card],
+    )
+    .expect("corrupt field");
+    let _ = crate::handlers::review::evaluate(&env, &card, &answer);
+    let _ = crate::operations::review_queue::queue(&env, sid);
+    db.execute(
+        &format!("UPDATE cards SET {field}=?2 WHERE id=?1"),
+        params![card, original],
+    )
+    .expect("restore field");
     let hash = schedule_hash(&env, &card).expect("hash");
     for (grade, answered, prior, target, session) in [
         (0, at.as_str(), hash.as_str(), card.as_str(), sid),

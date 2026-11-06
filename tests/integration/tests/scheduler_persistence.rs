@@ -4,7 +4,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use integration_tests::{migrated_connection, seed_profile_and_pack};
+use integration_tests::{migrated_connection, seed_profile};
 use review_engine::{
     FSRS_ID, Grade, ReviewEventInput, SchedulerSettings, Timestamp, apply_review, initial_state,
     new_scheduler_scratch,
@@ -20,14 +20,14 @@ fn rfc3339(t: Timestamp) -> String {
 #[test]
 fn review_event_persists_next_due_date() {
     let conn = migrated_connection();
-    seed_profile_and_pack(&conn);
+    seed_profile(&conn);
     conn.execute_batch(
-        "INSERT INTO cards (id, learner_language_profile_id, language_pack_id,
-             language_pack_version, intent, status, prompt, prompt_language, answer,
-             answer_language, answer_evaluation_mode, creation_reason, content_hash,
+        "INSERT INTO cards (id, learner_language_profile_id,
+             intent, status, prompt, prompt_language, answer,
+             answer_language, creation_reason, content_hash,
              created_by, created_at, updated_at)
-         VALUES ('card-1', 'llp-1', 'test-pack', '0.1.0', 'production', 'new', 'p',
-                 'ru', 'a', 'zz', 'exact', 'test', 'hash-1', 'system',
+         VALUES ('card-1', 'llp-1', 'production', 'new', 'p',
+                 'ru', 'a', 'zz', 'test', 'hash-1', 'system',
                  '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z');
          INSERT INTO review_sessions (id, learner_language_profile_id, started_at,
              source, created_at)

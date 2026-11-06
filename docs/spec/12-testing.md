@@ -1,54 +1,45 @@
 # 12 — Testing
 
-Scope: test suites per subsystem, acceptance commands, performance targets.
-Depends on: all component files 03–09.
+Scope: subsystem tests, architecture gates and acceptance commands.
 
-## 1. Scheduler (`review-engine`)
+## 1. Scheduler and review
 
-- Deterministic golden vectors per grade (Again/Hard/Good/Easy).
-- Initial scheduling; lapse + relearning transitions; overdue + early review; timezone + day-boundary cases.
-- Algorithm-version persistence; parameter-set changes; state-hash reproducibility.
-- Fallback scheduler passes the same suite.
-- Property tests: no invalid, negative, or non-finite intervals.
+Review-engine uses deterministic golden vectors, replay/property tests, lapse/overdue cases, state hashing and fallback behavior. Review persistence tests cover idempotency, compensation/undo, atomic event + schedule updates and immutable history.
 
-## 2. Review events
+## 2. Tutor/card flow
 
-Duplicate submission (idempotent); offline replay; immediate undo (compensating event); stale prior-state hash → 409; concurrent submission; event/state atomicity; history immutability; corrected-event recalculation.
+Tests cover lesson-result validation, profile ownership, duplicate detection, card create/update/status transitions, accepted-answer changes, content-hash stability, activation budgets and atomic rollback.
 
-## 3. Tutor cards
+## 3. Adaptation and mastery
 
-Idempotent create; exact duplicate detection; near-duplicate warning; cosmetic edit preserves schedule; semantic edit resets/replaces; split lineage; merge lineage; activation budget enforcement; invalid ambiguous prompt rejected; missing `creation_reason` rejected; destructive mutation requires confirmation.
+Table-driven tests cover recall gaps, review backlog, listening evidence, prompted/spontaneous mismatch, repeated errors, transfer context families, method-change thresholds and calibration from measured outcomes.
 
-## 4. Adaptive rules (`adaptation`)
+## 4. Language neutrality
 
-Table-driven: low recall; backlog; repeated listening failure; prompted/spontaneous mismatch; 3-occurrence mini-target; 5-occurrence method change; redesign candidates; mastery evidence.
+Architecture gates must prove:
 
-## 5. Pack conformance (shared suite, `test-support`)
+- no executable target-language crate or registry is compiled;
+- no virtual language behavior dispatch exists;
+- tutor/wire contracts expose profile identity and scalar language metadata only;
+- current storage contains no duplicated language-implementation identity;
+- core contains no target-language normalization/classification rules;
+- methodology assets contain no target-language rules or examples.
 
-Every pack: manifest validity; contract-version compatibility; deterministic normalization; bounded answer evaluation; stable error codes; card-template validation; no secret/network access; asset schema validation; historical version attribution.
+Ordinary profile and tutor-result fixtures are sufficient; no executable synthetic language implementation is required.
 
-Core CI runs the suite against `synthetic-test-pack` — proves core independence from Spanish.
+## 5. Migrations
 
-## 6. Migrations
+Scratch SQLite tests validate current table/index shape, foreign keys and constraints. Dedicated upgrade tests verify v5→v6 language-neutral storage and v6→v7 semantic metadata migration without loss of learning data.
 
-Apply all migrations to scratch SQLite in CI; schema matches [04-database.md](04-database.md); foreign keys + unique constraints verified.
+## 6. End-to-end
 
-## 7. End-to-end (Playwright)
+Browser and RPC/MCP flows cover lesson completion, review, dashboard updates, card changes, backup/restore and shared persistence.
 
-Lesson-result import creates cards; MCP-equivalent lesson completion through the shared handler path; daily review; offline review sync; dashboard update; card suspend + restore; full export snapshot validity; verified SQLite backup restore.
+## 7. Performance
 
-## 8. Performance targets (one learner)
+Representative single-learner performance tests remain explicit release/ignored gates. Optimize only after profiling; preserve bounded queues/batches and indexed due-card access.
 
-- Dashboard operation < 500 ms normal load.
-- Review operation response < 300 ms online.
-- Next-card transition feels immediate (queue prefetched client-side).
-- Offline review independent of server latency.
-- Due-card query uses `ix_schedule_due`.
-- Bounded review batches.
-- Capacity: tens of thousands of review events, several thousand cards, no redesign.
-- Compressed frontend payload ≤ 3 MB (CI-reported).
-
-## 9. Acceptance commands
+## 8. Acceptance commands
 
 ```bash
 cargo fmt --check
@@ -58,12 +49,3 @@ cd apps/web && trunk build --release --cargo-profile wasm-release
 cd ../..
 cargo build -p lingua-tutor-local --bin lingua-tutor --release
 ```
-
-## 10. Architecture acceptance checks
-
-- No dependency from generic core crates to `language-pack-es-es`.
-- No `spanish_*` fields or types in core.
-- `review-engine` tests pass with synthetic pack or no pack.
-- es-ES pack passes conformance suite.
-- Incompatible pack contract version fails explicitly at startup.
-- No empty architectural directories.

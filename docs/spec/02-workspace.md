@@ -4,60 +4,51 @@
 
 ```text
 apps/
-├── local/                    # native runtime: /rpc, downloads, MCP tunnel, SQLite
-│   ├── src/
-│   └── migrations/
+├── local/                    # native runtime: RPC, MCP tunnel, SQLite, methodology assets
 └── web/                      # Leptos PWA
 
 crates/
-├── learning-core/            # scalar enums, timestamps, pure rules/hashes
-├── review-engine/            # native scheduling
-├── adaptation/               # adaptive rules
-├── language-pack-api/        # stable plugin contract
-├── language-pack-registry/   # registration/selection
-├── shared-schema/            # transport-neutral UI/application DTOs
-└── tutor-contract/           # tutor import/export contracts
-
-language-packs/
-├── es-es/
-└── synthetic-test-pack/
+├── adaptation/               # bounded adaptive processing passes
+├── learning-core/            # scalar enums, pure rules and hashes
+├── review-engine/            # review scheduling passes
+├── shared-schema/            # transport DTOs
+└── tutor-contract/           # structured tutor input/output contract
 
 tests/
-├── integration/              # conventional Rust cross-crate test crate
-│   ├── src/
-│   └── tests/
-└── e2e/                      # Playwright package/config/specs
+├── integration/              # cross-crate architecture, schema and regression gates
+└── e2e/                      # browser end-to-end tests
 
 fuzz/                         # separate cargo-fuzz workspace
 ```
 
-The repository root is a virtual Cargo workspace, so it intentionally has no root `src/`. Production Rust sources live under their owning package's `src/` directory.
+There is no concrete-language source tree, language registry, plugin crate, or language-specific executable module.
 
 ## 2. Ownership
 
 | Component | Owns | Must not own |
 |---|---|---|
-| `learning-core` | language-neutral scalar contracts and pure rules | retained entity records, storage, transport, concrete packs |
-| `review-engine` | native scheduling and workload calculations | language rules, persistence, browser code |
-| `language-pack-api` | stable typed pack contract | concrete language behavior |
-| concrete language pack | normalization, answer matching, taxonomy, tutor assets | SQLite, network, scheduling state |
-| `apps/local` | composition root, browser RPC/download boundary, MCP, repositories, SQLite lifecycle/migrations | duplicated domain rules |
-| `apps/web` | UI and local RPC client | direct SQLite, scheduler, secrets |
-| `tests/integration` | cross-crate verification | production code |
-| `tests/e2e` | browser journey verification | application logic |
+| `learning-core` | language-neutral scalar contracts and pure rules | retained entity graphs, persistence, linguistic interpretation |
+| `review-engine` | scheduling calculations and replay | persistence, language rules, browser code |
+| `adaptation` | bounded adaptive passes over indexed data | persistence, linguistic interpretation |
+| `apps/local` | SQLite lifecycle/migrations, repositories, RPC/MCP boundaries, methodology assets | target-language correctness rules or alternate domain layers |
+| `apps/web` | UI and local RPC client | direct SQLite, scheduling logic, secrets |
+| `tutor-contract` | structured tutor result contract and validation | persistence or target-language implementation |
+| `shared-schema` | transport data | domain behavior |
+| `tests/integration` | cross-crate verification | production behavior |
 
 ## 3. Dependency direction
 
 ```text
 apps/local ─→ learning-core
-     │              └──────→ review-engine
-     ├─────────────→ language-pack-registry ─→ language-pack-api
-     └─────────────→ shared-schema / tutor-contract
+     ├──────→ review-engine
+     ├──────→ adaptation
+     ├──────→ tutor-contract
+     └──────→ shared-schema
 
 apps/web ─→ shared-schema
 ```
 
-Core crates do not depend on concrete language packs or runtime infrastructure. The web crate does not depend on `review-engine`.
+Core crates do not depend on a target language. The web crate does not own scheduling or persistence.
 
 ## 4. Runtime targets
 
@@ -65,8 +56,8 @@ Core crates do not depend on concrete language packs or runtime infrastructure. 
 |---|---|
 | UI | Leptos CSR + Trunk |
 | Application runtime | native Rust |
-| Database | SQLite |
-| Browser boundary | loopback static assets + `POST /rpc` + file downloads |
-| MCP | one in-process tool dispatcher through the built-in secure tunnel |
-| Remote MCP bridge | outbound OpenAI Secure MCP Tunnel protocol adapted from Rivet |
+| Database | one project-local SQLite database |
+| Browser boundary | loopback static assets + `POST /rpc` + downloads |
+| MCP | one in-process dispatcher through the built-in secure tunnel |
+| Language selection | scalar `source_language` + `target_locale` on a profile |
 | Service management | foreground `lingua-tutor run`; current directory selects workspace |

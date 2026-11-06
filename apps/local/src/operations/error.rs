@@ -33,10 +33,8 @@ pub(crate) fn insert_error_target(
     database: &Connection,
     id: &str,
     profile_id: &str,
-    pack_id: &str,
-    pack_version: &str,
     core_category: &str,
-    pack_error_code: Option<&str>,
+    error_code: Option<&str>,
     original_production: &str,
     corrected_production: &str,
     explanation: Option<&str>,
@@ -49,10 +47,8 @@ pub(crate) fn insert_error_target(
     statement.execute(params![
         id,
         profile_id,
-        pack_id,
-        pack_version,
         core_category,
-        pack_error_code,
+        error_code,
         original_production,
         corrected_production,
         explanation,
@@ -107,10 +103,8 @@ fn scratch_database() -> rusqlite::Result<Connection> {
          CREATE TABLE error_targets (
             id TEXT PRIMARY KEY,
             learner_language_profile_id TEXT NOT NULL,
-            language_pack_id TEXT NOT NULL,
-            language_pack_version TEXT NOT NULL,
             core_category TEXT NOT NULL,
-            pack_error_code TEXT,
+            error_code TEXT,
             original_production TEXT NOT NULL,
             corrected_production TEXT NOT NULL,
             explanation TEXT,
@@ -154,8 +148,6 @@ pub fn fuzz_error_occurrence_sequence(data: &[u8]) {
         &tx,
         "target",
         "profile",
-        "pack",
-        "version",
         "grammar",
         None,
         "original",
@@ -212,8 +204,6 @@ mod tests {
             &database,
             "target",
             "profile",
-            "pack",
-            "v1",
             "grammar",
             None,
             "original",
@@ -260,8 +250,7 @@ mod tests {
         let mut database = scratch_database().unwrap();
         let tx = database.transaction().unwrap();
         insert_error_target(
-            &tx, "target", "profile", "pack", "v1", "grammar", None, "a", "b", None, 1, false,
-            "active", "t0",
+            &tx, "target", "profile", "grammar", None, "a", "b", None, 1, false, "active", "t0",
         )
         .unwrap();
         assert!(

@@ -85,3 +85,32 @@ pub fn criterion(capability: CapabilityKind) -> &'static str {
         }
     }
 }
+
+#[must_use]
+/// Return the LLM-facing observable criterion for one concrete tutor action.
+pub fn criterion_for_action(action: &str, capability: CapabilityKind) -> &'static str {
+    match action {
+        "diagnostic_spontaneous" => {
+            "measure one fresh production attempt with assistance_level=0 before teaching; record it as diagnostic evidence"
+        }
+        "listening_probe" => {
+            "measure unaided comprehension on a fresh listening variant before teaching; record it as diagnostic evidence"
+        }
+        "listening_repair" => {
+            "after the listening intervention, verify improved comprehension on a fresh variant without revealing the answer"
+        }
+        "fade_prompts" => {
+            "reduce assistance and obtain correct spontaneous production with assistance_level=0"
+        }
+        "spontaneous_retrieval" => {
+            "obtain correct production with assistance_level=0, then check delayed retrieval"
+        }
+        "transfer_practice" => {
+            "obtain correct unaided use in a new semantic context_family and record transfer evidence"
+        }
+        "automaticity_drill" => {
+            "retain unaided accuracy while retrieval latency improves across measured independent attempts"
+        }
+        _ => criterion(capability),
+    }
+}

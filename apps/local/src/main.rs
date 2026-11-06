@@ -1,12 +1,11 @@
 //! Self-contained Lingua Tutor CLI.
 
-use lingua_tutor_local::{assets, built_in_language_packs, server, storage, tunnel};
+use lingua_tutor_local::{assets, server, storage, tunnel};
 use std::{
     fs::OpenOptions,
     io::{Read, Write},
     path::PathBuf,
     process::{Command, ExitCode},
-    sync::Arc,
 };
 
 const STATE_DIR: &str = ".lingua-tutor";
@@ -79,8 +78,6 @@ async fn run_project(args: Vec<String>) -> Result<(), String> {
         storage::backup_if_due(&paths.db)?;
     }
     let env = storage::environment(&paths.db)?;
-    let registry = Arc::new(built_in_language_packs().map_err(|error| error.to_string())?);
-
     println!("Lingua Tutor");
     println!("  project: {}", paths.root.display());
     println!("  database: {}", paths.db.display());
@@ -93,7 +90,7 @@ async fn run_project(args: Vec<String>) -> Result<(), String> {
 
     if no_tunnel {
         println!("  tunnel: disabled for this session");
-        return server::serve(env, registry, &paths.web, port).await;
+        return server::serve(env, &paths.web, port).await;
     }
 
     let tunnel_id = prompt_secret("Tunnel ID: ")?;
@@ -101,8 +98,8 @@ async fn run_project(args: Vec<String>) -> Result<(), String> {
     let config = tunnel::TunnelConfig::production(tunnel_id, api_key)?;
 
     tokio::select! {
-        result = server::serve(env.clone(), Arc::clone(&registry), &paths.web, port) => result,
-        result = tunnel::run(env, registry, config) => result,
+        result = server::serve(env.clone(), &paths.web, port) => result,
+        result = tunnel::run(env, config) => result,
     }
 }
 

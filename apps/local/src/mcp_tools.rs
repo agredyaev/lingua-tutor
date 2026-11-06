@@ -18,53 +18,43 @@ pub(crate) struct ToolOutcome {
 
 pub(crate) const TOOLS: &[ToolDef] = &[
     ToolDef {
-        name: "list_language_packs",
-        description: "List installed language packs with their versions.",
-        required: &[],
-    },
-    ToolDef {
         name: "get_active_language_profile",
-        description: "List the learner's language profiles (active pack, level, settings).",
+        description: "List the learner's language profiles (target locale, level, settings).",
         required: &[],
-    },
-    ToolDef {
-        name: "get_language_pack_context",
-        description: "Get one language pack's manifest and metadata by pack id.",
-        required: &["pack_id"],
     },
     ToolDef {
         name: "get_learning_state",
-        description: "Learning items with status and evidence counts for a profile.",
+        description: "Partial inspection only: learning items with status and evidence counts. For teaching or lesson planning, use get_tutor_context.",
         required: &["language_profile_id"],
     },
     ToolDef {
         name: "get_next_lesson",
-        description: "Structured adaptive lesson plan from recent metrics, review pressure, errors, recommendations, and learner preferences.",
+        description: "Partial plan inspection only. For teaching, use authoritative get_tutor_context so methodology, tasks, errors, history, and contract are present together.",
         required: &["language_profile_id"],
     },
     ToolDef {
         name: "get_due_error_targets",
-        description: "Open error targets for a profile, most urgent first.",
+        description: "Partial inspection only: open error targets, most urgent first. For teaching, use get_tutor_context.",
         required: &["language_profile_id"],
     },
     ToolDef {
         name: "get_review_summary",
-        description: "Review workload summary: due counts, recent grades, streaks.",
+        description: "Partial inspection only: review workload summary. For teaching, use get_tutor_context.",
         required: &["language_profile_id"],
     },
     ToolDef {
         name: "get_card_redesign_candidates",
-        description: "Cards that keep failing and need redesign, with evidence.",
+        description: "Partial inspection only: failing cards that may need redesign. For teaching, use get_tutor_context.",
         required: &["language_profile_id"],
     },
     ToolDef {
         name: "get_tutor_context",
-        description: "Full adaptive tutor context: methodology, ranked lesson plan, recent skill signals, preferences, errors, review/redesign evidence, and curriculum candidates. Fetch this before every lesson.",
+        description: "Authoritative adaptive tutor context: methodology, ranked plan/tasks, persisted learner state, recent signals, preferences, errors, review/redesign evidence, planner history, and lesson-result contract. Fetch this before every lesson.",
         required: &["language_profile_id"],
     },
     ToolDef {
         name: "start_lesson",
-        description: "Open a lesson record before teaching: profile, scenario, goal.",
+        description: "After get_tutor_context, open the lesson record before teaching. Use the adaptive_lesson_plan and tutor_tasks returned by start_lesson as the final authoritative snapshot for this lesson.",
         required: &["language_profile_id", "scenario"],
     },
     ToolDef {
@@ -164,7 +154,7 @@ fn input_schema(tool: &ToolDef) -> serde_json::Value {
             required.push("card_ids");
         }
         "log_error_occurrence" => {
-            for optional in ["pack_error_code", "explanation", "error_target_id"] {
+            for optional in ["error_code", "explanation", "error_target_id"] {
                 properties.insert(optional.to_owned(), serde_json::json!({"type": "string"}));
             }
         }
@@ -226,11 +216,7 @@ fn optional_arg<'a>(arguments: &'a serde_json::Value, name: &str) -> Option<&'a 
         .filter(|value| !value.is_empty())
 }
 
-fn upsert_cards(
-    arguments: &serde_json::Value,
-    env: &Env,
-    registry: &crate::BuiltInPackRegistry,
-) -> Result<serde_json::Value> {
+fn upsert_cards(arguments: &serde_json::Value, env: &Env) -> Result<serde_json::Value> {
     let Some(raw) = arguments.get("card_mutations") else {
         return crate::api::operation_error(400, "invalid_arguments", "card_mutations required");
     };
@@ -243,7 +229,6 @@ fn upsert_cards(
     }
 
     crate::operations::upsert_cards::upsert_cards(
-        registry,
         env,
         arg(arguments, "language_profile_id"),
         &mutations,
@@ -280,11 +265,7 @@ fn suspend_cards(arguments: &serde_json::Value, env: &Env) -> Result<ToolOutcome
     }
 }
 
-fn log_error_occurrence(
-    arguments: &serde_json::Value,
-    env: &Env,
-    registry: &crate::BuiltInPackRegistry,
-) -> Result<ToolOutcome> {
+fn log_error_occurrence(arguments: &serde_json::Value, env: &Env) -> Result<ToolOutcome> {
     let Ok(core_category) = serde_json::from_value::<learning_core::CoreErrorCategory>(
         serde_json::json!(arg(arguments, "core_category")),
     ) else {
@@ -304,14 +285,13 @@ fn log_error_occurrence(
     };
 
     let outcome = crate::operations::log_error::log_error_occurrence(
-        registry,
         env,
         crate::operations::log_error::LogErrorOccurrenceInput {
             language_profile_id: arg(arguments, "language_profile_id").to_owned(),
             core_category,
             original_production: arg(arguments, "original_production").to_owned(),
             corrected_production: arg(arguments, "corrected_production").to_owned(),
-            pack_error_code: optional_arg(arguments, "pack_error_code").map(str::to_owned),
+            error_code: optional_arg(arguments, "error_code").map(str::to_owned),
             explanation: optional_arg(arguments, "explanation").map(str::to_owned),
             error_target_id: optional_arg(arguments, "error_target_id").map(str::to_owned),
             communicative_impact,
@@ -379,7 +359,6 @@ pub(crate) fn call(
     tool: &ToolDef,
     arguments: &serde_json::Value,
     env: &Env,
-    registry: &crate::BuiltInPackRegistry,
 ) -> Result<ToolOutcome> {
     if let Some(name) = missing_argument(tool, arguments) {
         return Ok(ToolOutcome {
@@ -394,18 +373,14 @@ pub(crate) fn call(
 
     match tool.name {
         "suspend_cards" => return suspend_cards(arguments, env),
-        "log_error_occurrence" => return log_error_occurrence(arguments, env, registry),
+        "log_error_occurrence" => return log_error_occurrence(arguments, env),
         "correct_lesson_record" => return correct_lesson_record(arguments, env),
         _ => {}
     }
 
     let response = (|| -> Result<serde_json::Value> {
         match tool.name {
-            "list_language_packs" => handlers::profiles::list_packs(registry),
             "get_active_language_profile" => handlers::profiles::list_profiles(env),
-            "get_language_pack_context" => {
-                handlers::profiles::get_pack(registry, arg(arguments, "pack_id"))
-            }
             "get_learning_state" => {
                 handlers::records::learning_state_for(env, arg(arguments, "language_profile_id"))
             }
@@ -424,13 +399,10 @@ pub(crate) fn call(
                 env,
                 arg(arguments, "language_profile_id"),
             ),
-            "get_tutor_context" => handlers::records::tutor_context_for(
-                registry,
-                env,
-                arg(arguments, "language_profile_id"),
-            ),
+            "get_tutor_context" => {
+                handlers::records::tutor_context_for(env, arg(arguments, "language_profile_id"))
+            }
             "start_lesson" => crate::operations::start_lesson::start_lesson(
-                registry,
                 env,
                 arg(arguments, "language_profile_id"),
                 arg(arguments, "scenario"),
@@ -455,9 +427,9 @@ pub(crate) fn call(
                         )
                     })?;
                 let result = handlers::lessons::validate_lesson_result(result)?;
-                crate::operations::complete_lesson::complete_lesson(registry, env, &result)
+                crate::operations::complete_lesson::complete_lesson(env, &result)
             }
-            "upsert_cards" => upsert_cards(arguments, env, registry),
+            "upsert_cards" => upsert_cards(arguments, env),
             other => crate::api::operation_error(
                 500,
                 "tool_not_implemented",
@@ -500,9 +472,7 @@ mod tests {
     #[test]
     fn read_tools_have_valid_schemas() {
         for name in [
-            "list_language_packs",
             "get_active_language_profile",
-            "get_language_pack_context",
             "get_learning_state",
             "get_next_lesson",
             "get_due_error_targets",
@@ -521,9 +491,7 @@ mod tests {
     #[test]
     fn every_roadmap_tool_exists_with_write_schemas() {
         let roadmap = [
-            "list_language_packs",
             "get_active_language_profile",
-            "get_language_pack_context",
             "get_learning_state",
             "get_next_lesson",
             "get_due_error_targets",
@@ -549,6 +517,33 @@ mod tests {
         );
         let schema = input_schema(find("suspend_cards").unwrap());
         assert_eq!(schema["properties"]["card_ids"]["maxItems"], 20);
+    }
+
+    #[test]
+    fn lesson_tools_make_context_order_explicit_for_the_llm() {
+        let context = find("get_tutor_context").unwrap();
+        let start = find("start_lesson").unwrap();
+        assert!(context.description.contains("Authoritative"));
+        assert!(context.description.contains("before every lesson"));
+        assert!(
+            start.description.contains("get_tutor_context")
+                && start.description.contains("final authoritative snapshot"),
+            "start_lesson must bind the chat LLM to context-first flow and its persisted final plan"
+        );
+        for name in [
+            "get_learning_state",
+            "get_next_lesson",
+            "get_due_error_targets",
+            "get_review_summary",
+            "get_card_redesign_candidates",
+        ] {
+            let partial = find(name).unwrap();
+            assert!(
+                partial.description.contains("Partial")
+                    && partial.description.contains("get_tutor_context"),
+                "{name} must not present a partial read as a sufficient teaching context"
+            );
+        }
     }
 
     #[test]

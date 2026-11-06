@@ -4,7 +4,7 @@
 // tests exempt from panic-family lints (16-rust-guidelines.md §2)
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use integration_tests::{migrated_connection, seed_profile_and_pack};
+use integration_tests::{migrated_connection, seed_profile};
 use rusqlite::Connection;
 
 fn names(conn: &Connection, kind: &str) -> Vec<String> {
@@ -28,7 +28,6 @@ fn all_tables_from_04_database_exist() {
         "error_occurrences",
         "error_rechecks",
         "error_targets",
-        "language_packs",
         "learner_language_profiles",
         "learner_profile",
         "learning_item_evidence",
@@ -51,7 +50,7 @@ fn all_named_indexes_exist() {
     let conn = migrated_connection();
     let indexes = names(&conn, "index");
     for expected in [
-        "ux_llp_active_pack",
+        "ux_llp_active_locale",
         "ix_items_profile_status",
         "ix_items_normalized",
         "ix_evidence_item",
@@ -76,7 +75,7 @@ fn all_named_indexes_exist() {
 #[test]
 fn card_status_check_constraint_rejects_invalid_value() {
     let conn = migrated_connection();
-    seed_profile_and_pack(&conn);
+    seed_profile(&conn);
     let err = insert_card(&conn, "card-1", "bogus_status");
     assert!(err.is_err(), "invalid card status must be rejected");
 }
@@ -84,7 +83,7 @@ fn card_status_check_constraint_rejects_invalid_value() {
 #[test]
 fn review_event_client_operation_id_is_unique() {
     let conn = migrated_connection();
-    seed_profile_and_pack(&conn);
+    seed_profile(&conn);
     insert_card(&conn, "card-1", "new").unwrap();
     conn.execute_batch(
         "INSERT INTO review_sessions (id, learner_language_profile_id, started_at, source, created_at)
@@ -115,10 +114,10 @@ fn review_event_client_operation_id_is_unique() {
 fn foreign_keys_enforced() {
     let conn = migrated_connection();
     let result = conn.execute_batch(
-        "INSERT INTO lessons (id, learner_language_profile_id, language_pack_id,
-             language_pack_version, lesson_number, status, scenario, planned_goal,
+        "INSERT INTO lessons (id, learner_language_profile_id,
+             lesson_number, status, scenario, planned_goal,
              source, created_at, updated_at)
-         VALUES ('l-1', 'missing-profile', 'missing-pack', '1.0.0', 1, 'planned',
+         VALUES ('l-1', 'missing-profile', 1, 'planned',
                  's', 'g', 'pwa', '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z');",
     );
     assert!(result.is_err(), "FK to missing profile must be rejected");
@@ -126,12 +125,12 @@ fn foreign_keys_enforced() {
 
 fn insert_card(conn: &Connection, id: &str, status: &str) -> rusqlite::Result<usize> {
     conn.execute(
-        "INSERT INTO cards (id, learner_language_profile_id, language_pack_id,
-             language_pack_version, intent, status, prompt, prompt_language, answer,
-             answer_language, answer_evaluation_mode, creation_reason, content_hash,
+        "INSERT INTO cards (id, learner_language_profile_id,
+             intent, status, prompt, prompt_language, answer,
+             answer_language, creation_reason, content_hash,
              created_by, created_at, updated_at)
-         VALUES (?1, 'llp-1', 'test-pack', '0.1.0', 'production', ?2, 'p', 'ru', 'a',
-                 'zz', 'exact', 'test', 'hash-1', 'system',
+         VALUES (?1, 'llp-1', 'production', ?2, 'p', 'ru', 'a',
+                 'zz', 'test', 'hash-1', 'system',
                  '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z')",
         [id, status],
     )

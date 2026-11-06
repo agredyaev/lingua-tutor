@@ -9,8 +9,9 @@ mod validate;
 
 pub use validate::{ValidationIssue, validate};
 
-use language_pack_api::CardIntent;
-use learning_core::{CoreErrorCategory, EvidenceKind, LearningItemStatus, LearningItemType};
+use learning_core::{
+    CardIntent, CoreErrorCategory, EvidenceKind, LearningItemStatus, LearningItemType,
+};
 use serde::{Deserialize, Serialize};
 
 /// Supported lesson-result schema version.
@@ -18,13 +19,18 @@ pub const SCHEMA_VERSION: &str = "2";
 
 /// Stable database/wire ID for the v1 communicative-task rubric.
 pub const COMMUNICATIVE_TASK_SUCCESS_RUBRIC_V1: &str = "goal_completed_without_target_model_v1";
+/// Stronger rubric used by the adaptive planner for independent communicative success.
+pub const COMMUNICATIVE_TASK_SUCCESS_RUBRIC_V2: &str = "goal_completed_independently_v2";
 
 /// Closed communicative-task success rubric.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CommunicativeTaskRubric {
-    /// The original communicative goal is achieved without a prior target-utterance model.
+    /// Backward-compatible v1: goal achieved without a prior full target-utterance model.
     #[serde(rename = "goal_completed_without_target_model_v1")]
     GoalAchievementV1,
+    /// Goal achieved without a target model or tutor cue supplying target lexical/grammatical content.
+    #[serde(rename = "goal_completed_independently_v2")]
+    IndependentGoalAchievementV2,
 }
 
 /// Stable rubric ID for persistence and planner filtering.
@@ -32,6 +38,9 @@ pub enum CommunicativeTaskRubric {
 pub const fn communicative_task_rubric_id(value: CommunicativeTaskRubric) -> &'static str {
     match value {
         CommunicativeTaskRubric::GoalAchievementV1 => COMMUNICATIVE_TASK_SUCCESS_RUBRIC_V1,
+        CommunicativeTaskRubric::IndependentGoalAchievementV2 => {
+            COMMUNICATIVE_TASK_SUCCESS_RUBRIC_V2
+        }
     }
 }
 
@@ -85,10 +94,6 @@ pub struct LessonResult {
     pub client_operation_id: String,
     /// Target language profile.
     pub language_profile_id: String,
-    /// Pack the lesson ran under.
-    pub language_pack_id: String,
-    /// Pack version the lesson ran under.
-    pub language_pack_version: String,
     /// Lesson block.
     pub lesson: LessonBlock,
     /// Lesson metrics.
@@ -269,9 +274,9 @@ pub struct ErrorOccurrenceEntry {
     /// Communicative impact used by deterministic escalation policy.
     #[serde(default)]
     pub communicative_impact: learning_core::CommunicativeImpact,
-    /// Stable pack taxonomy code.
+    /// Stable optional detailed error code.
     #[serde(default)]
-    pub pack_error_code: Option<String>,
+    pub error_code: Option<String>,
     /// What the learner produced.
     pub original_production: String,
     /// Corrected form.

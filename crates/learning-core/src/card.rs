@@ -2,7 +2,19 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use language_pack_api::CardIntent;
+/// Review card intent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CardIntent {
+    /// Produce the target form from a source-language prompt.
+    Production,
+    /// Understand the spoken/heard form.
+    Listening,
+    /// Distinguish two confusable forms.
+    Contrast,
+    /// Apply a learned pattern in a new context.
+    Transfer,
+}
 
 /// Card lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

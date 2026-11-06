@@ -8,7 +8,6 @@ publish.workspace = true
 description = "Versioned lesson-result + card-mutation schemas and validation (07-tutor-contract.md)"
 
 [dependencies]
-language-pack-api = { workspace = true }
 learning-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

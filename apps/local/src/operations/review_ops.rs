@@ -677,25 +677,22 @@ mod tests {
         ));
         let db = crate::storage::open(&path).unwrap();
         db.execute_batch(
-            r#"INSERT INTO language_packs
-                (id,package_name,version,contract_version,target_language,target_locale,
-                 display_name,installed_at,updated_at)
-               VALUES('es-ES','language-pack-es-es','0.2.0',1,'es','es-ES','Spanish','2026-10-16T00:00:00Z','2026-10-16T00:00:00Z');
+            r#"
                INSERT INTO learner_profile(id,created_at,updated_at)
                VALUES('learner-1','2026-10-16T00:00:00Z','2026-10-16T00:00:00Z');
                INSERT INTO learner_language_profiles
-                (id,learner_id,language_pack_id,source_language,target_locale,created_at,updated_at)
-               VALUES('llp-1','learner-1','es-ES','ru','es-ES','2026-10-16T00:00:00Z','2026-10-16T00:00:00Z');
+                (id,learner_id,source_language,target_locale,created_at,updated_at)
+               VALUES('llp-1','learner-1', 'ru','es-ES','2026-10-16T00:00:00Z','2026-10-16T00:00:00Z');
                INSERT INTO review_sessions
                 (id,learner_language_profile_id,started_at,source,card_count,created_at)
                VALUES('rs-1','llp-1','2026-10-16T00:00:00Z','online',0,'2026-10-16T00:00:00Z');
                INSERT INTO cards
-                (id,learner_language_profile_id,language_pack_id,language_pack_version,intent,status,
+                (id,learner_language_profile_id,intent,status,
                  prompt,prompt_language,answer,answer_language,accepted_answers_json,
-                 answer_evaluation_mode,creation_reason,content_hash,content_version,
+                 creation_reason,content_hash,content_version,
                  created_by,created_at,updated_at)
-               VALUES('card-1','llp-1','es-ES','0.2.0','production','new',
-                 'p','ru','a','es-ES','[]','exact','seed','h',1,'tutor',
+               VALUES('card-1','llp-1','production','new',
+                 'p','ru','a','es-ES','[]','seed','h',1,'tutor',
                  '2026-10-16T00:00:00Z','2026-10-16T00:00:00Z');"#
         ).unwrap();
 
@@ -956,9 +953,9 @@ mod tests {
         let db = env.connection().unwrap();
         db.execute_batch(
             r#"INSERT INTO learning_items
-                (id,learner_language_profile_id,language_pack_id,item_type,target_text,
-                 normalized_target_text,status,language_metadata_json,created_at,updated_at)
-               VALUES('li-1','llp-1','es-ES','phrase','hola','hola','learning','{}',
+                (id,learner_language_profile_id,item_type,target_text,
+                 normalized_target_text,status,created_at,updated_at)
+               VALUES('li-1','llp-1', 'phrase','hola','hola','learning',
                       '2026-10-16T00:00:00Z','2026-10-16T00:00:00Z');
                UPDATE cards SET source_learning_item_id='li-1' WHERE id='card-1';"#,
         )
@@ -981,19 +978,16 @@ mod tests {
     #[test]
     fn evaluate_review_answer_uses_stored_card_contract() {
         let (path, env) = create_env("evaluation");
-        let registry = crate::built_in_language_packs().unwrap();
-        let actual = crate::handlers::review::evaluate(&registry, &env, "card-1", "a").unwrap();
+        let actual = crate::handlers::review::evaluate(&env, "card-1", "a").unwrap();
         assert_eq!(actual["verdict"], "correct");
         assert_eq!(actual["matched_answer"], "a");
         let db = env.connection().unwrap();
         db.execute(
-            "UPDATE cards SET language_pack_version='invalid-version' WHERE id='card-1'",
+            "UPDATE cards SET accepted_answers_json='invalid-json' WHERE id='card-1'",
             [],
         )
         .unwrap();
-        assert!(crate::handlers::review::evaluate(&registry, &env, "card-1", "a").is_err());
-        db.execute("UPDATE cards SET language_pack_version='0.2.0', accepted_answers_json='invalid-json' WHERE id='card-1'",[]).unwrap();
-        assert!(crate::handlers::review::evaluate(&registry, &env, "card-1", "a").is_err());
+        assert!(crate::handlers::review::evaluate(&env, "card-1", "a").is_err());
         drop(db);
         let _ = std::fs::remove_file(path);
     }

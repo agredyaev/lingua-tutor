@@ -22,31 +22,73 @@ pub fn LessonsPage() -> impl IntoView {
             .await
         }
     });
+
     view! {
         <Page>
-            <h1>"Lessons"</h1>
-            <Suspense fallback=|| view! { <p>"Loading…"</p> }>
+            <header class="page-header">
+                <div>
+                    <p class="eyebrow">"History"</p>
+                    <h1>"History"</h1>
+                </div>
+            </header>
+
+            <Suspense fallback=|| view! { <p class="loading">"Loading lessons…"</p> }>
                 {move || {
                     lessons
                         .get()
                         .map(|result| match result {
+                            Ok(list) if list.is_empty() => {
+                                view! {
+                                    <div class="empty-state">
+                                        <p class="empty-state-title">"No lessons yet"</p>
+                                        <p>"Completed lessons will appear here with tutor notes and the next goal."</p>
+                                    </div>
+                                }
+                                    .into_any()
+                            }
                             Ok(list) => {
                                 view! {
-                                    <ul class="lessons">
+                                    <ul class="entity-list lesson-list">
                                         {list
                                             .iter()
                                             .map(|l| {
+                                                let status = l.status.clone();
                                                 view! {
-                                                    <li>
-                                                        <strong>
-                                                            {format!("#{} {} ({})", l.lesson_number, l.scenario, l.status)}
-                                                        </strong>
+                                                    <li class="lesson-row">
+                                                        <div class="lesson-row-header">
+                                                            <div class="lesson-title-group">
+                                                                <span class="entity-index">
+                                                                    {format!("#{}", l.lesson_number)}
+                                                                </span>
+                                                                <div>
+                                                                    <p class="lesson-scenario">{l.scenario.clone()}</p>
+                                                                    <p class="entity-meta">"Lesson record"</p>
+                                                                </div>
+                                                            </div>
+                                                            <span class="badge">{status}</span>
+                                                        </div>
+
                                                         {l.tutor_summary
                                                             .clone()
-                                                            .map(|s| view! { <p>{s}</p> })}
+                                                            .map(|summary| {
+                                                                view! {
+                                                                    <div class="lesson-summary">
+                                                                        <span class="section-kicker">"Tutor note"</span>
+                                                                        <p>{summary}</p>
+                                                                    </div>
+                                                                }
+                                                            })}
+
                                                         {l.next_goal
                                                             .clone()
-                                                            .map(|g| view! { <p>"Next: " {g}</p> })}
+                                                            .map(|goal| {
+                                                                view! {
+                                                                    <div class="lesson-next-goal">
+                                                                        <span class="section-kicker">"Next goal"</span>
+                                                                        <p>{goal}</p>
+                                                                    </div>
+                                                                }
+                                                            })}
                                                     </li>
                                                 }
                                             })

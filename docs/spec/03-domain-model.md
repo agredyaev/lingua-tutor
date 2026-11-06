@@ -1,177 +1,67 @@
-# 03 — Domain Model
+# 03 — Data Model and Processing Invariants
 
-Scope: core domain types and rules in `learning-core`. Language-neutral. Column-level persistence: [04-database.md](04-database.md).
-Depends on: [00-overview.md](00-overview.md) naming rules.
+Scope: language-neutral data and processing rules. Persistence is defined by [04-database.md](04-database.md).
 
-## 1. Conventions
+## 1. Data-oriented model
 
-- Public IDs: stable opaque strings, UUIDv7 or ULID. Newtypes per entity (`LessonId`, `CardId`, …).
-- Timestamps: UTC. Local dates derived from stored timezone (default `Europe/Madrid`).
-- All enums below are closed sets; extension requires a schema migration, not a stringly value.
+The runtime does not reconstruct retained domain objects. SQLite rows are projected directly into transport values or bounded processing columns. Hot processing state uses flat arrays/SoA layouts and dense `u32` indices; sparse relationships use indexed ranges/CSR-style offsets where multiplicity requires them.
 
-## 2. Learner profile (global)
+External and persisted IDs are opaque strings at protocol/SQLite boundaries. Once data enters a processing pass, relationships use validated dense indices rather than object references or pointer-linked graphs.
 
-```rust
-pub struct LearnerProfile {
-    pub id: LearnerId,
-    pub timezone: Tz,
-    pub daily_session_target: u8,      // default 2
-    pub session_minutes_target: u16,   // default 20
-    pub max_new_cards: u8,             // default 8
-    pub desired_retention: f64,        // default 0.90
-    pub max_review_minutes: u16,       // default 12
-}
-```
+Behavior is expressed as explicit functions over scalar values, arrays, and buffers. Storage structs do not own behavior.
 
-## 3. Learner language profile (per language)
+## 2. Learner and language profile
 
-All progress, lessons, errors, learning items, cards, review queues scoped to one `LearnerLanguageProfile`.
+`learner_profile` stores global policy such as timezone, session targets, card budget and desired retention.
 
-```rust
-pub struct LearnerLanguageProfile {
-    pub id: LanguageProfileId,
-    pub learner_id: LearnerId,
-    pub language_pack_id: LanguagePackId,   // e.g. "es-ES"
-    pub source_language: LanguageTag,       // BCP 47, e.g. "ru"
-    pub target_locale: LanguageTag,         // BCP 47, e.g. "es-ES"
-    pub estimated_level: Option<String>,    // CEFR label from pack framework
-    pub current_lesson_number: u32,
-    pub status: ProfileStatus,              // Active | Paused | Archived
-    pub is_default: bool,
-    pub preferences: serde_json::Value,     // validated at boundary
-}
-```
+`learner_language_profiles` scopes all learning state for one target locale and source/explanation language. Its language fields are:
 
-One active profile per (learner, pack) unless documented otherwise.
+- `source_language`: language used for prompts/explanations;
+- `target_locale`: target BCP-47 locale;
+- `estimated_level`: optional level label supplied/updated through the learning flow.
 
-## 4. Lesson
+There is at most one active profile per `(learner_id, target_locale)`. A profile is the sole language identity for lessons, items, errors, cards, review state and recommendations.
 
-```rust
-pub enum LessonStatus { Planned, Active, Completed, Abandoned }
-pub enum LessonSource { Pwa, Import, Mcp }
+## 3. Lessons and learning items
 
-pub struct Lesson {
-    pub id: LessonId,
-    pub language_profile_id: LanguageProfileId,
-    pub language_pack_id: LanguagePackId,
-    pub language_pack_version: semver::Version,
-    pub lesson_number: u32,                 // unique within profile
-    pub status: LessonStatus,
-    pub scenario: String,
-    pub planned_goal: String,
-    pub source: LessonSource,
-    pub started_at: Option<Timestamp>,
-    pub completed_at: Option<Timestamp>,
-    pub duration_seconds: Option<u32>,
-    pub tutor_summary: Option<String>,
-    pub next_goal: Option<String>,
-    pub idempotency_key: Option<String>,
-}
-```
+A lesson belongs to one profile and carries lifecycle state, scenario/goal, measurements and summary fields. A learning item belongs to one profile and stores the exact target text plus a technical canonical text used for duplicate lookup.
 
-Lesson metrics (per lesson): speaking seconds, recall counts, listening score, answer duration, pause counts, confidence.
+Technical canonicalization may trim/collapse whitespace. It must not implement target-language morphology, accent stripping, stemming, punctuation tolerance or grammatical rules.
 
-## 5. Learning item
+Learning item types and statuses are closed enums in `learning-core`.
 
-Primary unit = useful phrase / sentence frame / pattern. Isolated word only when: independently useful, repeatedly missing in phrases, high practical value, phrase card would add complexity.
+## 4. Evidence and mastery
 
-```rust
-pub enum LearningItemType { Phrase, Collocation, Pattern, Word, ResponseFrame }
+Evidence belongs to a learning item and may optionally reference a lesson. Evidence kinds are closed and language-neutral: recognition, listening, prompted production, spontaneous production, transfer and correction.
 
-pub enum LearningItemStatus {
-    Candidate, Introduced, Learning, TransferPending,
-    ProvisionallyMastered, Mastered, Suspended,
-}
+`metadata_json` stores bounded measurement metadata such as assistance level and semantic context. Semantic identifiers such as `context_family` are tutor-provided opaque strings; core compares identity but does not interpret their linguistic meaning. Operational independence requires observed assistance metadata; unknown assistance is retained for audit but cannot increase independent-evidence strength. Item-level success/unaided rates are recency- and episode-weighted rather than lifetime raw ratios. Successful context/context-family diversity is also time-bounded, and the latest independent outcome for a given key supersedes older outcomes.
 
-pub struct LearningItem {
-    pub id: LearningItemId,
-    pub language_profile_id: LanguageProfileId,
-    pub language_pack_id: LanguagePackId,
-    pub item_type: LearningItemType,
-    pub target_text: String,
-    pub normalized_target_text: String,     // via active pack
-    pub prompt_text: Option<String>,
-    pub prompt_language: Option<LanguageTag>,
-    pub status: LearningItemStatus,
-    pub language_metadata: serde_json::Value, // pack-owned schema, pack-versioned
-    pub introduced_lesson_id: Option<LessonId>,
-}
-```
+Mastery rules are deterministic methodology:
 
-## 6. Evidence
+- card review success alone does not prove mastery;
+- guided `probe_phase=practice` evidence is acquisition/repair performance and cannot grant provisional or full mastery;
+- provisional mastery requires fresh successful unaided productive evidence from a mastery-eligible non-practice probe in the current lesson;
+- full mastery requires at least two distinct successful transfer context families from at least two independent prior lesson episodes, at least three distinct successful semantic context families overall, and a fresh unaided `probe_phase=transfer` success with a non-empty `context_family` in the current lesson; an unresolved fresh spontaneous-production failure blocks full mastery even if transfer later succeeds, while a later qualifying spontaneous success may resolve that capability failure;
+- prior transfer history used for full mastery is bounded to the current 84-day revalidation window, excludes `probe_phase=practice`, and uses the latest eligible transfer exit-observation per prior lesson episode; a later failed/unqualified transfer invalidates an earlier success from that episode, and older context diversity must be revalidated;
+- multiple fresh context families inside one current lesson cannot replace distributed historical transfer evidence;
+- a newer failed transfer blocks promotion until later qualifying evidence supersedes it.
 
-Core evidence kinds fixed; pack may attach bounded metadata.
+## 5. Errors
 
-```rust
-pub enum EvidenceKind {
-    Recognition,          // understood in text
-    Listening,            // understood in audio
-    PromptedProduction,   // produced with hint/prompt
-    SpontaneousProduction,// produced unaided in conversation
-    Transfer,             // adapted to new context
-    Correction,           // corrected form accepted
-}
+An error target belongs to one profile. Core owns only the closed `CoreErrorCategory`; `error_code` is an optional tutor-provided detail code and is opaque to methodology.
 
-pub struct LearningItemEvidence {
-    pub id: EvidenceId,
-    pub learning_item_id: LearningItemId,
-    pub lesson_id: Option<LessonId>,
-    pub kind: EvidenceKind,
-    pub success: bool,
-    pub detail: Option<String>,
-    pub pack_metadata: Option<serde_json::Value>,
-    pub recorded_at: Timestamp,
-}
-```
+Deterministic escalation rules use occurrence/evidence counts, not language-specific heuristics:
 
-### Mastery rules
+- three occurrences create focused recheck pressure;
+- five unresolved occurrences require method change;
+- rechecks are scheduled at +1, +3 and +7 days.
 
-- Card review success alone never yields mastery.
-- Provisional mastery: unaided production (`SpontaneousProduction` success).
-- Full mastery: successful `Transfer` evidence with explicit `assistance_level = 0` in ≥ 3 distinct semantic `context_family` values. Missing assistance is unknown and cannot prove independence; concrete `context_key` variants inside the same family count once.
-- Failed 1/3/7-day recheck returns target to active practice.
+## 6. Cards and review
 
-## 7. Errors
+Cards belong to one profile and store prompt/answer content, accepted answers, intent, status and provenance. Scheduling state is separate from card content. Review events are immutable; undo/correction is represented by compensation rather than mutation of history.
 
-```rust
-pub struct ErrorTarget {
-    pub id: ErrorTargetId,
-    pub language_profile_id: LanguageProfileId,
-    pub language_pack_id: LanguagePackId,
-    pub language_pack_version: semver::Version,
-    pub core_category: CoreErrorCategory,     // core-owned closed set
-    pub pack_error_code: Option<String>,      // pack taxonomy code
-    pub original_production: String,
-    pub corrected_production: String,
-    pub explanation: Option<String>,
-    pub occurrence_count: u32,
-    pub method_change_required: bool,         // set at 5 unresolved occurrences
-    pub status: ErrorTargetStatus,            // Active | Recheck | Resolved | Escalated
-}
-```
+Review and adaptation behavior is implemented by explicit processing passes over bounded indexed storage.
 
-- `ErrorOccurrence`: one sighting; links lesson + evidence.
-- `ErrorRecheck`: scheduled at +1, +3, +7 days; result pass/fail.
-- Escalation: 3 occurrences → mini-target + contrast card when appropriate; 5 unresolved → method change required.
+## 7. Recommendations
 
-## 8. Recommendations
-
-Deterministic rules ([07-tutor-contract.md](07-tutor-contract.md) §7) emit recommendations; they never silently mutate content.
-
-```rust
-pub enum RecommendationSubject {
-    LearningItem(LearningItemId),
-    ErrorTarget(ErrorTargetId),
-    Card(CardId),
-    ListeningItem(LearningItemId),
-    ReviewLoad(LanguageProfileId),
-    LanguageProfile(LanguageProfileId),
-    PackUpgradeWarning(LanguagePackId),
-}
-```
-
-## 9. Analytics: tracked indicators
-
-Minimum tracked set: lessons completed; active speaking minutes; new phrases introduced; cards created/modified/split/merged/suspended/retired by tutor; reviews completed; due + overdue counts; review time; grade distribution; estimated retention; items recalled unaided; items transferred; listening score; response latency + long pauses; repeated errors by category; error recovery at 1/3/7 days; review backlog; weekly consistency.
-
-Dashboard queries answerable at any time: next lesson; due cards today; unaided-producible items; recognition-only items; review-pass-but-conversation-fail items; recurring errors; pending tutor card actions; workload excess; listening trend; speaking-time trend; targets needing method change.
+Recommendations target language-neutral subjects: learning item, error target, card, listening item, review load, or language profile. They are deterministic outputs and never directly execute content changes.

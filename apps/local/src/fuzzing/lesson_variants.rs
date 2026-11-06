@@ -75,7 +75,7 @@ pub(super) fn deepen_lesson_result(
             result.listening_attempts[0].client_item_key = None;
         }
         _ => {
-            result.language_pack_id = "unknown-pack".into();
+            result.language_profile_id = "missing-profile".into();
         }
     }
 }

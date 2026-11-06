@@ -32,40 +32,66 @@ pub fn CardsPage() -> impl IntoView {
 
     view! {
         <Page>
-            <h1>"Cards"</h1>
-            <label class="visually-hidden" for="cards-status-filter">
-                "Filter by status"
-            </label>
-            <select
-                id="cards-status-filter"
-                on:change=move |ev| status_filter.set(event_target_value(&ev))
-            >
-                <option value="">"all statuses"</option>
-                <option value="candidate">"candidate"</option>
-                <option value="new">"new"</option>
-                <option value="learning">"learning"</option>
-                <option value="review">"review"</option>
-                <option value="relearning">"relearning"</option>
-                <option value="suspended">"suspended"</option>
-                <option value="retired">"retired"</option>
-            </select>
-            <Suspense fallback=|| view! { <p>"Loading…"</p> }>
+            <header class="page-header page-header-row">
+                <div>
+                    <p class="eyebrow">"Review library"</p>
+                    <h1>"Library"</h1>
+                </div>
+                <div class="filter-bar">
+                    <label class="visually-hidden" for="cards-status-filter">
+                        "Filter by status"
+                    </label>
+                    <select
+                        id="cards-status-filter"
+                        aria-label="Filter cards by status"
+                        on:change=move |ev| status_filter.set(event_target_value(&ev))
+                    >
+                        <option value="">"All statuses"</option>
+                        <option value="candidate">"Candidate"</option>
+                        <option value="new">"New"</option>
+                        <option value="learning">"Learning"</option>
+                        <option value="review">"Review"</option>
+                        <option value="relearning">"Relearning"</option>
+                        <option value="suspended">"Suspended"</option>
+                        <option value="retired">"Retired"</option>
+                    </select>
+                </div>
+            </header>
+
+            <Suspense fallback=|| view! { <p class="loading">"Loading cards…"</p> }>
                 {move || {
                     cards
                         .get()
                         .map(|result| match result {
+                            Ok(list) if list.is_empty() => {
+                                view! {
+                                    <div class="empty-state">
+                                        <p class="empty-state-title">"No cards in this view"</p>
+                                        <p>"Cards appear when lesson evidence creates a useful review target."</p>
+                                    </div>
+                                }
+                                    .into_any()
+                            }
                             Ok(list) => {
                                 view! {
-                                    <ul class="cards">
+                                    <ul class="entity-list card-list">
                                         {list
                                             .iter()
                                             .map(|c| {
                                                 view! {
-                                                    <li>
+                                                    <li class="card-row">
                                                         <a href=format!("/cards/{}", c.id)>
-                                                            <span class="badge">{c.status.to_string()}</span>
-                                                            <span class="badge">{c.intent.to_string()}</span>
-                                                            <span>{c.prompt.clone()}</span>
+                                                            <div class="card-row-copy">
+                                                                <p class="card-row-prompt">{c.prompt.clone()}</p>
+                                                                <div class="entity-meta-row">
+                                                                    <span class="badge">{c.intent.to_string()}</span>
+                                                                    <span class="badge">{c.status.to_string()}</span>
+                                                                    <span class="entity-meta">
+                                                                        {format!("v{}", c.content_version)}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
+                                                            <span class="row-chevron" aria-hidden="true">"›"</span>
                                                         </a>
                                                     </li>
                                                 }
@@ -121,27 +147,71 @@ pub fn CardDetailPage() -> impl IntoView {
 
     view! {
         <Page>
-            <Suspense fallback=|| view! { <p>"Loading…"</p> }>
+            <Suspense fallback=|| view! { <p class="loading">"Loading card…"</p> }>
                 {move || {
                     card.get()
                         .map(|result| match result {
                             Ok(c) => {
                                 view! {
+                                    <header class="page-header">
+                                        <div class="breadcrumb">
+                                            <a href="/cards">"Library"</a>
+                                            <span aria-hidden="true">"›"</span>
+                                            <span>"Detail"</span>
+                                        </div>
+                                        <div class="entity-meta-row">
+                                            <span class="badge">{c.intent.to_string()}</span>
+                                            <span class="badge">{c.status.to_string()}</span>
+                                            <span class="entity-meta">{format!("Version {}", c.content_version)}</span>
+                                        </div>
+                                    </header>
+
                                     <div class="card-detail">
-                                        <h1>{c.prompt.clone()}</h1>
-                                        <p>"Answer: " {c.answer.clone()}</p>
-                                        {(!c.accepted_answers.is_empty())
-                                            .then(|| {
-                                                view! {
-                                                    <p>"Accepted: " {c.accepted_answers.join(" · ")}</p>
-                                                }
-                                            })}
-                                        <p>{format!("intent {} · status {}", c.intent, c.status)}</p>
-                                        <p>"Why: " {c.creation_reason.clone()}</p>
-                                        {c.explanation.clone().map(|e| view! { <p>{e}</p> })}
-                                        {c.suspended_reason
-                                            .clone()
-                                            .map(|r| view! { <p>"Suspended: " {r}</p> })}
+                                        <section class="study-surface">
+                                            <span class="section-kicker">"Prompt"</span>
+                                            <h1 class="study-prompt">{c.prompt.clone()}</h1>
+                                            <div class="study-answer">
+                                                <span class="section-kicker">"Preferred answer"</span>
+                                                <p>{c.answer.clone()}</p>
+                                            </div>
+                                            {(!c.accepted_answers.is_empty())
+                                                .then(|| {
+                                                    view! {
+                                                        <div class="detail-block">
+                                                            <span class="section-kicker">"Also accepted"</span>
+                                                            <p>{c.accepted_answers.join(" · ")}</p>
+                                                        </div>
+                                                    }
+                                                })}
+                                        </section>
+
+                                        <section class="detail-grid">
+                                            <div class="detail-block">
+                                                <span class="section-kicker">"Why this exists"</span>
+                                                <p>{c.creation_reason.clone()}</p>
+                                            </div>
+                                            {c.explanation
+                                                .clone()
+                                                .map(|e| {
+                                                    view! {
+                                                        <div class="detail-block">
+                                                            <span class="section-kicker">"Explanation"</span>
+                                                            <p>{e}</p>
+                                                        </div>
+                                                    }
+                                                })}
+                                            {c.suspended_reason
+                                                .clone()
+                                                .map(|reason| {
+                                                    view! {
+                                                        <div class="detail-block">
+                                                            <span class="section-kicker">"Suspension reason"</span>
+                                                            <p>{reason}</p>
+                                                        </div>
+                                                    }
+                                                })}
+                                        </section>
+
                                         <div class="actions">
                                             <button
                                                 disabled=status_action.pending()
@@ -160,6 +230,7 @@ pub fn CardDetailPage() -> impl IntoView {
                                                 "Restore"
                                             </button>
                                             <button
+                                                class="destructive"
                                                 disabled=status_action.pending()
                                                 on:click=move |_| {
                                                     status_action.dispatch("retire");

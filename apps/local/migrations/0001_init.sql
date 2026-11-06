@@ -1,20 +1,6 @@
 -- 0001_init: full v1 schema. Source of truth: docs/spec/04-database.md §2.
 -- Forward-only (04-database.md §4). IDs TEXT (UUIDv7/ULID); timestamps TEXT UTC RFC 3339.
 
-CREATE TABLE language_packs (
-    id                TEXT PRIMARY KEY,          -- stable pack ID, e.g. 'es-ES'
-    package_name      TEXT NOT NULL,             -- e.g. 'language-pack-es-es'
-    version           TEXT NOT NULL,             -- semver
-    contract_version  INTEGER NOT NULL,
-    target_language   TEXT NOT NULL,             -- BCP 47 language
-    target_locale     TEXT NOT NULL,             -- BCP 47 locale
-    display_name      TEXT NOT NULL,
-    capabilities_json TEXT NOT NULL DEFAULT '[]',
-    enabled           INTEGER NOT NULL DEFAULT 1,
-    installed_at      TEXT NOT NULL,
-    updated_at        TEXT NOT NULL
-);
-
 CREATE TABLE learner_profile (
     id                     TEXT PRIMARY KEY,
     timezone               TEXT NOT NULL DEFAULT 'Europe/Madrid',
@@ -30,7 +16,6 @@ CREATE TABLE learner_profile (
 CREATE TABLE learner_language_profiles (
     id                    TEXT PRIMARY KEY,
     learner_id            TEXT NOT NULL REFERENCES learner_profile(id),
-    language_pack_id      TEXT NOT NULL REFERENCES language_packs(id),
     source_language       TEXT NOT NULL,
     target_locale         TEXT NOT NULL,
     estimated_level       TEXT,
@@ -42,15 +27,13 @@ CREATE TABLE learner_language_profiles (
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL
 );
-CREATE UNIQUE INDEX ux_llp_active_pack
-    ON learner_language_profiles(learner_id, language_pack_id)
+CREATE UNIQUE INDEX ux_llp_active_locale
+    ON learner_language_profiles(learner_id, target_locale)
     WHERE status = 'active';
 
 CREATE TABLE lessons (
     id                          TEXT PRIMARY KEY,
     learner_language_profile_id TEXT NOT NULL REFERENCES learner_language_profiles(id),
-    language_pack_id            TEXT NOT NULL REFERENCES language_packs(id),
-    language_pack_version       TEXT NOT NULL,
     lesson_number               INTEGER NOT NULL,
     status                      TEXT NOT NULL
                                 CHECK (status IN ('planned','active','completed','abandoned')),
@@ -83,7 +66,6 @@ CREATE TABLE lesson_metrics (
 CREATE TABLE learning_items (
     id                          TEXT PRIMARY KEY,
     learner_language_profile_id TEXT NOT NULL REFERENCES learner_language_profiles(id),
-    language_pack_id            TEXT NOT NULL REFERENCES language_packs(id),
     item_type                   TEXT NOT NULL
         CHECK (item_type IN ('phrase','collocation','pattern','word','response_frame')),
     target_text                 TEXT NOT NULL,
@@ -93,7 +75,6 @@ CREATE TABLE learning_items (
     status                      TEXT NOT NULL DEFAULT 'candidate'
         CHECK (status IN ('candidate','introduced','learning','transfer_pending',
                           'provisionally_mastered','mastered','suspended')),
-    language_metadata_json      TEXT NOT NULL DEFAULT '{}',
     introduced_lesson_id        TEXT REFERENCES lessons(id),
     created_at                  TEXT NOT NULL,
     updated_at                  TEXT NOT NULL
@@ -112,7 +93,7 @@ CREATE TABLE learning_item_evidence (
                         'spontaneous_production','transfer','correction')),
     success            INTEGER NOT NULL,
     detail             TEXT,
-    pack_metadata_json TEXT,
+    metadata_json      TEXT,
     recorded_at        TEXT NOT NULL
 );
 CREATE INDEX ix_evidence_item ON learning_item_evidence(learning_item_id, kind);
@@ -120,10 +101,8 @@ CREATE INDEX ix_evidence_item ON learning_item_evidence(learning_item_id, kind);
 CREATE TABLE error_targets (
     id                          TEXT PRIMARY KEY,
     learner_language_profile_id TEXT NOT NULL REFERENCES learner_language_profiles(id),
-    language_pack_id            TEXT NOT NULL REFERENCES language_packs(id),
-    language_pack_version       TEXT NOT NULL,
     core_category               TEXT NOT NULL,
-    pack_error_code             TEXT,
+    error_code                  TEXT,
     original_production         TEXT NOT NULL,
     corrected_production        TEXT NOT NULL,
     explanation                 TEXT,
@@ -169,8 +148,6 @@ CREATE TABLE listening_attempts (
 CREATE TABLE cards (
     id                          TEXT PRIMARY KEY,
     learner_language_profile_id TEXT NOT NULL REFERENCES learner_language_profiles(id),
-    language_pack_id            TEXT NOT NULL REFERENCES language_packs(id),
-    language_pack_version       TEXT NOT NULL,
     intent                      TEXT NOT NULL
         CHECK (intent IN ('production','listening','contrast','transfer')),
     status                      TEXT NOT NULL DEFAULT 'candidate'
@@ -181,7 +158,6 @@ CREATE TABLE cards (
     answer                      TEXT NOT NULL,
     answer_language             TEXT NOT NULL,
     accepted_answers_json       TEXT NOT NULL DEFAULT '[]',
-    answer_evaluation_mode      TEXT NOT NULL,     -- pack-defined mode identifier
     explanation                 TEXT,
     pronunciation_note          TEXT,
     source_learning_item_id     TEXT REFERENCES learning_items(id),
@@ -204,8 +180,8 @@ CREATE INDEX ix_cards_content_hash ON cards(learner_language_profile_id, content
 
 CREATE TABLE card_tags (
     card_id        TEXT NOT NULL REFERENCES cards(id),
-    tag_type       TEXT NOT NULL,        -- 'scenario' | 'skill' | 'pack'
-    normalized_tag TEXT NOT NULL,        -- pack tags namespaced: 'pack.es-ES.grammar.preposition'
+    tag_type       TEXT NOT NULL,        -- 'scenario' | 'skill'
+    normalized_tag TEXT NOT NULL,
     PRIMARY KEY (card_id, tag_type, normalized_tag)
 );
 
@@ -272,8 +248,6 @@ CREATE TABLE card_mutations (
     source_lesson_id      TEXT REFERENCES lessons(id),
     actor                 TEXT NOT NULL CHECK (actor IN ('tutor','user','system')),
     reason                TEXT NOT NULL,
-    language_pack_id      TEXT NOT NULL,
-    language_pack_version TEXT NOT NULL,
     validation_result     TEXT NOT NULL CHECK (validation_result IN ('applied','rejected','warned')),
     created_at            TEXT NOT NULL
 );
@@ -294,7 +268,7 @@ CREATE TABLE recommendations (
     learner_language_profile_id TEXT NOT NULL REFERENCES learner_language_profiles(id),
     subject_type                TEXT NOT NULL
         CHECK (subject_type IN ('learning_item','error_target','card','listening_item',
-                                'review_load','language_profile','pack_upgrade_warning')),
+                                'review_load','language_profile')),
     subject_id                  TEXT,
     action                      TEXT NOT NULL,
     detail_json                 TEXT NOT NULL DEFAULT '{}',

@@ -11,11 +11,9 @@ use tutor_contract::{LessonResult, parse_lesson_result, validate};
 
 // SQL row -> wire fields in a single pass; no owned Row -> Domain conversion.
 fn project_lesson_wire(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<serde_json::Value>> {
-    let version: String = row.get("language_pack_version")?;
     let status: String = row.get("status")?;
     let source: String = row.get("source")?;
-    let (Ok(version), Ok(_), Ok(_)) = (
-        semver::Version::parse(&version),
+    let (Ok(_), Ok(_)) = (
         serde_json::from_value::<learning_core::LessonStatus>(serde_json::json!(status)),
         serde_json::from_value::<learning_core::LessonSource>(serde_json::json!(source)),
     ) else {
@@ -38,8 +36,6 @@ fn project_lesson_wire(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<serde
     Ok(Some(serde_json::json!({
         "id": row.get::<_, String>("id")?,
         "language_profile_id": row.get::<_, String>("learner_language_profile_id")?,
-        "language_pack_id": row.get::<_, String>("language_pack_id")?,
-        "language_pack_version": version.to_string(),
         "lesson_number": row.get::<_, u32>("lesson_number")?,
         "status": status,
         "scenario": row.get::<_, String>("scenario")?,
@@ -111,12 +107,7 @@ pub(crate) fn validate_import_text(text: &str, env: &Env) -> Result<serde_json::
     }))
 }
 
-pub(crate) fn apply_import_text(
-    registry: &crate::BuiltInPackRegistry,
-    text: &str,
-    token: &str,
-    env: &Env,
-) -> Result<serde_json::Value> {
+pub(crate) fn apply_import_text(text: &str, token: &str, env: &Env) -> Result<serde_json::Value> {
     let Some(expires) = token_expiry_if_valid(env.signing_key(), token, text) else {
         return operation_error(409, "validation_required", "token mismatch — re-validate");
     };
@@ -124,18 +115,17 @@ pub(crate) fn apply_import_text(
         return operation_error(409, "validation_expired", "token expired — re-validate");
     }
     let result = validate_lesson_result(parse_lesson_result_text(text)?)?;
-    crate::operations::complete_lesson::complete_lesson(registry, env, &result)
+    crate::operations::complete_lesson::complete_lesson(env, &result)
 }
 
 pub(crate) fn complete_lesson_result(
-    registry: &crate::BuiltInPackRegistry,
     env: &Env,
     lesson_id: &str,
     mut result: LessonResult,
 ) -> Result<serde_json::Value> {
     result = validate_lesson_result(result)?;
     result.lesson.lesson_id = Some(lesson_id.to_owned());
-    crate::operations::complete_lesson::complete_lesson(registry, env, &result)
+    crate::operations::complete_lesson::complete_lesson(env, &result)
 }
 
 pub(crate) fn parse_lesson_result_text(text: &str) -> Result<LessonResult> {
@@ -193,7 +183,6 @@ mod dod_projection_tests {
     use super::*;
 
     const LESSON_ROW: &str = "SELECT 'les-1' AS id, 'llp-1' AS learner_language_profile_id,
-        'es-ES' AS language_pack_id, '0.2.0' AS language_pack_version,
         7 AS lesson_number, 'completed' AS status, 'pharmacy' AS scenario,
         'request medicine' AS planned_goal, 'mcp' AS source,
         '2026-10-18T08:30:00Z' AS started_at,
@@ -210,8 +199,6 @@ mod dod_projection_tests {
             .unwrap();
         assert_eq!(projected["id"], "les-1");
         assert_eq!(projected["language_profile_id"], "llp-1");
-        assert_eq!(projected["language_pack_id"], "es-ES");
-        assert_eq!(projected["language_pack_version"], "0.2.0");
         assert_eq!(projected["lesson_number"], 7);
         assert_eq!(projected["status"], "completed");
         assert_eq!(projected["scenario"], "pharmacy");
@@ -230,10 +217,6 @@ mod dod_projection_tests {
         let db = rusqlite::Connection::open_in_memory().unwrap();
         for invalid in [
             LESSON_ROW.replace("'completed' AS status", "'invalid' AS status"),
-            LESSON_ROW.replace(
-                "'0.2.0' AS language_pack_version",
-                "'bad' AS language_pack_version",
-            ),
             LESSON_ROW.replace(
                 "'2026-10-18T08:30:00Z' AS started_at",
                 "'not-a-date' AS started_at",

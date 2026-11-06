@@ -6,7 +6,7 @@
 #[allow(clippy::unwrap_used, clippy::type_complexity)]
 mod tests {
     use super::*;
-    use crate::{Env, built_in_language_packs};
+    use crate::Env;
     use rusqlite::Connection;
     use std::path::PathBuf;
 
@@ -27,8 +27,6 @@ mod tests {
                 "schema_version": "2",
                 "client_operation_id": "op-complete-1",
                 "language_profile_id": "llp-1",
-                "language_pack_id": "es-ES",
-                "language_pack_version": "0.2.0",
                 "lesson": {
                     "scenario": "pharmacy",
                     "duration_seconds": 321,
@@ -76,6 +74,17 @@ mod tests {
                         "probe_phase": "diagnostic",
                         "context": "pharmacy:recognize",
                         "detail": "new item"
+                    },
+                    {
+                        "learning_item_id": "li-known",
+                        "kind": "spontaneous_production",
+                        "success": true,
+                        "assistance_level": 0,
+                        "response_millis": 800,
+                        "probe_phase": "practice",
+                        "context": "pharmacy:post-fade",
+                        "pronunciation_intelligible": true,
+                        "pronunciation_repeat_required": false
                     }
                 ],
                 "interventions": [
@@ -83,7 +92,7 @@ mod tests {
                         "action": "fade_prompts",
                         "learning_item_id": "li-known",
                         "target_capability": "spontaneous_production",
-                        "evidence_index": 0
+                        "evidence_index": 2
                     }
                 ],
                 "listening_attempts": [
@@ -138,38 +147,32 @@ mod tests {
 
     fn seed(db: &Connection) {
         db.execute_batch(
-            "INSERT INTO language_packs
-                (id, package_name, version, contract_version, target_language,
-                 target_locale, display_name, installed_at, updated_at)
-             VALUES
-                ('es-ES', 'language-pack-es-es', '0.2.0', 1, 'es', 'es-ES',
-                 'Spanish (Spain)', '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
+            "
              INSERT INTO learner_profile (id, created_at, updated_at)
              VALUES ('learner-1', '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
              INSERT INTO learner_language_profiles
-                (id, learner_id, language_pack_id, source_language, target_locale,
+                (id, learner_id, source_language, target_locale,
                  current_lesson_number, created_at, updated_at)
              VALUES
-                ('llp-1', 'learner-1', 'es-ES', 'ru', 'es-ES', 7,
+                ('llp-1', 'learner-1', 'ru', 'es-ES', 7,
                  '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
              INSERT INTO learning_items
-                (id, learner_language_profile_id, language_pack_id, item_type,
-                 target_text, normalized_target_text, status, language_metadata_json,
+                (id, learner_language_profile_id, item_type,
+                 target_text, normalized_target_text, status,
                  created_at, updated_at)
              VALUES
-                ('li-known', 'llp-1', 'es-ES', 'phrase', 'known phrase',
-                 'known phrase', 'learning', '{}',
+                ('li-known', 'llp-1', 'phrase', 'known phrase',
+                 'known phrase', 'learning',
                  '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z'),
-                ('li-greeting', 'llp-1', 'es-ES', 'phrase', 'Buenos días',
-                 'buenos días', 'introduced', '{}',
+                ('li-greeting', 'llp-1', 'phrase', 'Buenos días',
+                 'buenos días', 'introduced',
                  '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
              INSERT INTO error_targets
-                (id, learner_language_profile_id, language_pack_id,
-                 language_pack_version, core_category, original_production,
+                (id, learner_language_profile_id,  core_category, original_production,
                  corrected_production, occurrence_count, method_change_required,
                  status, created_at, updated_at)
              VALUES
-                ('et-known', 'llp-1', 'es-ES', '0.2.0', 'grammar',
+                ('et-known', 'llp-1', 'grammar',
                  'estoy médico', 'soy médico', 2, 0, 'active',
                  '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');",
         )
@@ -296,10 +299,239 @@ mod tests {
     }
 
     #[test]
+    fn stale_transfer_history_does_not_grant_full_mastery() {
+        let (path, env) = create_env("stale-mastery");
+        {
+            let db = env.connection().unwrap();
+            db.execute_batch(
+                "INSERT INTO lessons
+                    (id, learner_language_profile_id, lesson_number, status, scenario,
+                     planned_goal, source, started_at, completed_at, created_at, updated_at)
+                 VALUES
+                    ('les-old-1','llp-1',1,'completed','old','old','import',
+                     '2026-01-01T10:00:00Z','2026-01-01T10:20:00Z',
+                     '2026-01-01T10:00:00Z','2026-01-01T10:20:00Z'),
+                    ('les-old-2','llp-1',2,'completed','old','old','import',
+                     '2026-01-10T10:00:00Z','2026-01-10T10:20:00Z',
+                     '2026-01-10T10:00:00Z','2026-01-10T10:20:00Z');
+                 INSERT INTO learning_item_evidence
+                    (id, learning_item_id, lesson_id, kind, success, metadata_json, recorded_at)
+                 VALUES
+                    ('ev-old-1','li-known','les-old-1','transfer',1,
+                     json_object('assistance_level',0,'context_family','transport.ask_stop'),
+                     '2026-01-01T10:10:00Z'),
+                    ('ev-old-2','li-known','les-old-2','transfer',1,
+                     json_object('assistance_level',0,'context_family','commerce.request_item'),
+                     '2026-01-10T10:10:00Z');",
+            )
+            .unwrap();
+        }
+
+        let mut input = result();
+        input.client_operation_id = "op-stale-mastery".to_owned();
+        input.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        input.evidence.push(tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some("fresh".to_owned()),
+            context_family: Some("service.ask_help".to_owned()),
+            kind: learning_core::EvidenceKind::Transfer,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: Some(1_200),
+            probe_phase: Some(tutor_contract::ProbePhase::Transfer),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        });
+
+        let response = complete_lesson(&env, &input).unwrap();
+        assert_eq!(response["warnings"].as_array().unwrap().len(), 1);
+        let db = env.connection().unwrap();
+        let status: String = db
+            .query_row(
+                "SELECT status FROM learning_items WHERE id='li-known'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(status, "mastered");
+        drop(db);
+        cleanup(path);
+    }
+
+    #[test]
+    fn legacy_transfer_rows_without_episode_identity_cannot_fake_distributed_mastery() {
+        let (path, env) = create_env("legacy-mastery-episodes");
+        {
+            let db = env.connection().unwrap();
+            db.execute_batch(
+                "INSERT INTO learning_item_evidence
+                    (id, learning_item_id, lesson_id, kind, success, metadata_json, recorded_at)
+                 VALUES
+                    ('ev-legacy-1','li-known',NULL,'transfer',1,
+                     json_object('assistance_level',0,'probe_phase','transfer',
+                                 'context_family','transport.ask_stop'),
+                     '2026-11-05T10:00:00Z'),
+                    ('ev-legacy-2','li-known',NULL,'transfer',1,
+                     json_object('assistance_level',0,'probe_phase','transfer',
+                                 'context_family','commerce.request_item'),
+                     '2026-11-05T10:05:00Z');",
+            )
+            .unwrap();
+        }
+
+        let mut input = result();
+        input.client_operation_id = "op-legacy-mastery-episodes".to_owned();
+        input.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        input.evidence.push(tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some("fresh".to_owned()),
+            context_family: Some("service.ask_help".to_owned()),
+            kind: learning_core::EvidenceKind::Transfer,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: Some(1_200),
+            probe_phase: Some(tutor_contract::ProbePhase::Transfer),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        });
+
+        let response = complete_lesson(&env, &input).unwrap();
+        assert_eq!(
+            response["warnings"].as_array().unwrap().len(),
+            1,
+            "legacy rows without lesson/episode identity must not manufacture two prior episodes"
+        );
+        cleanup(path);
+    }
+
+    #[test]
+    fn historical_practice_transfer_cannot_supply_mastery_history() {
+        let (path, env) = create_env("practice-mastery-history");
+        {
+            let db = env.connection().unwrap();
+            db.execute_batch(
+                "INSERT INTO lessons
+                    (id, learner_language_profile_id, lesson_number, status, scenario,
+                     planned_goal, source, started_at, completed_at, created_at, updated_at)
+                 VALUES
+                    ('les-hist-1','llp-1',1,'completed','old','old','import',
+                     '2026-10-20T10:00:00Z','2026-10-20T10:20:00Z',
+                     '2026-10-20T10:00:00Z','2026-10-20T10:20:00Z'),
+                    ('les-hist-2','llp-1',2,'completed','old','old','import',
+                     '2026-10-21T10:00:00Z','2026-10-21T10:20:00Z',
+                     '2026-10-21T10:00:00Z','2026-10-21T10:20:00Z');
+                 INSERT INTO learning_item_evidence
+                    (id, learning_item_id, lesson_id, kind, success, metadata_json, recorded_at)
+                 VALUES
+                    ('ev-hist-1','li-known','les-hist-1','transfer',1,
+                     json_object('assistance_level',0,'probe_phase','transfer',
+                                 'context_family','transport.ask_stop'),
+                     '2026-10-20T10:10:00Z'),
+                    ('ev-hist-2','li-known','les-hist-2','transfer',1,
+                     json_object('assistance_level',0,'probe_phase','practice',
+                                 'context_family','commerce.request_item'),
+                     '2026-10-21T10:10:00Z');",
+            )
+            .unwrap();
+        }
+
+        let mut input = result();
+        input.client_operation_id = "op-practice-mastery-history".to_owned();
+        input.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        input.evidence.push(tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some("fresh".to_owned()),
+            context_family: Some("service.ask_help".to_owned()),
+            kind: learning_core::EvidenceKind::Transfer,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: Some(1_200),
+            probe_phase: Some(tutor_contract::ProbePhase::Transfer),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        });
+
+        let response = complete_lesson(&env, &input).unwrap();
+        assert_eq!(
+            response["warnings"].as_array().unwrap().len(),
+            1,
+            "practice transfer must not count as an independent prior mastery episode"
+        );
+        cleanup(path);
+    }
+
+    #[test]
+    fn later_historical_transfer_failure_invalidates_that_mastery_episode() {
+        let (path, env) = create_env("failed-mastery-history");
+        {
+            let db = env.connection().unwrap();
+            db.execute_batch(
+                "INSERT INTO lessons
+                    (id, learner_language_profile_id, lesson_number, status, scenario,
+                     planned_goal, source, started_at, completed_at, created_at, updated_at)
+                 VALUES
+                    ('les-hist-1','llp-1',1,'completed','old','old','import',
+                     '2026-10-20T10:00:00Z','2026-10-20T10:20:00Z',
+                     '2026-10-20T10:00:00Z','2026-10-20T10:20:00Z'),
+                    ('les-hist-2','llp-1',2,'completed','old','old','import',
+                     '2026-10-21T10:00:00Z','2026-10-21T10:20:00Z',
+                     '2026-10-21T10:00:00Z','2026-10-21T10:20:00Z');
+                 INSERT INTO learning_item_evidence
+                    (id, learning_item_id, lesson_id, kind, success, metadata_json, recorded_at, observation_order)
+                 VALUES
+                    ('ev-hist-1-ok','li-known','les-hist-1','transfer',1,
+                     json_object('assistance_level',0,'probe_phase','transfer',
+                                 'context_family','transport.ask_stop'),
+                     '2026-10-20T10:10:00Z',0),
+                    ('ev-hist-1-fail','li-known','les-hist-1','transfer',0,
+                     json_object('assistance_level',0,'probe_phase','transfer',
+                                 'context_family','transport.ask_stop'),
+                     '2026-10-20T10:15:00Z',1),
+                    ('ev-hist-2','li-known','les-hist-2','transfer',1,
+                     json_object('assistance_level',0,'probe_phase','transfer',
+                                 'context_family','commerce.request_item'),
+                     '2026-10-21T10:10:00Z',0);",
+            )
+            .unwrap();
+        }
+
+        let mut input = result();
+        input.client_operation_id = "op-failed-mastery-history".to_owned();
+        input.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        input.evidence.push(tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some("fresh".to_owned()),
+            context_family: Some("service.ask_help".to_owned()),
+            kind: learning_core::EvidenceKind::Transfer,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: Some(1_200),
+            probe_phase: Some(tutor_contract::ProbePhase::Transfer),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        });
+
+        let response = complete_lesson(&env, &input).unwrap();
+        assert_eq!(
+            response["warnings"].as_array().unwrap().len(),
+            1,
+            "an episode whose latest transfer failed must not count toward mastery history"
+        );
+        cleanup(path);
+    }
+
+    #[test]
     fn complete_lesson_persists_core_business_effects() {
         let (path, env) = create_env("new");
-        let registry = built_in_language_packs().unwrap();
-        complete_lesson(&registry, &env, &result()).unwrap();
+        complete_lesson(&env, &result()).unwrap();
         let state = snapshot(&env);
         assert_eq!(state.profile_lesson_number, 8);
         assert_eq!(state.lessons.len(), 1);
@@ -320,7 +552,7 @@ mod tests {
                 .any(|row| row.0 == "¿Tiene algo para la tos?")
         );
         assert!(state.items.iter().any(|row| row.0 == "Buenos días"));
-        assert_eq!(state.evidence.len(), 3);
+        assert_eq!(state.evidence.len(), 4);
         assert_eq!(state.errors.len(), 2);
         assert_eq!(state.rechecks.len(), 6);
         cleanup(path);
@@ -329,16 +561,14 @@ mod tests {
     #[test]
     fn direct_completion_uses_persisted_max_when_profile_counter_is_stale() {
         let (path, env) = create_env("direct-stale-counter");
-        let registry = built_in_language_packs().unwrap();
         env.connection()
             .unwrap()
             .execute(
                 "INSERT INTO lessons
-                 (id, learner_language_profile_id, language_pack_id,
-                  language_pack_version, lesson_number, status, scenario,
+                 (id, learner_language_profile_id, lesson_number, status, scenario,
                   planned_goal, source, started_at, completed_at, created_at, updated_at)
                  VALUES
-                 ('lesson-stale-8', 'llp-1', 'es-ES', '0.2.0', 8, 'completed',
+                 ('lesson-stale-8', 'llp-1', 8, 'completed',
                   'seed', '', 'import', '2026-10-15T00:00:00Z',
                   '2026-10-15T00:20:00Z', '2026-10-15T00:00:00Z',
                   '2026-10-15T00:20:00Z')",
@@ -348,7 +578,7 @@ mod tests {
 
         let mut input = result();
         input.client_operation_id = "op-direct-stale".to_owned();
-        complete_lesson(&registry, &env, &input).unwrap();
+        complete_lesson(&env, &input).unwrap();
 
         let state = snapshot(&env);
         assert_eq!(state.profile_lesson_number, 9);
@@ -361,12 +591,10 @@ mod tests {
     #[test]
     fn started_lessons_complete_once_and_advance_numbers() {
         let (path, env) = create_env("started-sequence");
-        let registry = built_in_language_packs().unwrap();
         for number in 8..=9 {
-            let started = super::super::start_lesson::start_lesson(
-                &registry, &env, "llp-1", "pharmacy", "", "mcp",
-            )
-            .unwrap();
+            let started =
+                super::super::start_lesson::start_lesson(&env, "llp-1", "pharmacy", "", "mcp")
+                    .unwrap();
             assert_eq!(started["lesson_number"], number);
             let mut input = result();
             input.client_operation_id = format!("op-started-{number}");
@@ -383,9 +611,9 @@ mod tests {
             input.listening_attempts.clear();
             input.error_occurrences.clear();
             input.mastery_changes.clear();
-            complete_lesson(&registry, &env, &input).unwrap();
+            complete_lesson(&env, &input).unwrap();
             assert_eq!(
-                complete_lesson(&registry, &env, &input).unwrap()["status"],
+                complete_lesson(&env, &input).unwrap()["status"],
                 "duplicate"
             );
         }
@@ -396,7 +624,6 @@ mod tests {
     #[test]
     fn foreign_profile_references_are_rejected() {
         let (path, env) = create_env("foreign-profile");
-        let registry = built_in_language_packs().unwrap();
         {
             let db = env.connection().unwrap();
             db.execute(
@@ -407,20 +634,20 @@ mod tests {
             .unwrap();
             db.execute(
                 "INSERT INTO learner_language_profiles
-                (id, learner_id, language_pack_id, source_language, target_locale,
+                (id, learner_id, source_language, target_locale,
                  created_at, updated_at)
-                 VALUES ('llp-2', 'learner-2', 'es-ES', 'ru', 'es-ES',
+                 VALUES ('llp-2', 'learner-2', 'ru', 'es-ES',
                  '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z')",
                 [],
             )
             .unwrap();
             db.execute(
                 "INSERT INTO learning_items
-                (id, learner_language_profile_id, language_pack_id, item_type,
-                 target_text, normalized_target_text, status, language_metadata_json,
+                (id, learner_language_profile_id, item_type,
+                 target_text, normalized_target_text, status,
                  created_at, updated_at)
-                 VALUES ('li-foreign', 'llp-2','es-ES','phrase','foreign','foreign',
-                 'learning','{}','2026-10-16T00:00:00Z','2026-10-16T00:00:00Z')",
+                 VALUES ('li-foreign', 'llp-2', 'phrase','foreign','foreign',
+                 'learning','2026-10-16T00:00:00Z','2026-10-16T00:00:00Z')",
                 [],
             )
             .unwrap();
@@ -428,65 +655,29 @@ mod tests {
         let mut input = result();
         input.new_learning_items.clear();
         input.evidence[0].learning_item_id = Some("li-foreign".to_owned());
-        assert!(complete_lesson(&registry, &env, &input).is_err());
+        assert!(complete_lesson(&env, &input).is_err());
         cleanup(path);
     }
 
     #[test]
     fn foreign_error_target_is_rejected_without_side_effects() {
         let (path, env) = create_env("foreign-error");
-        let registry = built_in_language_packs().unwrap();
         let mut input = result();
         input.error_occurrences[0].error_target_id = Some("et-nonexistent".to_owned());
         let before = snapshot(&env);
-        assert!(complete_lesson(&registry, &env, &input).is_err());
+        assert!(complete_lesson(&env, &input).is_err());
         assert_eq!(snapshot(&env), before);
         cleanup(path);
     }
 
     #[test]
-    fn latest_historical_transfer_requires_explicit_unaided_success() {
-        let db = rusqlite::Connection::open_in_memory().unwrap();
-        db.execute_batch(
-            "CREATE TABLE learning_item_evidence(
-                id TEXT PRIMARY KEY,
-                learning_item_id TEXT NOT NULL,
-                kind TEXT NOT NULL,
-                success INTEGER NOT NULL,
-                pack_metadata_json TEXT NOT NULL,
-                recorded_at TEXT NOT NULL,
-                observation_order INTEGER NOT NULL DEFAULT 0
-             );
-             INSERT INTO learning_item_evidence
-                (id,learning_item_id,kind,success,pack_metadata_json,recorded_at,observation_order)
-             VALUES
-                ('old-fail','li-1','transfer',0,'{\"assistance_level\":0}','2026-10-22T10:00:00Z',0),
-                ('new-unqualified','li-1','transfer',1,'{}','2026-10-23T10:00:00Z',0);",
-        )
-        .unwrap();
-
-        assert_eq!(latest_transfer_qualified(&db, "li-1").unwrap(), Some(false));
-
-        db.execute(
-            "INSERT INTO learning_item_evidence
-             (id,learning_item_id,kind,success,pack_metadata_json,recorded_at,observation_order)
-             VALUES('new-qualified','li-1','transfer',1,'{\"assistance_level\":0}',
-                    '2026-10-23T10:00:00Z',1)",
-            [],
-        )
-        .unwrap();
-        assert_eq!(latest_transfer_qualified(&db, "li-1").unwrap(), Some(true));
-    }
-
-    #[test]
     fn duplicate_retry_is_a_noop() {
         let (path, env) = create_env("duplicate");
-        let registry = built_in_language_packs().unwrap();
         let input = result();
 
-        complete_lesson(&registry, &env, &input).unwrap();
+        complete_lesson(&env, &input).unwrap();
         let once = snapshot(&env);
-        complete_lesson(&registry, &env, &input).unwrap();
+        complete_lesson(&env, &input).unwrap();
         let twice = snapshot(&env);
 
         assert_eq!(twice, once);
@@ -528,12 +719,12 @@ mod tests {
         ] {
             db.execute(
                 "INSERT INTO cards
-                 (id, learner_language_profile_id, language_pack_id, language_pack_version,
+                 (id, learner_language_profile_id,
                   intent, status, prompt, prompt_language, answer, answer_language,
-                  accepted_answers_json, answer_evaluation_mode, creation_reason,
+                  accepted_answers_json, creation_reason,
                   content_hash, content_version, created_by, created_at, updated_at)
-                 VALUES (?1, 'llp-1', 'es-ES', '0.2.0', 'production', ?2, ?3, 'ru',
-                         'answer', 'es-ES', ?4, 'exact', 'seed', ?5, 1, 'tutor',
+                 VALUES (?1, 'llp-1', 'production', ?2, ?3, 'ru',
+                         'answer', 'es-ES', ?4, 'seed', ?5, 1, 'tutor',
                          '2026-10-15T00:00:00Z', '2026-10-15T00:00:00Z')",
                 rusqlite::params![id, status, prompt, accepted, hash],
             )
@@ -550,7 +741,7 @@ mod tests {
                 client_operation_id: "card-op-create".to_owned(),
                 card_id: None,
                 card: Some(tutor_contract::CardPayload {
-                    intent: language_pack_api::CardIntent::Production,
+                    intent: learning_core::CardIntent::Production,
                     prompt: "created prompt".to_owned(),
                     answer: "created answer".to_owned(),
                     accepted_answers: vec!["created alt".to_owned()],
@@ -571,7 +762,7 @@ mod tests {
                 client_operation_id: "card-op-duplicate".to_owned(),
                 card_id: None,
                 card: Some(tutor_contract::CardPayload {
-                    intent: language_pack_api::CardIntent::Production,
+                    intent: learning_core::CardIntent::Production,
                     prompt: "created prompt".to_owned(),
                     answer: "created answer".to_owned(),
                     accepted_answers: vec!["created alt".to_owned()],
@@ -592,7 +783,7 @@ mod tests {
                 client_operation_id: "card-op-update".to_owned(),
                 card_id: Some("card-update".to_owned()),
                 card: Some(tutor_contract::CardPayload {
-                    intent: language_pack_api::CardIntent::Production,
+                    intent: learning_core::CardIntent::Production,
                     prompt: "updated prompt".to_owned(),
                     answer: "answer".to_owned(),
                     accepted_answers: vec!["old".to_owned()],
@@ -727,8 +918,7 @@ mod tests {
     fn card_mutations_apply_expected_create_update_status_and_answer_changes() {
         let (path, env) = create_env("cards-new");
         seed_cards(&env);
-        let registry = built_in_language_packs().unwrap();
-        complete_lesson(&registry, &env, &card_result()).unwrap();
+        complete_lesson(&env, &card_result()).unwrap();
         let state = card_snapshot(&env);
         assert!(state.cards.iter().any(|row| row.0 == "created prompt"));
         assert!(state.cards.iter().any(|row| row.0 == "updated prompt"));
@@ -746,11 +936,10 @@ mod tests {
         let db = env.connection().unwrap();
         db.execute_batch(
             "INSERT INTO lessons
-                (id, learner_language_profile_id, language_pack_id,
-                 language_pack_version, lesson_number, status, scenario,
+                (id, learner_language_profile_id,  lesson_number, status, scenario,
                  planned_goal, source, started_at, created_at, updated_at)
              VALUES
-                ('lesson-active', 'llp-1', 'es-ES', '0.2.0', 8, 'active',
+                ('lesson-active', 'llp-1', 8, 'active',
                  'pharmacy', 'goal', 'pwa', '2026-10-16T00:00:00Z',
                  '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
              INSERT INTO planner_decisions
@@ -766,11 +955,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_noncanonical_transfer_context_family() {
-        let (path, env) = create_env("noncanonical-family");
-        let registry = built_in_language_packs().unwrap();
+    fn accepts_tutor_defined_transfer_context_family_without_language_whitelist() {
+        let (path, env) = create_env("tutor-defined-family");
         let mut input = result();
-        input.client_operation_id = "op-noncanonical-family".to_owned();
+        input.client_operation_id = "op-tutor-defined-family".to_owned();
         input.evidence.push(tutor_contract::EvidenceEntry {
             learning_item_id: Some("li-known".to_owned()),
             client_item_key: None,
@@ -786,21 +974,22 @@ mod tests {
             detail: None,
         });
 
-        let error = complete_lesson(&registry, &env, &input).unwrap_err();
-        assert!(matches!(
-            error,
-            crate::Error::Operation {
-                status: 400,
-                code: "validation_failed",
-                ..
-            }
-        ));
-        if let crate::Error::Operation { details, .. } = error {
-            assert_eq!(
-                details["issues"][0]["code"],
-                serde_json::json!("unknown_context_family")
-            );
-        }
+        complete_lesson(&env, &input).unwrap();
+        let database = env.connection().unwrap();
+        let metadata: String = database
+            .query_row(
+                "SELECT metadata_json FROM learning_item_evidence
+                 WHERE kind='transfer' AND metadata_json LIKE '%cafe.request_bill%'
+                 LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&metadata).unwrap();
+        assert_eq!(
+            metadata["context_family"],
+            serde_json::json!("cafe.request_bill")
+        );
         cleanup(path);
     }
 
@@ -817,11 +1006,10 @@ mod tests {
                 [],
             )
             .unwrap();
-        let registry = built_in_language_packs().unwrap();
         let mut input = result();
         input.client_operation_id = "op-existing-lesson".to_owned();
         input.lesson.lesson_id = Some("lesson-active".to_owned());
-        complete_lesson(&registry, &env, &input).unwrap();
+        complete_lesson(&env, &input).unwrap();
 
         let state = snapshot(&env);
         assert_eq!(state.profile_lesson_number, 8);
@@ -843,6 +1031,7 @@ mod tests {
             outcome["interventions"][0]["target_capability"],
             "spontaneous_production"
         );
+        assert_eq!(outcome["interventions"][0]["calibration_eligible"], true);
         let count: u32 = db
             .query_row("SELECT COUNT(*) FROM planner_decisions", [], |row| {
                 row.get(0)
@@ -854,10 +1043,107 @@ mod tests {
     }
 
     #[test]
+    fn assisted_listening_diagnostic_is_not_a_causal_baseline() {
+        let mut input = result();
+        input.interventions[0] = tutor_contract::InterventionEvent {
+            action: "listening_support".to_owned(),
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            target_capability: learning_core::EvidenceKind::Listening,
+            evidence_index: None,
+            listening_attempt_index: Some(1),
+        };
+        input.listening_attempts = vec![
+            tutor_contract::ListeningAttemptEntry {
+                learning_item_id: Some("li-known".to_owned()),
+                client_item_key: None,
+                success: false,
+                assistance_level: Some(2),
+                response_millis: Some(1_500),
+                probe_phase: Some(tutor_contract::ProbePhase::Diagnostic),
+                source_reference: Some("audio-baseline".to_owned()),
+                source_variant_id: None,
+                talker_key: None,
+                context_tag: Some("pharmacy:baseline".to_owned()),
+                transcript: Some("baseline".to_owned()),
+            },
+            tutor_contract::ListeningAttemptEntry {
+                learning_item_id: Some("li-known".to_owned()),
+                client_item_key: None,
+                success: true,
+                assistance_level: Some(0),
+                response_millis: Some(1_000),
+                probe_phase: Some(tutor_contract::ProbePhase::Practice),
+                source_reference: Some("audio-post".to_owned()),
+                source_variant_id: None,
+                talker_key: None,
+                context_tag: Some("pharmacy:post".to_owned()),
+                transcript: Some("post".to_owned()),
+            },
+        ];
+
+        assert!(
+            !intervention_calibration_eligible(&input, &input.interventions[0]),
+            "an assisted listening diagnostic is not an independent pre-intervention baseline"
+        );
+    }
+
+    #[test]
+    fn diagnostic_after_intervention_outcome_is_not_a_causal_baseline() {
+        let mut input = result();
+        input.evidence[0].probe_phase = Some(tutor_contract::ProbePhase::Practice);
+        input.evidence.push(tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some("pharmacy:late-diagnostic".to_owned()),
+            context_family: None,
+            kind: learning_core::EvidenceKind::SpontaneousProduction,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: Some(850),
+            probe_phase: Some(tutor_contract::ProbePhase::Diagnostic),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        });
+
+        assert!(
+            !intervention_calibration_eligible(&input, &input.interventions[0]),
+            "a diagnostic observed after the referenced intervention outcome cannot serve as its baseline"
+        );
+    }
+
+    #[test]
+    fn unrelated_diagnostics_do_not_make_intervention_calibration_eligible() {
+        let (path, env) = create_env("planner-unrelated-calibration");
+        seed_started_lesson(&env);
+        let mut input = result();
+        input.client_operation_id = "op-unrelated-calibration".to_owned();
+        input.lesson.lesson_id = Some("lesson-active".to_owned());
+        input.interventions[0].target_capability = learning_core::EvidenceKind::Recognition;
+        input.interventions[0].evidence_index = None;
+
+        complete_lesson(&env, &input).unwrap();
+
+        let db = env.connection().unwrap();
+        let outcome: String = db
+            .query_row(
+                "SELECT outcome_json FROM planner_decisions WHERE id='pd-active'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let outcome: serde_json::Value = serde_json::from_str(&outcome).unwrap();
+        assert_eq!(outcome["calibration_valid"], true);
+        assert_eq!(outcome["interventions"][0]["calibration_eligible"], false);
+        drop(db);
+        cleanup(path);
+    }
+
+    #[test]
     fn late_foreign_key_failure_rolls_back_every_earlier_flush() {
         let (path, env) = create_env("rollback");
         seed_cards(&env);
-        let registry = built_in_language_packs().unwrap();
 
         let before = snapshot(&env);
         let cards_before = card_snapshot(&env);
@@ -870,7 +1156,7 @@ mod tests {
             .unwrap()
             .source_error_target_id = Some("missing-error-target".to_owned());
 
-        assert!(complete_lesson(&registry, &env, &input).is_err());
+        assert!(complete_lesson(&env, &input).is_err());
 
         assert_eq!(snapshot(&env), before);
         assert_eq!(card_snapshot(&env), cards_before);
@@ -880,7 +1166,6 @@ mod tests {
     #[test]
     fn max_error_batch_flushes_all_recheck_chunks_without_loss() {
         let (path, env) = create_env("max-errors");
-        let registry = built_in_language_packs().unwrap();
 
         let mut value = serde_json::to_value(result()).unwrap();
         value["client_operation_id"] = serde_json::json!("op-max-errors");
@@ -898,7 +1183,7 @@ mod tests {
         value["card_mutations"] = serde_json::json!([]);
         let input = tutor_contract::parse_lesson_result(&value.to_string()).unwrap();
 
-        complete_lesson(&registry, &env, &input).unwrap();
+        complete_lesson(&env, &input).unwrap();
 
         let db = env.connection().unwrap();
         let targets: u32 = db
@@ -935,8 +1220,10 @@ mod tests {
 }
 
 use crate::repositories::{lessons, to_rfc3339};
+// Two transfer half-lives: old context diversity can support mastery only while
+// it remains recent enough to be meaningfully revalidated by a fresh transfer.
+const MASTERY_HISTORY_WINDOW_SECONDS: i64 = 84 * 86_400;
 use crate::{Env, Result};
-use language_pack_api::NormalizationMode;
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 
 use super::card_apply::{apply_card_mutations, prepare_card_mutations};
@@ -945,10 +1232,9 @@ use super::error::{
 };
 use super::lesson_plan::{
     LessonPlanKind, LessonPlanState, ResolvedItem, add_known_lesson_item, add_lesson_error_target,
-    add_lesson_existing_normalized, add_lesson_mastery_signal, lesson_existing_id,
+    add_lesson_existing_normalized, add_lesson_mastery_signal_from_episode, lesson_existing_id,
     lesson_normalized_new, lesson_profile_id, new_lesson_plan_state, plan_lesson_completion,
-    plan_resolved_item_id, plan_reused_item_id, set_lesson_existing,
-    set_lesson_mastery_latest_transfer_failed, set_lesson_normalized_item,
+    plan_resolved_item_id, plan_reused_item_id, set_lesson_existing, set_lesson_normalized_item,
 };
 #[derive(Clone, Copy, Default)]
 struct IdRef {
@@ -980,13 +1266,95 @@ fn dense_slot(index: u32) -> Result<usize> {
     })
 }
 
+fn intervention_calibration_eligible(
+    result: &tutor_contract::LessonResult,
+    intervention: &tutor_contract::InterventionEvent,
+) -> bool {
+    let same_item = |learning_item_id: Option<&str>, client_item_key: Option<&str>| {
+        learning_item_id == intervention.learning_item_id.as_deref()
+            && client_item_key == intervention.client_item_key.as_deref()
+    };
+    let baseline_qualified =
+        |kind: learning_core::EvidenceKind, assistance_level: Option<u8>| match kind {
+            learning_core::EvidenceKind::PromptedProduction => {
+                assistance_level.is_some_and(|level| level > 0)
+            }
+            learning_core::EvidenceKind::Recognition
+            | learning_core::EvidenceKind::Listening
+            | learning_core::EvidenceKind::SpontaneousProduction
+            | learning_core::EvidenceKind::Transfer => assistance_level == Some(0),
+            learning_core::EvidenceKind::Correction => false,
+        };
+
+    if intervention.target_capability == learning_core::EvidenceKind::Listening {
+        let Some(outcome_index) = intervention.listening_attempt_index.map(usize::from) else {
+            return false;
+        };
+        let Some(outcome) = result.listening_attempts.get(outcome_index) else {
+            return false;
+        };
+        if outcome.probe_phase == Some(tutor_contract::ProbePhase::Diagnostic) {
+            return false;
+        }
+        return result.listening_attempts[..outcome_index]
+            .iter()
+            .any(|attempt| {
+                attempt.probe_phase == Some(tutor_contract::ProbePhase::Diagnostic)
+                    && baseline_qualified(
+                        learning_core::EvidenceKind::Listening,
+                        attempt.assistance_level,
+                    )
+                    && same_item(
+                        attempt.learning_item_id.as_deref(),
+                        attempt.client_item_key.as_deref(),
+                    )
+            });
+    }
+
+    let Some(outcome_index) = intervention.evidence_index.map(usize::from) else {
+        return false;
+    };
+    let Some(outcome) = result.evidence.get(outcome_index) else {
+        return false;
+    };
+    if outcome.probe_phase == Some(tutor_contract::ProbePhase::Diagnostic) {
+        return false;
+    }
+
+    result.evidence[..outcome_index].iter().any(|entry| {
+        entry.probe_phase == Some(tutor_contract::ProbePhase::Diagnostic)
+            && entry.kind == intervention.target_capability
+            && baseline_qualified(entry.kind, entry.assistance_level)
+            && same_item(
+                entry.learning_item_id.as_deref(),
+                entry.client_item_key.as_deref(),
+            )
+    })
+}
+
+fn canonical_target_text(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut pending_space = false;
+    for ch in input.trim().chars() {
+        if ch.is_whitespace() {
+            pending_space = true;
+        } else {
+            if pending_space && !out.is_empty() {
+                out.push(' ');
+            }
+            pending_space = false;
+            out.push(ch);
+        }
+    }
+    out
+}
+
 use super::lesson_write::{
     insert_evidence, insert_learning_item, insert_listening_attempt, update_item_status,
 };
 use super::recommendation_write::insert_recommendation;
 
 pub(crate) fn complete_lesson(
-    registry: &crate::BuiltInPackRegistry,
     env: &Env,
     result: &tutor_contract::LessonResult,
 ) -> Result<serde_json::Value> {
@@ -1003,23 +1371,23 @@ pub(crate) fn complete_lesson(
     let mut database = env.connection()?;
     let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-    let (pack_id, current_lesson_number, source_language, target_locale): (
-        String,
-        u32,
-        String,
-        String,
-    ) = transaction
-        .query_row(
-            "SELECT language_pack_id, current_lesson_number, source_language, target_locale
-             FROM learner_language_profiles
-             WHERE id = ?1",
-            params![result.language_profile_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .optional()?
-        .ok_or_else(|| {
-            crate::Error::operation(404, "not_found", "unknown profile", serde_json::Value::Null)
-        })?;
+    let (current_lesson_number, source_language, target_locale): (u32, String, String) =
+        transaction
+            .query_row(
+                "SELECT current_lesson_number, source_language, target_locale
+                 FROM learner_language_profiles WHERE id = ?1",
+                params![result.language_profile_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?
+            .ok_or_else(|| {
+                crate::Error::operation(
+                    404,
+                    "not_found",
+                    "unknown profile",
+                    serde_json::Value::Null,
+                )
+            })?;
 
     let max_persisted_lesson_number: u32 = transaction.query_row(
         "SELECT COALESCE(MAX(lesson_number), 0)
@@ -1030,35 +1398,8 @@ pub(crate) fn complete_lesson(
     )?;
     let current_lesson_number = current_lesson_number.max(max_persisted_lesson_number);
 
-    let Some(pack) = language_pack_registry::get(registry, &pack_id) else {
-        return Err(crate::Error::operation(
-            409,
-            "pack_incompatible",
-            "profile pack not registered",
-            serde_json::Value::Null,
-        ));
-    };
-    for (index, evidence) in result.evidence.iter().enumerate() {
-        if let Some(family) = evidence.context_family.as_deref()
-            && !language_pack_es_es::is_context_family(pack, family)
-        {
-            return Err(crate::Error::operation(
-                400,
-                "validation_failed",
-                "lesson result rejected",
-                serde_json::json!({
-                    "issues": [{
-                        "code": "unknown_context_family",
-                        "path": format!("evidence/{index}/context_family"),
-                        "message": format!("'{family}' is not a canonical context_family for {pack_id}")
-                    }]
-                }),
-            ));
-        }
-    }
-
-    let state =
-        load_lesson_plan_state(&transaction, result, &pack_id, current_lesson_number, pack)?;
+    let now = crate::api::now();
+    let state = load_lesson_plan_state(&transaction, result, current_lesson_number, now)?;
 
     let plan = plan_lesson_completion(result, &state).map_err(plan_error)?;
     if plan.lesson_kind == LessonPlanKind::DuplicateNoop {
@@ -1068,7 +1409,6 @@ pub(crate) fn complete_lesson(
         }));
     }
 
-    let now = crate::api::now();
     let at = to_rfc3339(now);
 
     let (card_state, card_plan) = prepare_card_mutations(
@@ -1100,8 +1440,6 @@ pub(crate) fn complete_lesson(
                 params![
                     id,
                     result.language_profile_id,
-                    pack_id,
-                    result.language_pack_version,
                     plan.lesson_number,
                     "completed",
                     result.lesson.scenario,
@@ -1158,14 +1496,12 @@ pub(crate) fn complete_lesson(
             &transaction,
             &id,
             &result.language_profile_id,
-            &pack_id,
             crate::repositories::learning_item_type_db(&source.item_type),
             &source.target_text,
             lesson_normalized_new(&state, source_index),
             source.prompt_text.as_deref(),
             source.prompt_language.as_deref(),
             "introduced",
-            "{}",
             Some(&lesson_id),
             &at,
         )?;
@@ -1288,10 +1624,8 @@ pub(crate) fn complete_lesson(
                 &transaction,
                 &id,
                 &result.language_profile_id,
-                &pack_id,
-                &result.language_pack_version,
                 crate::repositories::core_error_category_db(&source.core_category),
-                source.pack_error_code.as_deref(),
+                source.error_code.as_deref(),
                 &source.original_production,
                 &source.corrected_production,
                 source.explanation.as_deref(),
@@ -1392,8 +1726,6 @@ pub(crate) fn complete_lesson(
         &card_plan,
         &result.card_mutations,
         &result.language_profile_id,
-        &pack_id,
-        &result.language_pack_version,
         &source_language,
         &target_locale,
         Some(&lesson_id),
@@ -1444,6 +1776,7 @@ pub(crate) fn complete_lesson(
             "target_capability": intervention.target_capability,
             "evidence_index": intervention.evidence_index,
             "listening_attempt_index": intervention.listening_attempt_index,
+            "calibration_eligible": intervention_calibration_eligible(result, intervention),
         }));
     }
     let diagnostic_probe_count = result
@@ -1511,12 +1844,10 @@ pub(crate) fn complete_lesson(
 fn load_lesson_plan_state(
     database: &rusqlite::Connection,
     result: &tutor_contract::LessonResult,
-    pack_id: &str,
     current_lesson_number: u32,
-    pack: &language_pack_es_es::EsEsPack,
+    now: learning_core::Timestamp,
 ) -> Result<LessonPlanState> {
-    let mut state =
-        new_lesson_plan_state(&result.language_profile_id, pack_id, current_lesson_number);
+    let mut state = new_lesson_plan_state(&result.language_profile_id, current_lesson_number);
 
     state.duplicate_import = database
         .query_row(
@@ -1554,11 +1885,7 @@ fn load_lesson_plan_state(
     }
 
     for (index, item) in result.new_learning_items.iter().enumerate() {
-        let normalized = language_pack_es_es::normalize_target_text(
-            &item.target_text,
-            NormalizationMode::Canonical,
-        )
-        .0;
+        let normalized = canonical_target_text(&item.target_text);
         set_lesson_normalized_item(&mut state, index, &normalized).map_err(plan_error)?;
 
         if let Some(existing_id) = database
@@ -1589,7 +1916,7 @@ fn load_lesson_plan_state(
     }
     for change in &result.mastery_changes {
         load_known_item(database, &mut state, &change.learning_item_id)?;
-        load_mastery_signal(database, &mut state, &change.learning_item_id, pack)?;
+        load_mastery_signal(database, &mut state, &change.learning_item_id, now)?;
     }
 
     for occurrence in &result.error_occurrences {
@@ -1637,20 +1964,41 @@ fn load_mastery_signal(
     database: &rusqlite::Connection,
     state: &mut LessonPlanState,
     item_id: &str,
-    pack: &language_pack_es_es::EsEsPack,
+    now: learning_core::Timestamp,
 ) -> Result<()> {
+    let cutoff = to_rfc3339(learning_core::Timestamp(
+        now.0.saturating_sub(MASTERY_HISTORY_WINDOW_SECONDS),
+    ));
+    let now_at = to_rfc3339(now);
     let mut statement = database.prepare(
-        "SELECT kind, success, pack_metadata_json
-         FROM learning_item_evidence
-         WHERE learning_item_id = ?1",
+        "WITH ranked AS (
+             SELECT lesson_id,success,metadata_json,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY CASE WHEN lesson_id IS NULL THEN id ELSE lesson_id END
+                      ORDER BY recorded_at DESC,observation_order DESC,rowid DESC
+                    ) AS episode_rn
+             FROM learning_item_evidence
+             WHERE learning_item_id = ?1
+               AND kind = 'transfer'
+               AND recorded_at >= ?2
+               AND recorded_at <= ?3
+               AND CASE
+                     WHEN json_valid(metadata_json)
+                     THEN COALESCE(json_extract(metadata_json,'$.probe_phase'),'legacy') != 'practice'
+                     ELSE 1
+                   END
+         )
+         SELECT lesson_id,success,metadata_json
+         FROM ranked
+         WHERE episode_rn=1",
     )?;
-    let mut rows = statement.query(params![item_id])?;
+    let mut rows = statement.query(params![item_id, cutoff, now_at])?;
     while let Some(row) = rows.next()? {
-        let kind: String = row.get(0)?;
+        let lesson_id: Option<String> = row.get(0)?;
         let success: u8 = row.get(1)?;
         let metadata: Option<String> = row.get(2)?;
 
-        if success == 0 || !matches!(kind.as_str(), "spontaneous_production" | "transfer") {
+        if success == 0 {
             continue;
         }
 
@@ -1666,56 +2014,18 @@ fn load_mastery_signal(
             continue;
         }
 
-        let family = if kind == "transfer" {
-            parsed
-                .as_ref()
-                .and_then(|value| value.get("context_family"))
-                .and_then(serde_json::Value::as_str)
-                .filter(|value| language_pack_es_es::is_context_family(pack, value))
-        } else {
-            None
-        };
-
-        match family {
-            Some(family) => {
-                add_lesson_mastery_signal(state, item_id, true, &[family]).map_err(plan_error)?
-            }
-            None => add_lesson_mastery_signal(state, item_id, true, &[]).map_err(plan_error)?,
+        if let Some(family) = parsed
+            .as_ref()
+            .and_then(|value| value.get("context_family"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|family| !family.trim().is_empty())
+        {
+            add_lesson_mastery_signal_from_episode(state, item_id, lesson_id.as_deref(), &[family])
+                .map_err(plan_error)?;
         }
     }
 
-    if let Some(qualified) = latest_transfer_qualified(database, item_id)? {
-        set_lesson_mastery_latest_transfer_failed(state, item_id, !qualified)
-            .map_err(plan_error)?;
-    }
     Ok(())
-}
-
-fn latest_transfer_qualified(
-    database: &rusqlite::Connection,
-    item_id: &str,
-) -> Result<Option<bool>> {
-    let latest: Option<(u8, String)> = database
-        .query_row(
-            "SELECT success, pack_metadata_json
-             FROM learning_item_evidence
-             WHERE learning_item_id=?1 AND kind='transfer'
-             ORDER BY recorded_at DESC, observation_order DESC, rowid DESC
-             LIMIT 1",
-            params![item_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
-    Ok(latest.map(|(success, metadata)| {
-        let assistance = serde_json::from_str::<serde_json::Value>(&metadata)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("assistance_level")
-                    .and_then(serde_json::Value::as_u64)
-            });
-        success != 0 && assistance == Some(0)
-    }))
 }
 
 fn plan_error(error: super::lesson_plan::LessonPlanError) -> crate::Error {

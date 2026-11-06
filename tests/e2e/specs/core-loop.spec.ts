@@ -24,9 +24,7 @@ const lessonResult = (profileId: string) =>
     schema_version: "2",
     client_operation_id: `op-e2e-${Date.now()}`,
     language_profile_id: profileId,
-    language_pack_id: "es-ES",
-    language_pack_version: "0.2.0",
-    lesson: { scenario: "pharmacy", duration_seconds: 900 },
+            lesson: { scenario: "pharmacy", duration_seconds: 900 },
     new_learning_items: [
       { client_item_key: "cough", item_type: "phrase", target_text: "¿Tiene algo para la tos?" },
     ],
@@ -67,14 +65,18 @@ const lessonResult = (profileId: string) =>
 
 test("app shell loads with navigation", async ({ page }) => {
   await page.goto("/dashboard");
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Review" })).toBeVisible();
 });
 
 test("create profile, import lesson, review the card", async ({ page }) => {
   // Profile
   await page.goto("/languages");
-  await page.getByRole("button", { name: /Start Spanish/ }).click();
+  await page.getByLabel("Target locale").fill("es-ES");
+  await page.getByRole("button", { name: /Spanish — Spain.*es-ES/ }).click();
+  await page.getByLabel("Explanation language").fill("ru");
+  await page.getByRole("button", { name: /^Russian\s+ru$/ }).click();
+  await page.getByRole("button", { name: "Create profile", exact: true }).click();
   await expect(page.getByRole("button", { name: /es-ES/ })).toBeVisible();
 
   // Profile id through the same JSON-RPC transport used by the PWA.
@@ -97,10 +99,11 @@ test("create profile, import lesson, review the card", async ({ page }) => {
   // Import: paste → validate → preview → apply
   await page.goto("/import");
   await page.locator("textarea").fill(lessonResult(profileId));
-  await page.getByRole("button", { name: "Validate" }).click();
-  await expect(page.getByText(/Preview — pharmacy/)).toBeVisible();
-  await expect(page.getByText("1 card mutations")).toBeVisible();
-  await page.getByRole("button", { name: "Apply" }).click();
+  await page.getByRole("button", { name: "Validate result", exact: true }).click();
+  await expect(page.getByText("Validated preview", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "pharmacy", exact: true })).toBeVisible();
+  await expect(page.getByText("Card mutations", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Apply to learner state", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Applied" })).toBeVisible();
   await expect(page.getByText(/applied/)).toBeVisible();
 
@@ -119,7 +122,7 @@ test("create profile, import lesson, review the card", async ({ page }) => {
 
   // Dashboard reflects the day.
   await page.goto("/dashboard");
-  await expect(page.getByText(/reviews today/)).toBeVisible();
+  await expect(page.getByText(/Reviewed today/)).toBeVisible();
 });
 
 
@@ -163,9 +166,7 @@ test("real lesson lifecycle creates a review card and advances the next lesson",
         schema_version: "2",
         client_operation_id: `op-e2e-cycle-${op}`,
         language_profile_id: profileId,
-        language_pack_id: "es-ES",
-        language_pack_version: "0.2.0",
-        lesson: {
+                        lesson: {
           scenario: "restaurant",
           duration_seconds: 720,
           tutor_summary: "Practised ordering a meal.",
@@ -267,10 +268,10 @@ test("card can be suspended and restored through the browser", async ({ page }) 
   await expect(page.getByRole("heading", { name: "Попросите счёт" })).toBeVisible();
 
   await page.getByRole("button", { name: "Suspend" }).click();
-  await expect(page.getByText(/status suspended/)).toBeVisible();
+  await expect(page.getByText("suspended", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Restore" }).click();
-  await expect(page.getByText(/status review/)).toBeVisible();
+  await expect(page.getByText("review", { exact: true })).toBeVisible();
 });
 
 test("offline review grade is queued and replayed after reconnect", async ({ page }) => {
@@ -303,9 +304,7 @@ test("offline review grade is queued and replayed after reconnect", async ({ pag
         schema_version: "2",
         client_operation_id: `op-e2e-offline-${op}`,
         language_profile_id: profileId,
-        language_pack_id: "es-ES",
-        language_pack_version: "0.2.0",
-        lesson: {
+                        lesson: {
           scenario: "cafe",
           duration_seconds: 480,
           tutor_summary: "Practised ordering water.",

@@ -7,14 +7,12 @@ use tutor_contract::{MutationOperation, bounds, parse_lesson_result, validate};
 
 fn spec_fixture() -> String {
     // 07-tutor-contract.md §2 example, concretized (core_category uses the
-    // core closed set; language-specific specificity belongs in pack_error_code
-    // lives in pack_error_code).
+    // core closed set; language-specific specificity belongs in error_code
+    // lives in error_code).
     serde_json::json!({
       "schema_version": "2",
       "client_operation_id": "op_01J5",
       "language_profile_id": "llp_01J5",
-      "language_pack_id": "es-ES",
-      "language_pack_version": "1.0.0",
       "lesson": {
         "lesson_id": "les_01J5",
         "scenario": "pharmacy",
@@ -27,17 +25,25 @@ fn spec_fixture() -> String {
                    "avg_answer_millis": 2100, "long_pause_count": 2, "confidence": 0.6 },
       "new_learning_items": [ { "item_type": "phrase", "target_text": "¿Tiene algo para la tos?",
                                 "prompt_text": "Спросите что-нибудь от кашля", "prompt_language": "ru" } ],
-      "evidence": [ { "learning_item_id": "phr_01J5", "kind": "spontaneous_production",
-                      "success": true, "context": "pharmacy:ask-remedy",
-                      "assistance_level": 0, "response_millis": 1800,
-                      "probe_phase": "diagnostic",
-                      "pronunciation_intelligible": true,
-                      "pronunciation_repeat_required": false, "detail": null } ],
+      "evidence": [
+        { "learning_item_id": "phr_01J5", "kind": "spontaneous_production",
+          "success": true, "context": "pharmacy:ask-remedy",
+          "assistance_level": 0, "response_millis": 1800,
+          "probe_phase": "diagnostic",
+          "pronunciation_intelligible": true,
+          "pronunciation_repeat_required": false, "detail": null },
+        { "learning_item_id": "phr_01J5", "kind": "spontaneous_production",
+          "success": true, "context": "pharmacy:post-fade",
+          "assistance_level": 0, "response_millis": 1500,
+          "probe_phase": "practice",
+          "pronunciation_intelligible": true,
+          "pronunciation_repeat_required": false, "detail": null }
+      ],
       "interventions": [ { "action": "fade_prompts", "learning_item_id": "phr_01J5",
                            "target_capability": "spontaneous_production",
-                           "evidence_index": 0 } ],
+                           "evidence_index": 1 } ],
       "error_occurrences": [ { "error_target_id": null,
-                               "core_category": "grammar", "pack_error_code": "es.verb.ser_estar",
+                               "core_category": "grammar", "error_code": "es.verb.ser_estar",
                                "original_production": "estoy médico",
                                "corrected_production": "soy médico",
                                "explanation": "Profession takes ser." } ],
@@ -72,9 +78,23 @@ fn spec_example_parses_and_validates_clean() {
         result.card_mutations[0].operation,
         MutationOperation::Create
     );
-    assert_eq!(result.evidence.len(), 1);
+    assert_eq!(result.evidence.len(), 2);
     let issues = validate(&result);
     assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+}
+
+#[test]
+fn intervention_immediate_outcome_cannot_be_diagnostic() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    result.interventions[0].evidence_index = Some(0);
+    let issues = validate(&result);
+    assert!(
+        issues.iter().any(|issue| {
+            issue.path == "interventions/0/evidence_index"
+                && issue.code == "inconsistent_intervention"
+        }),
+        "an intervention immediate outcome must be post-intervention, not the diagnostic baseline"
+    );
 }
 
 #[test]
@@ -98,6 +118,36 @@ fn communicative_task_counts_require_known_success_rubric() {
         !issues
             .iter()
             .any(|issue| issue.path == "metrics/task_success_rubric")
+    );
+}
+
+#[test]
+fn independent_task_success_rubric_is_versioned_and_backward_compatible() {
+    assert_eq!(
+        tutor_contract::communicative_task_rubric_id(
+            tutor_contract::CommunicativeTaskRubric::GoalAchievementV1,
+        ),
+        tutor_contract::COMMUNICATIVE_TASK_SUCCESS_RUBRIC_V1,
+    );
+    assert_eq!(
+        tutor_contract::communicative_task_rubric_id(
+            tutor_contract::CommunicativeTaskRubric::IndependentGoalAchievementV2,
+        ),
+        tutor_contract::COMMUNICATIVE_TASK_SUCCESS_RUBRIC_V2,
+    );
+
+    let v2: tutor_contract::CommunicativeTaskRubric =
+        serde_json::from_str(r#""goal_completed_independently_v2""#).unwrap();
+    assert_eq!(
+        v2,
+        tutor_contract::CommunicativeTaskRubric::IndependentGoalAchievementV2
+    );
+
+    let v1: tutor_contract::CommunicativeTaskRubric =
+        serde_json::from_str(r#""goal_completed_without_target_model_v1""#).unwrap();
+    assert_eq!(
+        v1,
+        tutor_contract::CommunicativeTaskRubric::GoalAchievementV1
     );
 }
 
@@ -208,8 +258,10 @@ fn garbage_inputs_error_not_panic() {
 fn same_lesson_client_item_reference_validates() {
     let mut result = parse_lesson_result(&spec_fixture()).unwrap();
     result.new_learning_items[0].client_item_key = Some("new-cough".to_owned());
-    result.evidence[0].learning_item_id = None;
-    result.evidence[0].client_item_key = Some("new-cough".to_owned());
+    for evidence in &mut result.evidence {
+        evidence.learning_item_id = None;
+        evidence.client_item_key = Some("new-cough".to_owned());
+    }
     result.evidence[0].context = Some("pharmacy:ask-for-remedy".to_owned());
     result.interventions[0].learning_item_id = None;
     result.interventions[0].client_item_key = Some("new-cough".to_owned());
@@ -276,7 +328,7 @@ fn selected_probe_measurements_are_mandatory() {
 }
 
 #[test]
-fn lesson_requires_two_measured_diagnostic_probes() {
+fn lesson_requires_baseline_plus_second_independent_measurement() {
     let mut result = parse_lesson_result(&spec_fixture()).unwrap();
     result.listening_attempts[0].probe_phase = Some(tutor_contract::ProbePhase::Practice);
     let issues = validate(&result);
@@ -284,6 +336,19 @@ fn lesson_requires_two_measured_diagnostic_probes() {
         issues
             .iter()
             .any(|issue| { issue.code == "insufficient_measurement_coverage" })
+    );
+}
+
+#[test]
+fn one_diagnostic_plus_delayed_measurement_is_sufficient_coverage() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    result.listening_attempts[0].probe_phase = Some(tutor_contract::ProbePhase::DelayedRetrieval);
+    let issues = validate(&result);
+    assert!(
+        !issues
+            .iter()
+            .any(|issue| issue.code == "insufficient_measurement_coverage"),
+        "a baseline plus delayed independent check should be valid coverage: {issues:?}"
     );
 }
 

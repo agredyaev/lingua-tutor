@@ -16,8 +16,6 @@ mod tests {
                 "schema_version": "2",
                 "client_operation_id": "op-1",
                 "language_profile_id": "llp-1",
-                "language_pack_id": "es-ES",
-                "language_pack_version": "0.2.0",
                 "lesson": { "scenario": "pharmacy" },
                 "new_learning_items": [
                     { "item_type": "phrase", "target_text": "¿Tiene algo para la tos?" },
@@ -48,14 +46,22 @@ mod tests {
     }
 
     fn state() -> LessonPlanState {
-        let mut state = new_lesson_plan_state("llp-1", "es-ES", 7);
+        let mut state = new_lesson_plan_state("llp-1", 7);
         set_lesson_normalized_item(&mut state, 0, "¿tiene algo para la tos?").unwrap();
         set_lesson_normalized_item(&mut state, 1, "buenos días").unwrap();
         add_lesson_existing_normalized(&mut state, "buenos días", "li-dup").unwrap();
         add_known_lesson_item(&mut state, "li-known").unwrap();
         add_lesson_error_target(&mut state, "et-1", 2, false).unwrap();
-        add_lesson_mastery_signal(&mut state, "li-known", true, &[]).unwrap();
+        add_lesson_mastery_signal(&mut state, "li-known", &[]).unwrap();
         state
+    }
+
+    fn add_distributed_mastery_history(state: &mut LessonPlanState, families: &[&str]) {
+        for (index, family) in families.iter().enumerate() {
+            let episode = if index == 0 { "hist-1" } else { "hist-2" };
+            add_lesson_mastery_signal_from_episode(state, "li-known", Some(episode), &[*family])
+                .unwrap();
+        }
     }
 
     #[test]
@@ -174,6 +180,29 @@ mod tests {
     }
 
     #[test]
+    fn provisional_mastery_requires_fresh_unaided_productive_success() {
+        let mut result = base_result();
+        result.evidence.clear();
+
+        let mut state = state();
+        add_lesson_mastery_signal(&mut state, "li-known", &[]).unwrap();
+
+        let plan = plan_lesson_completion(&result, &state).unwrap();
+        assert_eq!(plan.status_len, 0);
+        assert_eq!(plan.warning_len, 1);
+    }
+
+    #[test]
+    fn practice_success_cannot_grant_provisional_mastery() {
+        let mut result = base_result();
+        result.evidence[0].probe_phase = Some(tutor_contract::ProbePhase::Practice);
+
+        let plan = plan_lesson_completion(&result, &state()).unwrap();
+        assert_eq!(plan.status_len, 0);
+        assert_eq!(plan.warning_len, 1);
+    }
+
+    #[test]
     fn fresh_failed_transfer_blocks_full_mastery_even_with_three_historical_families() {
         let mut result = base_result();
         result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
@@ -194,15 +223,299 @@ mod tests {
         });
 
         let mut state = state();
-        add_lesson_mastery_signal(
+        add_distributed_mastery_history(
             &mut state,
-            "li-known",
-            true,
             &[
                 "service.ask_help",
                 "commerce.request_item",
                 "transport.ask_stop",
             ],
+        );
+
+        let plan = plan_lesson_completion(&result, &state).unwrap();
+        assert_eq!(plan.status_len, 0);
+        assert_eq!(plan.warning_len, 1);
+    }
+
+    #[test]
+    fn fresh_productive_failure_blocks_full_mastery_even_if_transfer_later_succeeds() {
+        let mut result = base_result();
+        result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        let failed = tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some("fresh-failure".to_owned()),
+            context_family: None,
+            kind: learning_core::EvidenceKind::SpontaneousProduction,
+            success: false,
+            assistance_level: Some(0),
+            response_millis: Some(2_000),
+            probe_phase: Some(tutor_contract::ProbePhase::Diagnostic),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        };
+        let recovered_transfer = tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some("fresh-transfer".to_owned()),
+            context_family: Some("service.ask_help".to_owned()),
+            kind: learning_core::EvidenceKind::Transfer,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: Some(1_200),
+            probe_phase: Some(tutor_contract::ProbePhase::Transfer),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        };
+        result.evidence = vec![failed, recovered_transfer];
+
+        let mut state = state();
+        add_distributed_mastery_history(
+            &mut state,
+            &["commerce.request_item", "transport.ask_stop"],
+        );
+
+        let plan = plan_lesson_completion(&result, &state).unwrap();
+        assert_eq!(plan.status_len, 0);
+        assert_eq!(plan.warning_len, 1);
+    }
+
+    #[test]
+    fn three_fresh_transfer_families_in_one_lesson_do_not_grant_full_mastery() {
+        let mut result = base_result();
+        result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        let transfer = |family: &str| tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some(format!("fresh-{family}")),
+            context_family: Some(family.to_owned()),
+            kind: learning_core::EvidenceKind::Transfer,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: Some(1_200),
+            probe_phase: Some(tutor_contract::ProbePhase::Transfer),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        };
+        result.evidence = vec![
+            transfer("service.ask_help"),
+            transfer("commerce.request_item"),
+            transfer("transport.ask_stop"),
+        ];
+
+        let plan = plan_lesson_completion(&result, &state()).unwrap();
+        assert_eq!(plan.status_len, 0);
+        assert_eq!(plan.warning_len, 1);
+    }
+
+    #[test]
+    fn one_historical_family_plus_two_fresh_families_does_not_grant_full_mastery() {
+        let mut result = base_result();
+        result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        let transfer = |family: &str| tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some(format!("fresh-{family}")),
+            context_family: Some(family.to_owned()),
+            kind: learning_core::EvidenceKind::Transfer,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: Some(1_200),
+            probe_phase: Some(tutor_contract::ProbePhase::Transfer),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        };
+        result.evidence = vec![
+            transfer("commerce.request_item"),
+            transfer("transport.ask_stop"),
+        ];
+
+        let mut state = state();
+        add_lesson_mastery_signal(&mut state, "li-known", &["service.ask_help"]).unwrap();
+
+        let plan = plan_lesson_completion(&result, &state).unwrap();
+        assert_eq!(plan.status_len, 0);
+        assert_eq!(plan.warning_len, 1);
+    }
+
+    #[test]
+    fn fresh_transfer_without_context_family_cannot_grant_full_mastery() {
+        let mut result = base_result();
+        result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        result.evidence = vec![tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some("fresh-context".to_owned()),
+            context_family: None,
+            kind: learning_core::EvidenceKind::Transfer,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: Some(1_200),
+            probe_phase: Some(tutor_contract::ProbePhase::Transfer),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        }];
+
+        let mut state = state();
+        add_distributed_mastery_history(
+            &mut state,
+            &[
+                "service.ask_help",
+                "commerce.request_item",
+                "transport.ask_stop",
+            ],
+        );
+
+        let plan = plan_lesson_completion(&result, &state).unwrap();
+        assert_eq!(plan.status_len, 0);
+        assert_eq!(plan.warning_len, 1);
+    }
+
+    #[test]
+    fn practice_transfer_after_valid_transfer_does_not_erase_mastery_evidence() {
+        let mut result = base_result();
+        result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        let transfer = |phase: tutor_contract::ProbePhase| tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some("fresh-context".to_owned()),
+            context_family: Some("service.ask_help".to_owned()),
+            kind: learning_core::EvidenceKind::Transfer,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: Some(1_200),
+            probe_phase: Some(phase),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        };
+        result.evidence = vec![
+            transfer(tutor_contract::ProbePhase::Transfer),
+            transfer(tutor_contract::ProbePhase::Practice),
+        ];
+
+        let mut state = state();
+        add_distributed_mastery_history(
+            &mut state,
+            &["commerce.request_item", "transport.ask_stop"],
+        );
+
+        let plan = plan_lesson_completion(&result, &state).unwrap();
+        assert_eq!(plan.status_len, 1);
+        assert_eq!(plan.warning_len, 0);
+    }
+
+    #[test]
+    fn practice_transfer_cannot_grant_full_mastery() {
+        let mut result = base_result();
+        result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        result.evidence = vec![tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some("fresh-context".to_owned()),
+            context_family: Some("service.ask_help".to_owned()),
+            kind: learning_core::EvidenceKind::Transfer,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: Some(1_200),
+            probe_phase: Some(tutor_contract::ProbePhase::Practice),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        }];
+
+        let mut state = state();
+        add_distributed_mastery_history(
+            &mut state,
+            &["transport.ask_stop", "commerce.request_item"],
+        );
+
+        let plan = plan_lesson_completion(&result, &state).unwrap();
+        assert_eq!(plan.status_len, 0);
+        assert_eq!(plan.warning_len, 1);
+    }
+
+    #[test]
+    fn full_mastery_requires_fresh_unaided_transfer_success() {
+        let mut result = base_result();
+        result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        result.evidence.clear();
+
+        let mut state = state();
+        add_distributed_mastery_history(
+            &mut state,
+            &[
+                "service.ask_help",
+                "commerce.request_item",
+                "transport.ask_stop",
+            ],
+        );
+
+        let plan = plan_lesson_completion(&result, &state).unwrap();
+        assert_eq!(plan.status_len, 0);
+        assert_eq!(plan.warning_len, 1);
+    }
+
+    #[test]
+    fn full_mastery_requires_fresh_transfer_phase_not_practice() {
+        let mut result = base_result();
+        result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        result.evidence = vec![tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some("fresh-context".to_owned()),
+            context_family: Some("service.ask_help".to_owned()),
+            kind: learning_core::EvidenceKind::Transfer,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: Some(1_200),
+            probe_phase: Some(tutor_contract::ProbePhase::Practice),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        }];
+
+        let mut state = state();
+        add_distributed_mastery_history(
+            &mut state,
+            &["commerce.request_item", "transport.ask_stop"],
+        );
+
+        let plan = plan_lesson_completion(&result, &state).unwrap();
+        assert_eq!(plan.status_len, 0);
+        assert_eq!(plan.warning_len, 1);
+    }
+
+    #[test]
+    fn two_prior_families_from_one_episode_do_not_grant_full_mastery() {
+        let mut result = base_result();
+        result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        result.evidence = vec![tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some("fresh-context".to_owned()),
+            context_family: Some("service.ask_help".to_owned()),
+            kind: learning_core::EvidenceKind::Transfer,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: Some(1_200),
+            probe_phase: Some(tutor_contract::ProbePhase::Transfer),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        }];
+
+        let mut state = state();
+        add_lesson_mastery_signal_from_episode(
+            &mut state,
+            "li-known",
+            Some("hist-single"),
+            &["transport.ask_stop", "commerce.request_item"],
         )
         .unwrap();
 
@@ -231,13 +544,10 @@ mod tests {
         }];
 
         let mut state = state();
-        add_lesson_mastery_signal(
+        add_distributed_mastery_history(
             &mut state,
-            "li-known",
-            true,
             &["transport.ask_stop", "commerce.request_item"],
-        )
-        .unwrap();
+        );
 
         let plan = plan_lesson_completion(&result, &state).unwrap();
         assert_eq!(plan.status_len, 1);
@@ -252,17 +562,14 @@ mod tests {
         let mut result = base_result();
         result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
         let mut state = state();
-        add_lesson_mastery_signal(
+        add_distributed_mastery_history(
             &mut state,
-            "li-known",
-            true,
             &[
                 "service.ask_help",
                 "commerce.request_item",
                 "transport.ask_stop",
             ],
-        )
-        .unwrap();
+        );
 
         let transfer = |success: bool, family: &str| tutor_contract::EvidenceEntry {
             learning_item_id: Some("li-known".to_owned()),
@@ -327,17 +634,14 @@ mod tests {
         ];
 
         let mut state = state();
-        add_lesson_mastery_signal(
+        add_distributed_mastery_history(
             &mut state,
-            "li-known",
-            true,
             &[
                 "service.ask_help",
                 "commerce.request_item",
                 "transport.ask_stop",
             ],
-        )
-        .unwrap();
+        );
 
         let recovered = plan_lesson_completion(&result, &state).unwrap();
         assert_eq!(recovered.status_len, 1);
@@ -350,25 +654,20 @@ mod tests {
     }
 
     #[test]
-    fn historical_latest_transfer_failure_blocks_mastery_until_new_unaided_transfer_success() {
+    fn fresh_unaided_transfer_success_completes_historical_family_evidence() {
         let mut result = base_result();
         result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
         result.evidence.clear();
 
         let mut state = state();
-        add_lesson_mastery_signal(
+        add_distributed_mastery_history(
             &mut state,
-            "li-known",
-            true,
             &[
                 "service.ask_help",
                 "commerce.request_item",
                 "transport.ask_stop",
             ],
-        )
-        .unwrap();
-        set_lesson_mastery_latest_transfer_failed(&mut state, "li-known", true).unwrap();
-
+        );
         let blocked = plan_lesson_completion(&result, &state).unwrap();
         assert_eq!(blocked.status_len, 0);
         assert_eq!(blocked.warning_len, 1);
@@ -412,13 +711,10 @@ mod tests {
         }];
 
         let mut state = state();
-        add_lesson_mastery_signal(
+        add_distributed_mastery_history(
             &mut state,
-            "li-known",
-            true,
             &["transport.ask_stop", "commerce.request_item"],
-        )
-        .unwrap();
+        );
 
         let plan = plan_lesson_completion(&result, &state).unwrap();
         assert_eq!(plan.status_len, 0);
@@ -454,7 +750,6 @@ fn text_at(text: &str, reference: TextRef) -> &str {
 
 pub(crate) struct LessonPlanState {
     profile_id: TextRef,
-    pack_id: TextRef,
     current_lesson_number: u32,
     pub duplicate_import: bool,
     text: String,
@@ -478,8 +773,11 @@ pub(crate) struct LessonPlanState {
 
     mastery_len: usize,
     mastery_item_id: [TextRef; MAX_MASTERY],
-    mastery_any_unaided_productive: [bool; MAX_MASTERY],
-    mastery_latest_transfer_failed: [bool; MAX_MASTERY],
+    mastery_has_prior_transfer_success: [bool; MAX_MASTERY],
+    mastery_episode_count: [u8; MAX_MASTERY],
+    mastery_episode_0: [TextRef; MAX_MASTERY],
+    mastery_episode_1: [TextRef; MAX_MASTERY],
+    mastery_episode_2: [TextRef; MAX_MASTERY],
     mastery_family_count: [u8; MAX_MASTERY],
     mastery_family_0: [TextRef; MAX_MASTERY],
     mastery_family_1: [TextRef; MAX_MASTERY],
@@ -488,15 +786,12 @@ pub(crate) struct LessonPlanState {
 
 pub(crate) fn new_lesson_plan_state(
     profile_id: &str,
-    pack_id: &str,
     current_lesson_number: u32,
 ) -> LessonPlanState {
     let mut text = String::new();
     let profile_id = push_text(&mut text, profile_id);
-    let pack_id = push_text(&mut text, pack_id);
     LessonPlanState {
         profile_id,
-        pack_id,
         current_lesson_number,
         duplicate_import: false,
         text,
@@ -515,8 +810,11 @@ pub(crate) fn new_lesson_plan_state(
         error_resolved: [false; MAX_ERRORS],
         mastery_len: 0,
         mastery_item_id: [TextRef::default(); MAX_MASTERY],
-        mastery_any_unaided_productive: [false; MAX_MASTERY],
-        mastery_latest_transfer_failed: [false; MAX_MASTERY],
+        mastery_has_prior_transfer_success: [false; MAX_MASTERY],
+        mastery_episode_count: [0; MAX_MASTERY],
+        mastery_episode_0: [TextRef::default(); MAX_MASTERY],
+        mastery_episode_1: [TextRef::default(); MAX_MASTERY],
+        mastery_episode_2: [TextRef::default(); MAX_MASTERY],
         mastery_family_count: [0; MAX_MASTERY],
         mastery_family_0: [TextRef::default(); MAX_MASTERY],
         mastery_family_1: [TextRef::default(); MAX_MASTERY],
@@ -526,10 +824,6 @@ pub(crate) fn new_lesson_plan_state(
 
 pub(crate) fn lesson_profile_id(state: &LessonPlanState) -> &str {
     text_at(&state.text, state.profile_id)
-}
-
-fn lesson_pack_id(state: &LessonPlanState) -> &str {
-    text_at(&state.text, state.pack_id)
 }
 
 pub(crate) fn set_lesson_existing(state: &mut LessonPlanState, id: &str) {
@@ -611,10 +905,19 @@ pub(crate) fn replace_lesson_error_target_count(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn add_lesson_mastery_signal(
     state: &mut LessonPlanState,
     item_id: &str,
-    any_unaided_productive: bool,
+    families: &[&str],
+) -> Result<(), LessonPlanError> {
+    add_lesson_mastery_signal_from_episode(state, item_id, None, families)
+}
+
+pub(crate) fn add_lesson_mastery_signal_from_episode(
+    state: &mut LessonPlanState,
+    item_id: &str,
+    episode_id: Option<&str>,
     families: &[&str],
 ) -> Result<(), LessonPlanError> {
     let i = if let Some(i) = (0..state.mastery_len)
@@ -631,26 +934,38 @@ pub(crate) fn add_lesson_mastery_signal(
         i
     };
 
-    state.mastery_any_unaided_productive[i] |= any_unaided_productive;
+    if !families.is_empty() {
+        state.mastery_has_prior_transfer_success[i] = true;
+        add_lesson_mastery_episode(state, i, episode_id);
+    }
     for family in families {
         add_lesson_mastery_family(state, i, family);
     }
     Ok(())
 }
 
-pub(crate) fn set_lesson_mastery_latest_transfer_failed(
-    state: &mut LessonPlanState,
-    item_id: &str,
-    failed: bool,
-) -> Result<(), LessonPlanError> {
-    add_lesson_mastery_signal(state, item_id, false, &[])?;
-    let Some(index) = (0..state.mastery_len)
-        .position(|index| text_at(&state.text, state.mastery_item_id[index]) == item_id)
-    else {
-        return Err(LessonPlanError::UnknownLearningItem(item_id.to_owned()));
+fn add_lesson_mastery_episode(state: &mut LessonPlanState, index: usize, episode_id: Option<&str>) {
+    if state.mastery_episode_count[index] >= 3 {
+        return;
+    }
+    let count = usize::from(state.mastery_episode_count[index]);
+    let Some(episode_id) = episode_id.filter(|value| !value.trim().is_empty()) else {
+        if count == 0 {
+            state.mastery_episode_count[index] = 1;
+        }
+        return;
     };
-    state.mastery_latest_transfer_failed[index] = failed;
-    Ok(())
+    if (0..count).any(|offset| lesson_mastery_episode(state, index, offset) == episode_id) {
+        return;
+    }
+    let reference = push_text(&mut state.text, episode_id);
+    match count {
+        0 => state.mastery_episode_0[index] = reference,
+        1 => state.mastery_episode_1[index] = reference,
+        2 => state.mastery_episode_2[index] = reference,
+        _ => unreachable!(),
+    }
+    state.mastery_episode_count[index] += 1;
 }
 
 fn add_lesson_mastery_family(state: &mut LessonPlanState, index: usize, family: &str) {
@@ -696,6 +1011,16 @@ fn lesson_mastery_item_id(state: &LessonPlanState, index: usize) -> &str {
     text_at(&state.text, state.mastery_item_id[index])
 }
 
+fn lesson_mastery_episode(state: &LessonPlanState, index: usize, offset: usize) -> &str {
+    let reference = match offset {
+        0 => state.mastery_episode_0[index],
+        1 => state.mastery_episode_1[index],
+        2 => state.mastery_episode_2[index],
+        _ => unreachable!(),
+    };
+    text_at(&state.text, reference)
+}
+
 fn lesson_mastery_family(state: &LessonPlanState, index: usize, offset: usize) -> &str {
     let reference = match offset {
         0 => state.mastery_family_0[index],
@@ -720,7 +1045,6 @@ pub(crate) enum LessonPlanKind {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum LessonPlanError {
     ProfileMismatch(String),
-    PackMismatch(String),
     UnknownLearningItem(String),
     UnknownClientItemKey(String),
     UnknownLesson(String),
@@ -828,11 +1152,6 @@ pub(crate) fn plan_lesson_completion(
     if result.language_profile_id != lesson_profile_id(state) {
         return Err(LessonPlanError::ProfileMismatch(
             result.language_profile_id.clone(),
-        ));
-    }
-    if result.language_pack_id != lesson_pack_id(state) {
-        return Err(LessonPlanError::PackMismatch(
-            result.language_pack_id.clone(),
         ));
     }
 
@@ -1037,13 +1356,12 @@ fn plan_mastery(
         let signal_index = (0..state.mastery_len)
             .position(|i| lesson_mastery_item_id(state, i) == proposal.learning_item_id);
 
-        let mut any_unaided = signal_index
-            .map(|i| state.mastery_any_unaided_productive[i])
+        let has_prior_transfer_success = signal_index
+            .map(|i| state.mastery_has_prior_transfer_success[i])
             .unwrap_or(false);
-        let historical_transfer_failed = signal_index
-            .map(|i| state.mastery_latest_transfer_failed[i])
-            .unwrap_or(false);
-
+        let prior_episode_count = signal_index
+            .map(|i| state.mastery_episode_count[i])
+            .unwrap_or(0);
         let mut family_count = 0usize;
         let mut families = [""; 3];
 
@@ -1057,7 +1375,10 @@ fn plan_mastery(
             }
         }
 
+        let prior_family_count = family_count;
+        let mut fresh_unaided_productive_success = false;
         let mut fresh_productive_failure = false;
+        let mut latest_fresh_spontaneous_qualified = None;
         let mut latest_fresh_transfer_qualified = None;
         for evidence in result
             .evidence
@@ -1069,15 +1390,34 @@ fn plan_mastery(
                 learning_core::EvidenceKind::SpontaneousProduction
                     | learning_core::EvidenceKind::Transfer
             );
-            if productive && !evidence.success {
+            let mastery_eligible =
+                evidence.probe_phase != Some(tutor_contract::ProbePhase::Practice);
+            if productive && mastery_eligible && !evidence.success {
                 fresh_productive_failure = true;
             }
-            if evidence.kind == learning_core::EvidenceKind::Transfer {
-                latest_fresh_transfer_qualified =
+            if mastery_eligible
+                && evidence.kind == learning_core::EvidenceKind::SpontaneousProduction
+            {
+                latest_fresh_spontaneous_qualified =
                     Some(evidence.success && evidence.assistance_level == Some(0));
             }
-            if evidence.success && productive && evidence.assistance_level == Some(0) {
-                any_unaided = true;
+            if mastery_eligible && evidence.kind == learning_core::EvidenceKind::Transfer {
+                latest_fresh_transfer_qualified = Some(
+                    evidence.probe_phase == Some(tutor_contract::ProbePhase::Transfer)
+                        && evidence.success
+                        && evidence.assistance_level == Some(0)
+                        && evidence
+                            .context_family
+                            .as_deref()
+                            .is_some_and(|family| !family.trim().is_empty()),
+                );
+            }
+            if mastery_eligible
+                && evidence.success
+                && productive
+                && evidence.assistance_level == Some(0)
+            {
+                fresh_unaided_productive_success = true;
                 if evidence.kind == learning_core::EvidenceKind::Transfer
                     && let Some(family) = evidence
                         .context_family
@@ -1091,12 +1431,15 @@ fn plan_mastery(
 
         let accepted = match proposal.new_status {
             learning_core::LearningItemStatus::ProvisionallyMastered => {
-                any_unaided && !fresh_productive_failure
+                fresh_unaided_productive_success && !fresh_productive_failure
             }
             learning_core::LearningItemStatus::Mastered => {
-                let latest_transfer_failed = latest_fresh_transfer_qualified == Some(false)
-                    || (latest_fresh_transfer_qualified.is_none() && historical_transfer_failed);
-                family_count >= 3 && !latest_transfer_failed
+                has_prior_transfer_success
+                    && prior_episode_count >= 2
+                    && prior_family_count >= 2
+                    && family_count >= 3
+                    && latest_fresh_spontaneous_qualified != Some(false)
+                    && latest_fresh_transfer_qualified == Some(true)
             }
             _ => true,
         };

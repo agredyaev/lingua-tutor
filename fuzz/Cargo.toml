@@ -12,9 +12,6 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 serde_json = "1"
 adaptation = { path = "../crates/adaptation" }
-language-pack-api = { path = "../crates/language-pack-api" }
-language-pack-es-es = { path = "../language-packs/es-es" }
-language-pack-registry = { path = "../crates/language-pack-registry" }
 learning-core = { path = "../crates/learning-core" }
 lingua-tutor-local = { path = "../apps/local" }
 review-engine = { path = "../crates/review-engine" }

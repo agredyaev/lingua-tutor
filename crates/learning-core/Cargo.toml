@@ -8,7 +8,6 @@ publish.workspace = true
 description = "Language-neutral scalar contracts and pure rules"
 
 [dependencies]
-language-pack-api = { workspace = true }
 serde = { workspace = true }
 
 [dev-dependencies]

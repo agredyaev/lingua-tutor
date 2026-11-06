@@ -46,13 +46,12 @@ mod tests {
         ));
         let db = crate::storage::open(&path).unwrap();
         db.execute_batch(
-            r#"INSERT INTO language_packs(id,package_name,version,contract_version,target_language,target_locale,display_name,installed_at,updated_at)
-               VALUES('es-ES','language-pack-es-es','0.2.0',1,'es','es-ES','Spanish','a','a');
+            r#"
                INSERT INTO learner_profile(id,created_at,updated_at) VALUES('learner-1','a','a');
-               INSERT INTO learner_language_profiles(id,learner_id,language_pack_id,source_language,target_locale,created_at,updated_at)
-               VALUES('llp-1','learner-1','es-ES','ru','es-ES','a','a');
-               INSERT INTO lessons(id,learner_language_profile_id,language_pack_id,language_pack_version,lesson_number,status,scenario,planned_goal,source,started_at,completed_at,created_at,updated_at)
-               VALUES('lesson-1','llp-1','es-ES','0.2.0',1,'completed','x','g','import','a','a','a','a');"#
+               INSERT INTO learner_language_profiles(id,learner_id,source_language,target_locale,created_at,updated_at)
+               VALUES('llp-1','learner-1', 'ru','es-ES','a','a');
+               INSERT INTO lessons(id,learner_language_profile_id,lesson_number,status,scenario,planned_goal,source,started_at,completed_at,created_at,updated_at)
+               VALUES('lesson-1','llp-1',1,'completed','x','g','import','a','a','a','a');"#
         ).unwrap();
         drop(db);
         (path.clone(), Env::new(path, "k".to_owned()))

@@ -6,15 +6,13 @@
 #[allow(clippy::unwrap_used, clippy::type_complexity)]
 mod tests {
     use super::*;
-    use crate::{Env, built_in_language_packs};
+    use crate::Env;
     use rusqlite::{Connection, params};
     use std::path::PathBuf;
 
     #[derive(Debug, PartialEq, Eq)]
     struct Snapshot {
         targets: Vec<(
-            String,
-            String,
             String,
             Option<String>,
             String,
@@ -42,19 +40,14 @@ mod tests {
     fn seed_profile(connection: &Connection) {
         connection
             .execute_batch(
-                "INSERT INTO language_packs
-                (id, package_name, version, contract_version, target_language,
-                 target_locale, display_name, installed_at, updated_at)
-             VALUES
-                ('es-ES', 'language-pack-es-es', '0.2.0', 1, 'es', 'es-ES',
-                 'Spanish (Spain)', '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
+                "
              INSERT INTO learner_profile (id, created_at, updated_at)
              VALUES ('learner-1', '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
              INSERT INTO learner_language_profiles
-                (id, learner_id, language_pack_id, source_language, target_locale,
+                (id, learner_id, source_language, target_locale,
                  created_at, updated_at)
              VALUES
-                ('llp-1', 'learner-1', 'es-ES', 'ru', 'es-ES',
+                ('llp-1', 'learner-1', 'ru', 'es-ES',
                  '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');",
             )
             .unwrap();
@@ -67,8 +60,6 @@ mod tests {
                 params![
                     "et-existing",
                     "llp-1",
-                    "es-ES",
-                    "0.2.0",
                     "grammar",
                     Option::<String>::None,
                     "wrong",
@@ -97,16 +88,14 @@ mod tests {
     }
 
     fn new_call(env: &Env, existing: Option<&str>) {
-        let registry = built_in_language_packs().unwrap();
         log_error_occurrence(
-            &registry,
             env,
             LogErrorOccurrenceInput {
                 language_profile_id: "llp-1".to_owned(),
                 core_category: learning_core::CoreErrorCategory::Grammar,
                 original_production: "wrong".to_owned(),
                 corrected_production: "right".to_owned(),
-                pack_error_code: Some("grammar.synthetic".to_owned()),
+                error_code: Some("grammar.synthetic".to_owned()),
                 explanation: Some("synthetic explanation".to_owned()),
                 error_target_id: existing.map(str::to_owned),
                 communicative_impact: learning_core::CommunicativeImpact::Medium,
@@ -119,8 +108,7 @@ mod tests {
         let connection = env.connection().unwrap();
         let targets = connection
             .prepare(
-                "SELECT learner_language_profile_id, language_pack_id,
-                        language_pack_version, pack_error_code,
+                "SELECT learner_language_profile_id, error_code,
                         original_production, corrected_production, explanation,
                         occurrence_count, method_change_required, status
                  FROM error_targets ORDER BY original_production, corrected_production",
@@ -136,8 +124,6 @@ mod tests {
                     row.get(5)?,
                     row.get(6)?,
                     row.get(7)?,
-                    row.get(8)?,
-                    row.get(9)?,
                 ))
             })
             .unwrap()
@@ -182,9 +168,9 @@ mod tests {
         new_call(&env, None);
         let state = snapshot(&env);
         assert_eq!(state.targets.len(), 1);
-        assert_eq!(state.targets[0].7, 1);
-        assert_eq!(state.targets[0].8, 0);
-        assert_eq!(state.targets[0].9, "active");
+        assert_eq!(state.targets[0].5, 1);
+        assert_eq!(state.targets[0].6, 0);
+        assert_eq!(state.targets[0].7, "active");
         assert_eq!(state.occurrences, vec![(1, 1)]);
         assert_eq!(state.recheck_offsets, vec![1, 3, 7]);
         cleanup(path);
@@ -196,9 +182,9 @@ mod tests {
         seed_existing_target(&env.connection().unwrap(), 2);
         new_call(&env, Some("et-existing"));
         let state = snapshot(&env);
-        assert_eq!(state.targets[0].7, 3);
-        assert_eq!(state.targets[0].8, 0);
-        assert_eq!(state.targets[0].9, "recheck");
+        assert_eq!(state.targets[0].5, 3);
+        assert_eq!(state.targets[0].6, 0);
+        assert_eq!(state.targets[0].7, "recheck");
         assert_eq!(state.occurrences, vec![(1, 1)]);
         cleanup(path);
     }
@@ -209,9 +195,9 @@ mod tests {
         seed_existing_target(&env.connection().unwrap(), 4);
         new_call(&env, Some("et-existing"));
         let state = snapshot(&env);
-        assert_eq!(state.targets[0].7, 5);
-        assert_eq!(state.targets[0].8, 1);
-        assert_eq!(state.targets[0].9, "recheck");
+        assert_eq!(state.targets[0].5, 5);
+        assert_eq!(state.targets[0].6, 1);
+        assert_eq!(state.targets[0].7, "recheck");
         cleanup(path);
     }
 }
@@ -228,43 +214,28 @@ pub(crate) struct LogErrorOccurrenceInput {
     pub core_category: learning_core::CoreErrorCategory,
     pub original_production: String,
     pub corrected_production: String,
-    pub pack_error_code: Option<String>,
+    pub error_code: Option<String>,
     pub explanation: Option<String>,
     pub error_target_id: Option<String>,
     pub communicative_impact: learning_core::CommunicativeImpact,
 }
 
-pub(crate) fn log_error_occurrence(
-    registry: &crate::BuiltInPackRegistry,
-    env: &Env,
-    input: LogErrorOccurrenceInput,
-) -> Result<String> {
+pub(crate) fn log_error_occurrence(env: &Env, input: LogErrorOccurrenceInput) -> Result<String> {
     let mut database = env.connection()?;
     let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-    let pack_id: Option<String> = transaction
+    let profile_exists: Option<()> = transaction
         .query_row(
-            "SELECT language_pack_id
-             FROM learner_language_profiles
-             WHERE id = ?1",
+            "SELECT 1 FROM learner_language_profiles WHERE id = ?1",
             params![input.language_profile_id],
-            |row| row.get(0),
+            |_| Ok(()),
         )
         .optional()?;
-    let Some(pack_id) = pack_id else {
+    let Some(()) = profile_exists else {
         return Err(crate::Error::operation(
             404,
             "not_found",
             "unknown profile",
-            serde_json::Value::Null,
-        ));
-    };
-
-    let Some(manifest) = language_pack_registry::manifest(registry, &pack_id) else {
-        return Err(crate::Error::operation(
-            409,
-            "pack_unavailable",
-            "active language pack is not available",
             serde_json::Value::Null,
         ));
     };
@@ -324,10 +295,8 @@ pub(crate) fn log_error_occurrence(
             &transaction,
             &target_id,
             &input.language_profile_id,
-            &pack_id,
-            manifest.version,
             crate::repositories::core_error_category_db(&input.core_category),
-            input.pack_error_code.as_deref(),
+            input.error_code.as_deref(),
             &input.original_production,
             &input.corrected_production,
             input.explanation.as_deref(),

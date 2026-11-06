@@ -3,7 +3,6 @@
 //! Field names must match API JSON exactly — round-trip tests enforce it.
 
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// Result of the `health` operation.
 ///
@@ -80,28 +79,11 @@ impl std::fmt::Display for ApiError {
 
 impl std::error::Error for ApiError {}
 
-/// Language pack summary (subset of the manifest JSON).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LanguagePackDto {
-    /// Stable pack ID.
-    pub id: String,
-    /// Human-readable name.
-    pub display_name: String,
-    /// Target locale.
-    pub target_locale: String,
-    /// Supported source languages.
-    pub supported_source_languages: Vec<String>,
-    /// Default source language.
-    pub default_source_language: String,
-}
-
 /// Language profile (mirrors `learning-core` serde shape).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LanguageProfileDto {
     /// Profile ID.
     pub id: String,
-    /// Selected pack.
-    pub language_pack_id: String,
     /// Instruction language.
     pub source_language: String,
     /// Target locale.
@@ -114,6 +96,28 @@ pub struct LanguageProfileDto {
     pub status: String,
     /// Default profile flag.
     pub is_default: bool,
+}
+
+/// Fixed learning-item status counters.
+///
+/// The wire shape remains an object keyed by the closed status enum while
+/// storage stays fixed-size and allocation-free.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemStatusCountsDto {
+    /// Candidate items.
+    pub candidate: u32,
+    /// Introduced items.
+    pub introduced: u32,
+    /// Items in active learning.
+    pub learning: u32,
+    /// Items waiting for transfer evidence.
+    pub transfer_pending: u32,
+    /// Provisionally mastered items.
+    pub provisionally_mastered: u32,
+    /// Mastered items.
+    pub mastered: u32,
+    /// Suspended items.
+    pub suspended: u32,
 }
 
 /// `get_dashboard` operation result (08-local-rpc.md §2). Exceptions first.
@@ -138,7 +142,7 @@ pub struct DashboardDto {
     /// Next lesson goal from the last completed lesson.
     pub next_lesson_goal: Option<String>,
     /// Item counts by status.
-    pub items_by_status: BTreeMap<String, u32>,
+    pub items_by_status: ItemStatusCountsDto,
     /// Open adaptive recommendations (detail lines, newest first).
     #[serde(default)]
     pub open_recommendations: Vec<String>,
@@ -332,14 +336,14 @@ pub struct ForecastDto {
     pub due_per_day: Vec<u32>,
 }
 
-/// Answer evaluation verdict from the active pack.
+/// Answer evaluation verdict.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvaluationDto {
     /// `correct` | `acceptable_variant` | `incorrect`.
     pub verdict: String,
     /// Which accepted answer matched.
     pub matched_answer: Option<String>,
-    /// Optional pack feedback.
+    /// Optional evaluation feedback.
     pub feedback: Option<String>,
 }
 
@@ -350,8 +354,8 @@ pub struct ErrorTargetDto {
     pub id: String,
     /// Core category.
     pub core_category: String,
-    /// Pack taxonomy code.
-    pub pack_error_code: Option<String>,
+    /// Optional detailed error code.
+    pub error_code: Option<String>,
     /// Learner's production.
     pub original_production: String,
     /// Corrected form.
@@ -399,7 +403,7 @@ mod tests {
     #[test]
     fn queue_card_parses_api_shape() {
         let dto: QueueCardDto = serde_json::from_str(
-            r#"{"accepted_answers":[],"answer":"a","answer_evaluation_mode":"exact",
+            r#"{"accepted_answers":[],"answer":"a",
                 "card_id":"crd_1","explanation":null,"intent":"production",
                 "prior_state_hash":"h","prompt":"p","prompt_language":"ru",
                 "pronunciation_note":null,"status":"new"}"#,
