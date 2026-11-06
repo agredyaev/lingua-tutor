@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/agredyaev/lingua-tutor/compare/v0.1.4...v0.1.5) (2026-11-06)
+
+
+### Bug Fixes
+
+* **release:** build platform archives in release workflow ([018f33c](https://github.com/agredyaev/lingua-tutor/commit/018f33c5c10bbfb45b351654d588f09552421600))
+
 ## [0.1.4](https://github.com/agredyaev/lingua-tutor/compare/v0.1.3...v0.1.4) (2026-11-06)
 
 
