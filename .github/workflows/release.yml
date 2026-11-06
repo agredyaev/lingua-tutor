@@ -97,6 +97,7 @@ jobs:
             "lingua-tutor-v$version-linux-x64.zip"
             "lingua-tutor-v$version-linux-aarch64.zip"
             "lingua-tutor-v$version-darwin-arm64.zip"
+            "lingua-tutor-v$version-windows-x64.zip"
             SHA256SUMS
           )
           for asset in "${expected[@]}"; do
