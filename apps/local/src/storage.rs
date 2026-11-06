@@ -40,8 +40,7 @@ fn open_private_new(path: &Path) -> std::io::Result<fs::File> {
 fn restrict_private_file(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-            .map_err(|e| e.to_string())?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
     }
     #[cfg(not(unix))]
     {
