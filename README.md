@@ -10,11 +10,33 @@ Local-first adaptive language tutor with one SQLite source of truth.
 
 ## Install
 
+From source:
+
 ```sh
 cargo install --path apps/local --bin lingua-tutor --locked
 ```
 
 Cargo installs `lingua-tutor` into its normal binary directory (typically `~/.cargo/bin`).
+
+Prebuilt release archives are published for Linux x64, Linux arm64, macOS arm64, and Windows x64.
+
+## Update
+
+Project data is stored separately under `<project>/.lingua-tutor/`, so replacing the executable does not replace or reset the learner database.
+
+If installed from source, update the checkout and reinstall:
+
+```sh
+git pull
+cargo install --path apps/local --bin lingua-tutor --locked --force
+```
+
+If using a prebuilt release, download the archive for the new version and replace only the executable:
+
+- Linux/macOS: replace `lingua-tutor`.
+- Windows x64: replace `lingua-tutor.exe`.
+
+Before an upgrade, `lingua-tutor backup` can be used to create an explicit database backup.
 
 ## Run
 

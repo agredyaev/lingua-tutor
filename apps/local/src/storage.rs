@@ -4,6 +4,7 @@ use crate::Env;
 use rusqlite::{Connection, MAIN_DB, OptionalExtension};
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -22,11 +23,30 @@ const SCHEMA_NAME: &str = "0007_semantic_metadata.sql";
 
 fn private_dir(path: &Path) -> Result<(), String> {
     let mut builder = DirBuilder::new();
-    builder
-        .recursive(true)
-        .mode(0o700)
-        .create(path)
-        .map_err(|e| e.to_string())
+    builder.recursive(true);
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder.create(path).map_err(|e| e.to_string())
+}
+
+fn open_private_new(path: &Path) -> std::io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    options.open(path)
+}
+
+fn restrict_private_file(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
 }
 
 fn table_exists(connection: &Connection, name: &str) -> Result<bool, String> {
@@ -202,7 +222,7 @@ fn migrate_v6_to_v7(connection: &Connection) -> Result<(), String> {
 pub fn open(path: &Path) -> Result<Connection, String> {
     private_dir(path.parent().ok_or("database path has no parent")?)?;
     let connection = Connection::open(path).map_err(|e| e.to_string())?;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+    restrict_private_file(path)?;
     connection
         .busy_timeout(Duration::from_secs(5))
         .map_err(|e| e.to_string())?;
@@ -293,12 +313,7 @@ fn signing_key(dir: &Path) -> Result<String, String> {
             uuid::Uuid::new_v4().simple(),
             uuid::Uuid::new_v4().simple()
         );
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-        {
+        match open_private_new(&path) {
             Ok(mut file) => file
                 .write_all(value.as_bytes())
                 .map_err(|e| e.to_string())?,
@@ -343,12 +358,7 @@ pub fn backup(path: &Path) -> Result<PathBuf, String> {
         uuid::Uuid::new_v4().simple()
     );
     let target = dir.join(name);
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&target)
-        .map_err(|e| e.to_string())?;
+    open_private_new(&target).map_err(|e| e.to_string())?;
     if let Err(error) = source.backup(MAIN_DB, &target, None) {
         let _ = fs::remove_file(&target);
         return Err(error.to_string());
@@ -446,8 +456,12 @@ mod tests {
 
         let existing = dir.join("existing");
         fs::create_dir(&existing).unwrap();
-        fs::set_permissions(&existing, fs::Permissions::from_mode(0o755)).unwrap();
+        #[cfg(unix)]
+        {
+            fs::set_permissions(&existing, fs::Permissions::from_mode(0o755)).unwrap();
+        }
         open(&existing.join("child.sqlite3")).unwrap();
+        #[cfg(unix)]
         assert_eq!(
             fs::metadata(&existing).unwrap().permissions().mode() & 0o777,
             0o755
