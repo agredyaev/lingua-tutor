@@ -160,6 +160,13 @@ pub(super) fn lesson_model(seed: u8) {
     });
     assert!(error_capacity_hit);
 
+    let mut mismatched = result.clone();
+    mismatched.language_profile_id = "other-profile".to_owned();
+    assert!(matches!(
+        plan_lesson_completion(&mismatched, &state),
+        Err(LessonPlanError::ProfileMismatch(_))
+    ));
+
     result.mastery_changes[0].new_status = match seed % 7 {
         0 => learning_core::LearningItemStatus::Candidate,
         1 => learning_core::LearningItemStatus::Introduced,
@@ -170,4 +177,12 @@ pub(super) fn lesson_model(seed: u8) {
         _ => learning_core::LearningItemStatus::Suspended,
     };
     let _ = plan_lesson_completion(&result, &state);
+
+    set_lesson_existing(&mut state, "lesson-fuzz-open");
+    let existing = plan_lesson_completion(&result, &state).expect("existing lesson plan");
+    assert_eq!(existing.lesson_kind, LessonPlanKind::CompleteExisting);
+
+    state.duplicate_import = true;
+    let duplicate = plan_lesson_completion(&result, &state).expect("duplicate import plan");
+    assert_eq!(duplicate.lesson_kind, LessonPlanKind::DuplicateNoop);
 }

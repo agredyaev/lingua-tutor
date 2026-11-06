@@ -122,7 +122,7 @@ test("create profile, import lesson, review the card", async ({ page }) => {
 
   // Dashboard reflects the day.
   await page.goto("/dashboard");
-  await expect(page.getByText(/reviews today/)).toBeVisible();
+  await expect(page.getByText(/Reviewed today/)).toBeVisible();
 });
 
 
@@ -268,10 +268,10 @@ test("card can be suspended and restored through the browser", async ({ page }) 
   await expect(page.getByRole("heading", { name: "Попросите счёт" })).toBeVisible();
 
   await page.getByRole("button", { name: "Suspend" }).click();
-  await expect(page.getByText(/status suspended/)).toBeVisible();
+  await expect(page.getByText("suspended", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Restore" }).click();
-  await expect(page.getByText(/status review/)).toBeVisible();
+  await expect(page.getByText("review", { exact: true })).toBeVisible();
 });
 
 test("offline review grade is queued and replayed after reconnect", async ({ page }) => {
