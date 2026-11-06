@@ -7,9 +7,27 @@
 mod card;
 
 pub use card::{CardActor, CardIntent, CardStatus, card_content_hash, card_content_hash_refs};
-pub use language_pack_api::CoreErrorCategory;
-
 use serde::{Deserialize, Serialize};
+
+/// Closed, language-neutral error category set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoreErrorCategory {
+    /// Morphology, agreement, conjugation, syntax rules.
+    Grammar,
+    /// Wrong or unnatural word/phrase choice.
+    Vocabulary,
+    /// Constituent order.
+    WordOrder,
+    /// Formality/politeness mismatch.
+    Register,
+    /// Spoken-form errors captured as text notes.
+    Pronunciation,
+    /// Spelling, diacritics, punctuation.
+    Orthography,
+    /// Anything not placed more precisely.
+    Other,
+}
 
 /// UTC instant represented as Unix seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

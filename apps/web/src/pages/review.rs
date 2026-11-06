@@ -204,8 +204,13 @@ pub fn ReviewPage() -> impl IntoView {
 
     view! {
         <Page>
-            <h1>"Review"</h1>
-            <Transition fallback=|| view! { <p>"Loading queue…"</p> }>
+            <header class="page-header">
+                <div>
+                    <p class="eyebrow">"Focused recall"</p>
+                    <h1>"Review"</h1>
+                </div>
+            </header>
+            <Transition fallback=|| view! { <p class="loading">"Loading review queue…"</p> }>
                 {move || {
                     session
                         .get()
@@ -286,10 +291,13 @@ fn CardView(
     let handle = StoredValue::new((card.card_id.clone(), card.prior_state_hash.clone()));
     let accepted = card.accepted_answers.clone();
     view! {
-        <div class="review-card">
-            <p class="progress">{format!("{} / {total}", index + 1)}</p>
-            <p class="intent">{card.intent.clone()}</p>
-            <p class="prompt">{card.prompt.clone()}</p>
+        <div class="review-stage">
+            <div class="review-card">
+                <div class="review-card-header">
+                    <p class="progress">{format!("{} / {total}", index + 1)}</p>
+                    <span class="badge">{card.intent.clone()}</span>
+                </div>
+                <p class="prompt">{card.prompt.clone()}</p>
             <Show
                 when=move || revealed.get()
                 fallback=move || {
@@ -340,14 +348,15 @@ fn CardView(
                         .collect::<Vec<_>>()}
                 </div>
             </Show>
-            <button
-                class="undo"
-                on:click=move |_| {
-                    undo.dispatch(());
-                }
-            >
-                "Undo last grade"
-            </button>
+                <button
+                    class="undo"
+                    on:click=move |_| {
+                        undo.dispatch(());
+                    }
+                >
+                    "Undo last grade"
+                </button>
+            </div>
         </div>
     }
 }
@@ -370,27 +379,45 @@ pub fn SummaryPage() -> impl IntoView {
     });
     view! {
         <Page>
-            <h1>"Today"</h1>
-            <Suspense fallback=|| view! { <p>"Loading…"</p> }>
+            <header class="page-header">
+                <div>
+                    <p class="eyebrow">"Review session"</p>
+                    <h1>"Today"</h1>
+                </div>
+            </header>
+            <Suspense fallback=|| view! { <p class="loading">"Loading summary…"</p> }>
                 {move || {
                     summary
                         .get()
                         .map(|result| match result {
                             Ok(Some(s)) => {
                                 view! {
-                                    <ul>
-                                        <li>{format!("{} reviews", s.reviews_today)}</li>
-                                        <li>
-                                            {format!(
-                                                "again {} · hard {} · good {} · easy {}",
-                                                s.grade_distribution.again,
-                                                s.grade_distribution.hard,
-                                                s.grade_distribution.good,
-                                                s.grade_distribution.easy,
-                                            )}
-                                        </li>
-                                        <li>{format!("{} min", s.review_seconds_today / 60)}</li>
-                                    </ul>
+                                    <div class="metric-grid review-summary-grid">
+                                        <div class="metric-card">
+                                            <span class="metric-value">{s.reviews_today}</span>
+                                            <span class="metric-label">"Reviews"</span>
+                                        </div>
+                                        <div class="metric-card">
+                                            <span class="metric-value">{s.review_seconds_today / 60}</span>
+                                            <span class="metric-label">"Minutes"</span>
+                                        </div>
+                                        <div class="metric-card">
+                                            <span class="metric-value">{s.grade_distribution.again}</span>
+                                            <span class="metric-label">"Again"</span>
+                                        </div>
+                                        <div class="metric-card">
+                                            <span class="metric-value">{s.grade_distribution.hard}</span>
+                                            <span class="metric-label">"Hard"</span>
+                                        </div>
+                                        <div class="metric-card">
+                                            <span class="metric-value">{s.grade_distribution.good}</span>
+                                            <span class="metric-label">"Good"</span>
+                                        </div>
+                                        <div class="metric-card">
+                                            <span class="metric-value">{s.grade_distribution.easy}</span>
+                                            <span class="metric-label">"Easy"</span>
+                                        </div>
+                                    </div>
                                 }
                                     .into_any()
                             }
@@ -429,8 +456,13 @@ pub fn StatsPage() -> impl IntoView {
     });
     view! {
         <Page>
-            <h1>"Stats"</h1>
-            <Suspense fallback=|| view! { <p>"Loading…"</p> }>
+            <header class="page-header">
+                <div>
+                    <p class="eyebrow">"Review analytics"</p>
+                    <h1>"Progress"</h1>
+                </div>
+            </header>
+            <Suspense fallback=|| view! { <p class="loading">"Loading stats…"</p> }>
                 {move || {
                     stats
                         .get()
@@ -447,9 +479,15 @@ pub fn StatsPage() -> impl IntoView {
                                     .unwrap_or_default();
                                 let max_due = due.iter().copied().max().unwrap_or(0).max(1);
                                 view! {
-                                    <h2>"Retention (28 days)"</h2>
-                                    <p>
-                                        {overall
+                                    <section class="panel stats-panel">
+                                        <div class="section-heading">
+                                            <div>
+                                                <p class="section-kicker">"Memory"</p>
+                                                <h2>"Retention · 28 days"</h2>
+                                            </div>
+                                        </div>
+                                        <p class="stats-overall">
+                                            {overall
                                             .map_or_else(
                                                 || "No reviews yet.".to_owned(),
                                                 |r| {
@@ -460,8 +498,8 @@ pub fn StatsPage() -> impl IntoView {
                                                     )
                                                 },
                                             )}
-                                    </p>
-                                    <ul class="stats-weeks">
+                                        </p>
+                                        <ul class="stats-weeks">
                                         {weeks
                                             .iter()
                                             .map(|week| {
@@ -495,9 +533,16 @@ pub fn StatsPage() -> impl IntoView {
                                                 }
                                             })
                                             .collect::<Vec<_>>()}
-                                    </ul>
-                                    <h2>"Due next 7 days"</h2>
-                                    <ul class="stats-forecast">
+                                        </ul>
+                                    </section>
+                                    <section class="panel stats-panel">
+                                        <div class="section-heading">
+                                            <div>
+                                                <p class="section-kicker">"Workload"</p>
+                                                <h2>"Due next 7 days"</h2>
+                                            </div>
+                                        </div>
+                                        <ul class="stats-forecast">
                                         {due
                                             .iter()
                                             .enumerate()
@@ -515,7 +560,8 @@ pub fn StatsPage() -> impl IntoView {
                                                 }
                                             })
                                             .collect::<Vec<_>>()}
-                                    </ul>
+                                        </ul>
+                                    </section>
                                 }
                                     .into_any()
                             }

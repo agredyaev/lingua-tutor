@@ -17,31 +17,26 @@ mod tests {
         let connection = crate::storage::open(&path).unwrap();
         connection
             .execute_batch(
-                r#"INSERT INTO language_packs
-                (id, package_name, version, contract_version, target_language,
-                 target_locale, display_name, installed_at, updated_at)
-             VALUES
-                ('es-ES', 'language-pack-es-es', '0.2.0', 1, 'es', 'es-ES',
-                 'Spanish (Spain)', '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
+                r#"
              INSERT INTO learner_profile (id, created_at, updated_at)
              VALUES ('learner-1', '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
              INSERT INTO learner_language_profiles
-                (id, learner_id, language_pack_id, source_language, target_locale,
+                (id, learner_id, source_language, target_locale,
                  created_at, updated_at)
              VALUES
-                ('llp-1', 'learner-1', 'es-ES', 'ru', 'es-ES',
+                ('llp-1', 'learner-1', 'ru', 'es-ES',
                  '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
              INSERT INTO cards
-                (id, learner_language_profile_id, language_pack_id, language_pack_version,
+                (id, learner_language_profile_id,
                  intent, status, prompt, prompt_language, answer, answer_language,
-                 accepted_answers_json, answer_evaluation_mode, creation_reason,
+                 accepted_answers_json, creation_reason,
                  content_hash, content_version, created_by, created_at, updated_at)
              VALUES
-                ('card-a', 'llp-1', 'es-ES', '0.2.0', 'production', 'review',
-                 'a', 'ru', 'a', 'es-ES', '[]', 'exact', 'seed', 'h-a', 1,
+                ('card-a', 'llp-1', 'production', 'review',
+                 'a', 'ru', 'a', 'es-ES', '[]', 'seed', 'h-a', 1,
                  'tutor', '2026-10-15T00:00:00Z', '2026-10-15T00:00:00Z'),
-                ('card-b', 'llp-1', 'es-ES', '0.2.0', 'production', 'candidate',
-                 'b', 'ru', 'b', 'es-ES', '[]', 'exact', 'seed', 'h-b', 1,
+                ('card-b', 'llp-1', 'production', 'candidate',
+                 'b', 'ru', 'b', 'es-ES', '[]', 'seed', 'h-b', 1,
                  'tutor', '2026-10-15T00:00:00Z', '2026-10-15T00:00:00Z');"#,
             )
             .unwrap();
@@ -163,16 +158,13 @@ pub(crate) fn suspend_cards_json(
                 serde_json::Value::Null,
             ));
         };
-        let row: Option<(String, String, String)> = transaction
-            .query_row(
-                "SELECT status, language_pack_id, language_pack_version
-                 FROM cards WHERE id=?1",
-                params![id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
+        let row: Option<String> = transaction
+            .query_row("SELECT status FROM cards WHERE id=?1", params![id], |row| {
+                row.get(0)
+            })
             .optional()?;
 
-        let Some((status, pack_id, pack_version)) = row else {
+        let Some(status) = row else {
             return Err(crate::Error::operation(
                 404,
                 "not_found",
@@ -203,8 +195,6 @@ pub(crate) fn suspend_cards_json(
             None,
             "user",
             reason.unwrap_or("user action"),
-            &pack_id,
-            &pack_version,
             "applied",
             &at,
         )?;

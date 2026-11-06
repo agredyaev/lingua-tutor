@@ -5,6 +5,8 @@ use serde::Serialize;
 
 const MAX_TASKS: usize = 24;
 const MAX_FOCUS: usize = 32;
+pub(crate) const DEFAULT_CANDIDATE_LIMIT: usize = MAX_TASKS;
+pub(crate) const DEFAULT_FOCUS_LIMIT: usize = MAX_FOCUS;
 const MAX_CONTEXTS: usize = adaptation::MAX_CAPABILITY_OBSERVATIONS;
 
 #[derive(Clone, Copy, Default)]
@@ -75,6 +77,7 @@ struct FocusColumns {
     families: [TextRef; MAX_FOCUS * MAX_CONTEXTS],
     weighted_success_rate: [Option<f64>; MAX_FOCUS],
     evidence_strength: [f64; MAX_FOCUS],
+    independent_evidence_episodes: [u16; MAX_FOCUS],
     distinct_contexts: [u16; MAX_FOCUS],
     distinct_families: [u16; MAX_FOCUS],
 }
@@ -95,6 +98,7 @@ fn new_focus_columns() -> FocusColumns {
         families: [TextRef::default(); MAX_FOCUS * MAX_CONTEXTS],
         weighted_success_rate: [None; MAX_FOCUS],
         evidence_strength: [0.0; MAX_FOCUS],
+        independent_evidence_episodes: [0; MAX_FOCUS],
         distinct_contexts: [0; MAX_FOCUS],
         distinct_families: [0; MAX_FOCUS],
     }
@@ -112,6 +116,7 @@ fn copy_focus_columns(data: &mut FocusColumns, from: usize, to: usize) {
     data.family_count[to] = data.family_count[from];
     data.weighted_success_rate[to] = data.weighted_success_rate[from];
     data.evidence_strength[to] = data.evidence_strength[from];
+    data.independent_evidence_episodes[to] = data.independent_evidence_episodes[from];
     data.distinct_contexts[to] = data.distinct_contexts[from];
     data.distinct_families[to] = data.distinct_families[from];
     for offset in 0..MAX_CONTEXTS {
@@ -146,6 +151,21 @@ fn insert_candidate(
     candidate: adaptation::TaskCandidateView<'_>,
     limit: usize,
 ) {
+    for index in 0..columns.len.min(limit) {
+        if columns.item_key[index] == item_key
+            && columns.expected_evidence[index] == candidate.expected_evidence
+        {
+            if !candidate_precedes(candidate, columns, index, text) {
+                return;
+            }
+            for shift in index..columns.len.saturating_sub(1) {
+                copy_candidate_columns(columns, shift + 1, shift);
+            }
+            columns.len = columns.len.saturating_sub(1);
+            break;
+        }
+    }
+
     let mut position = columns.len.min(limit);
     for index in 0..columns.len.min(limit) {
         if candidate_precedes(candidate, columns, index, text) {
@@ -256,6 +276,7 @@ fn insert_focus(
     columns.family_count[position] = u8::try_from(family_count).unwrap_or(u8::MAX);
     columns.weighted_success_rate[position] = thread.estimate.weighted_success_rate;
     columns.evidence_strength[position] = thread.estimate.evidence_strength;
+    columns.independent_evidence_episodes[position] = thread.estimate.independent_evidence_episodes;
     columns.distinct_contexts[position] = thread.estimate.distinct_success_contexts;
     columns.distinct_families[position] = thread.estimate.distinct_success_families;
 
@@ -546,10 +567,16 @@ pub(crate) fn selection_tutor_tasks(
                     format_selected_focus(&selection.focus, &selection.text, fi);
                 let (action, reason) = entry.candidate.map_or_else(
                     || {
-                        (
-                            adaptation::default_action(entry.capability).to_owned(),
-                            rationale.to_owned(),
-                        )
+                        let action = if entry.capability
+                            == adaptation::CapabilityKind::SpontaneousProduction
+                            && (selection.focus.independent_evidence_episodes[fi] < 3
+                                || selection.focus.evidence_strength[fi] < 0.45)
+                        {
+                            "diagnostic_spontaneous"
+                        } else {
+                            adaptation::default_action(entry.capability)
+                        };
+                        (action.to_owned(), rationale.to_owned())
                     },
                     |ci| {
                         (
@@ -596,6 +623,8 @@ pub(crate) fn selection_tutor_tasks(
                     None,
                 )
             };
+        let success_criterion =
+            adaptation::criterion_for_action(&action, entry.capability).to_owned();
         output.push(adaptation::TutorTask {
             action,
             learning_item_id: id,
@@ -609,7 +638,7 @@ pub(crate) fn selection_tutor_tasks(
             successful_context_families: families,
             next_context_policy: policy,
             rationale,
-            success_criterion: adaptation::criterion(entry.capability).to_owned(),
+            success_criterion,
         });
     }
     output
@@ -647,6 +676,128 @@ mod tests {
             spontaneous_production: estimate,
             transfer: estimate,
         }
+    }
+
+    #[test]
+    fn alternative_actions_for_one_capability_do_not_consume_multiple_top_k_slots() {
+        let mut prompt_gap = item("li-prompt-gap", 0.8);
+        prompt_gap.listening.qualified_success_streak = 2;
+        prompt_gap.prompted_production.weighted_success_rate = Some(0.95);
+        prompt_gap.spontaneous_production.attempts = 4;
+        prompt_gap.spontaneous_production.weighted_success_rate = Some(0.20);
+        prompt_gap.spontaneous_production.unaided_success_rate = Some(0.20);
+        prompt_gap.spontaneous_production.evidence_strength = 0.8;
+        prompt_gap.spontaneous_production.effective_evidence_weight = 5.0;
+        prompt_gap
+            .spontaneous_production
+            .independent_evidence_episodes = 3;
+
+        let mut automaticity = item("li-automaticity", 0.8);
+        automaticity.listening.qualified_success_streak = 2;
+        automaticity.spontaneous_production.attempts = 4;
+        automaticity.spontaneous_production.weighted_success_rate = Some(0.90);
+        automaticity.spontaneous_production.unaided_success_rate = Some(0.90);
+        automaticity.spontaneous_production.evidence_strength = 0.8;
+        automaticity
+            .spontaneous_production
+            .effective_evidence_weight = 5.0;
+        automaticity
+            .spontaneous_production
+            .independent_evidence_episodes = 4;
+        automaticity.spontaneous_production.qualified_success_streak = 2;
+        automaticity.spontaneous_production.latency_weighted_millis = Some(9_000);
+        automaticity
+            .spontaneous_production
+            .latency_evidence_episodes = 2;
+        automaticity.transfer.attempts = 4;
+        automaticity.transfer.weighted_success_rate = Some(0.90);
+        automaticity.transfer.unaided_success_rate = Some(0.90);
+        automaticity.transfer.evidence_strength = 0.8;
+        automaticity.transfer.independent_evidence_episodes = 4;
+        automaticity.transfer.qualified_success_streak = 2;
+        automaticity.transfer.distinct_success_families = 3;
+
+        let now = 2 * 86_400;
+        let mut selection = new_selection(2, 8);
+        observe_selection(
+            &mut selection,
+            adaptation::item_capability_view(&prompt_gap),
+            "reduce_prompt_dependence",
+            now,
+        );
+        observe_selection(
+            &mut selection,
+            adaptation::item_capability_view(&automaticity),
+            "reduce_prompt_dependence",
+            now,
+        );
+
+        let tasks = selection_tutor_tasks(&selection, 8);
+        assert!(
+            tasks.iter().any(|task| {
+                task.learning_item_id == "li-automaticity" && task.action == "automaticity_drill"
+            }),
+            "top-K must keep one best candidate per item/capability before competing across items"
+        );
+    }
+
+    #[test]
+    fn candidate_top_k_cannot_erase_required_diagnostic_action() {
+        let mut intervention = item("li-intervention", 0.8);
+        intervention.listening.qualified_success_streak = 2;
+        intervention.prompted_production.weighted_success_rate = Some(0.95);
+        intervention.spontaneous_production.attempts = 4;
+        intervention.spontaneous_production.weighted_success_rate = Some(0.30);
+        intervention.spontaneous_production.unaided_success_rate = Some(0.30);
+        intervention.spontaneous_production.evidence_strength = 0.8;
+        intervention
+            .spontaneous_production
+            .independent_evidence_episodes = 3;
+
+        let mut uncertain = item("li-uncertain", 0.20);
+        uncertain.listening.qualified_success_streak = 2;
+        uncertain.spontaneous_production.attempts = 1;
+        uncertain.spontaneous_production.weighted_success_rate = Some(0.50);
+        uncertain.spontaneous_production.unaided_success_rate = Some(0.50);
+        uncertain.spontaneous_production.evidence_strength = 0.20;
+        uncertain
+            .spontaneous_production
+            .independent_evidence_episodes = 1;
+
+        let now = 2 * 86_400;
+        let mut selection = new_selection(1, 4);
+        observe_selection(
+            &mut selection,
+            adaptation::item_capability_view(&intervention),
+            "reduce_prompt_dependence",
+            now,
+        );
+        observe_selection(
+            &mut selection,
+            adaptation::item_capability_view(&uncertain),
+            "reduce_prompt_dependence",
+            now,
+        );
+
+        let tasks = selection_tutor_tasks(&selection, 8);
+        let task = tasks
+            .iter()
+            .find(|task| {
+                task.learning_item_id == "li-uncertain"
+                    && task.capability == adaptation::CapabilityKind::SpontaneousProduction
+            })
+            .unwrap();
+
+        assert_eq!(
+            task.action, "diagnostic_spontaneous",
+            "candidate top-K pressure must not turn a required diagnostic into retrieval practice"
+        );
+        assert!(
+            task.success_criterion.contains("measure")
+                && task.success_criterion.contains("assistance_level=0")
+                && !task.success_criterion.contains("then delayed retrieval"),
+            "diagnostic action must tell the LLM to measure, not silently turn the probe into teaching"
+        );
     }
 
     #[test]

@@ -64,8 +64,6 @@ flowchart LR
   subgraph Compute["First-party computation crates"]
     Adapt["adaptation"]
     Review["review-engine"]
-    Registry["language-pack-registry"]
-    Pack["language-packs/es-es"]
     Contract["tutor-contract"]
     Core["learning-core"]
   end
@@ -80,8 +78,6 @@ flowchart LR
   Tunnel <-->|HTTPS via system curl| OpenAI
   Ops --> Adapt
   Ops --> Review
-  Ops --> Registry
-  Registry --> Pack
   Ops --> Contract
   Ops --> Core
   SQLite --> Backup
@@ -98,8 +94,6 @@ flowchart TD
   project path + startup + secrets"]
   Env["runtime.rs
   Env(db_path, signing_key)"]
-  Packs["built_in_language_packs()
-  dense concrete registry"]
   Server["server.rs
   decode/admit JSON-RPC"]
   Tunnel["tunnel.rs
@@ -117,11 +111,8 @@ flowchart TD
   scalar scheduling/replay passes"]
   Adapt["adaptation
   column/index based planning/calibration"]
-  Es["es-es
-  explicit pack passes"]
 
   Main -.->|constructs| Env
-  Main -.->|constructs| Packs
   Main --> Server
   Main --> Tunnel
   Server --> ReadHandlers
@@ -135,13 +126,12 @@ flowchart TD
   Passes --> DB
   Passes --> Review
   Passes --> Adapt
-  Passes --> Es
 ```
 
 Structural observations:
 - `apps/local/src/old` and `crates/application` are absent.
 - There is one native business-write implementation: `operations`.
-- `LanguagePack` behavior trait/dynamic dispatch is absent; production uses a concrete dense registry and explicit pack passes.
+- Executable language packs and the registry are absent; language profile metadata does not select behavior.
 - `ReviewScheduler` trait/dynamic dispatch is absent; scheduler selection is explicit integer/scalar dispatch.
 - `handlers/*` remains necessary where it directly projects read/wire results; delegation-only write paths have been removed.
 - `repositories/*` contains SQL text/scalar mapping used by both reads and passes. Any further merge/removal must be justified per operation rather than by name.
@@ -179,7 +169,7 @@ No browser object is authoritative for persisted scheduling state.
 | lesson completion | `LessonResult` → preload columns → `LessonPlanState` SoA/index passes → bounded write buffers → SQLite | request-local arrays/text arenas; stable indices | DOD path active |
 | review | persisted scalar schedule columns → `review-engine` pass → scalar result → SQLite | no scheduler object graph | DOD path active |
 | adaptation | SQLite/context columns → request-local indexed/column buffers → explicit rules | request-local arrays / CSR-like prefix ranges where sparse | DOD path active |
-| language behavior | pack ID → dense registry index → concrete es-ES data → free processing functions | immutable startup pack data | no trait dispatch |
+| language behavior | profile locale/source metadata + tutor contract → validated structured result | no executable language state in core | language-neutral runtime |
 | offline replay | bounded `Vec<PendingEvent>` at browser storage boundary → ordered RPC replay | max 50 wire records | boundary DTO, not domain authority |
 | strict CI | source + tests → fmt/clippy/test/trunk/deny | no runtime state | local compile/test/lint/build gates pass |
 | fuzz supply chain | `fuzz/Cargo.toml + fuzz/Cargo.lock` → cargo-deny | separate workspace | lock/policy pass; all five fuzz targets smoke-tested |

@@ -9,12 +9,16 @@ pub struct RecentLearningSignals {
     pub lessons: u8,
     /// Fraction of active lesson time spent speaking, from 0 to 1.
     pub speaking_ratio: Option<f64>,
+    /// Number of observed recall attempts contributing to the prompt-dependence signal.
+    pub recall_attempts: u16,
+    /// Number of distinct recent lessons that contained at least one recall attempt.
+    pub recall_lessons: u8,
     /// Unaided recalls divided by all recall attempts, from 0 to 1.
     pub unaided_recall_rate: Option<f64>,
-    /// Mean listening score, from 0 to 1.
-    pub listening_score: Option<f64>,
-    /// Mean observed answer latency in milliseconds.
-    pub avg_answer_millis: Option<u32>,
+    /// Number of explicit communicative-task attempts under the current strong rubric.
+    pub communicative_task_attempts: u16,
+    /// Number of distinct recent lessons containing strong-rubric task attempts.
+    pub communicative_task_lessons: u8,
     /// Fraction of explicit communicative tasks completed successfully.
     pub communicative_task_success_rate: Option<f64>,
     /// Mean tutor-estimated learner confidence, from 0 to 1. Diagnostic only.
@@ -28,8 +32,6 @@ pub struct PlannerPreferencesView<'a> {
     pub max_new_items_per_lesson: Option<u8>,
     /// Optional preferred difficulty.
     pub preferred_difficulty: Option<&'a str>,
-    /// Prioritized scenarios borrowed from the caller.
-    pub priority_scenarios: &'a [&'a str],
 }
 
 /// Borrowed scalar planner input used by the canonical bounded planner.
@@ -47,8 +49,6 @@ pub struct LessonPlannerInputView<'a> {
     pub method_change_errors: u32,
     /// open recommendations used by the corresponding adaptation pass.
     pub open_recommendations: u32,
-    /// Remaining daily budget for newly activated review cards.
-    pub new_card_budget: u8,
     /// recent used by the corresponding adaptation pass.
     pub recent: RecentLearningSignals,
     /// Learner preferences used to bound and prioritize the lesson plan.
@@ -67,9 +67,8 @@ pub struct PlanPriorityFixed {
 }
 
 const MAX_PRIORITIES: usize = 12;
-const BASE_PROBES: [&str; 2] = [
-    "Start with 2–4 unaided retrieval/production probes before teaching or hinting.",
-    "Vary the situation enough to distinguish memorized recall from transfer.",
+const BASE_PROBES: [&str; 1] = [
+    "Use one minimal unaided probe that can change the next decision: discriminate the highest-priority bottleneck or revalidate the stale capability before teaching or hinting.",
 ];
 const BASELINE_PROBE: &str =
     "Treat the first minutes as baseline calibration; do not infer ability from CEFR label alone.";
@@ -80,10 +79,9 @@ const SUCCESS_CRITERIA: [&str; 4] = [
     "Any material plan change is justified by evidence recorded in the lesson result.",
 ];
 
-/// Fixed-capacity plan. Variable input scenarios are borrowed; priority rationales
-/// are the only owned strings created by the planner.
+/// Fixed-capacity plan. Priority rationales are the only owned strings created by the planner.
 #[derive(Debug)]
-pub struct AdaptiveLessonPlanFixed<'a> {
+pub struct AdaptiveLessonPlanFixed {
     /// Highest-priority learning objective selected for the lesson.
     pub primary_objective: &'static str,
     /// difficulty used by the corresponding adaptation pass.
@@ -94,50 +92,40 @@ pub struct AdaptiveLessonPlanFixed<'a> {
     priority_len: usize,
     /// Learning signals used when selecting this plan.
     pub recent_signals: RecentLearningSignals,
-    /// priority scenarios used by the corresponding adaptation pass.
-    pub priority_scenarios: &'a [&'a str],
     include_baseline_probe: bool,
 }
 
 /// Borrow the ranked actions retained by this bounded plan.
 #[must_use]
-pub fn plan_priorities<'store, 'text>(
-    plan: &'store AdaptiveLessonPlanFixed<'text>,
-) -> &'store [PlanPriorityFixed] {
+pub fn plan_priorities(plan: &AdaptiveLessonPlanFixed) -> &[PlanPriorityFixed] {
     &plan.priorities[..plan.priority_len]
 }
 
 /// Count diagnostic probes, including the optional baseline probe.
 #[must_use]
-pub fn plan_diagnostic_probe_count(plan: &AdaptiveLessonPlanFixed<'_>) -> usize {
-    2 + usize::from(plan.include_baseline_probe)
+pub fn plan_diagnostic_probe_count(plan: &AdaptiveLessonPlanFixed) -> usize {
+    1 + usize::from(plan.include_baseline_probe)
 }
 
 /// Return the diagnostic probe at the given index, if one is present.
 #[must_use]
-pub fn plan_diagnostic_probe(
-    plan: &AdaptiveLessonPlanFixed<'_>,
-    index: usize,
-) -> Option<&'static str> {
+pub fn plan_diagnostic_probe(plan: &AdaptiveLessonPlanFixed, index: usize) -> Option<&'static str> {
     match index {
         0 => Some(BASE_PROBES[0]),
-        1 => Some(BASE_PROBES[1]),
-        2 if plan.include_baseline_probe => Some(BASELINE_PROBE),
+        1 if plan.include_baseline_probe => Some(BASELINE_PROBE),
         _ => None,
     }
 }
 
 /// Return the fixed success criteria used to assess this plan.
 #[must_use]
-pub const fn plan_success_criteria(_plan: &AdaptiveLessonPlanFixed<'_>) -> &'static [&'static str] {
+pub const fn plan_success_criteria(_plan: &AdaptiveLessonPlanFixed) -> &'static [&'static str] {
     &SUCCESS_CRITERIA
 }
 
 /// Canonical bounded planner.
 #[must_use]
-pub fn plan_next_lesson_fixed<'a>(
-    input: &LessonPlannerInputView<'a>,
-) -> AdaptiveLessonPlanFixed<'a> {
+pub fn plan_next_lesson_fixed(input: &LessonPlannerInputView<'_>) -> AdaptiveLessonPlanFixed {
     let mut priorities: [PlanPriorityFixed; MAX_PRIORITIES] =
         std::array::from_fn(|_| PlanPriorityFixed::default());
     let mut len = 0usize;
@@ -172,50 +160,45 @@ pub fn plan_next_lesson_fixed<'a>(
             ),
         );
     }
-    if let Some(rate) = input.recent.unaided_recall_rate
-        && rate < 0.60
-    {
-        push(
-            "reduce_prompt_dependence",
-            92,
-            format!("unaided recall rate is {:.0}%", rate * 100.0),
-        );
-    }
-    if let Some(score) = input.recent.listening_score
-        && score < 0.70
-    {
-        push(
-            "strengthen_listening",
-            88,
-            format!("recent listening score is {:.0}%", score * 100.0),
-        );
-    }
     if let Some(rate) = input.recent.communicative_task_success_rate
         && rate < 0.70
     {
+        let attempts = input.recent.communicative_task_attempts;
+        let distributed = input.recent.communicative_task_lessons >= 2;
+        let score = if attempts >= 3 && distributed { 94 } else { 84 };
         push(
             "improve_communicative_task_success",
-            86,
-            format!("communicative task success is {:.0}%", rate * 100.0),
+            score,
+            format!(
+                "communicative task success is {:.0}% across {} v2 task attempt(s)",
+                rate * 100.0,
+                attempts
+            ),
         );
     }
-    if let Some(confidence) = input.recent.confidence
-        && confidence < 0.45
+    if let Some(rate) = input.recent.unaided_recall_rate
+        && rate < 0.60
     {
-        push(
-            "stabilize_confidence",
-            60,
-            format!("recent confidence is {:.0}%", confidence * 100.0),
-        );
-    }
-    if let Some(ratio) = input.recent.speaking_ratio
-        && ratio < 0.35
-    {
-        push(
-            "increase_speaking_share",
-            58,
-            format!("learner speaking ratio is {:.0}%", ratio * 100.0),
-        );
+        let attempts = input.recent.recall_attempts;
+        if attempts >= 3 && input.recent.recall_lessons >= 2 {
+            push(
+                "reduce_prompt_dependence",
+                90,
+                format!(
+                    "unaided recall rate is {:.0}% across {attempts} recall attempt(s)",
+                    rate * 100.0
+                ),
+            );
+        } else if attempts > 0 {
+            push(
+                "probe_prompt_independence",
+                64,
+                format!(
+                    "unaided recall rate is {:.0}% but only {attempts} recall attempt(s) are observed",
+                    rate * 100.0
+                ),
+            );
+        }
     }
     if input.active_errors > 0 {
         push(
@@ -253,9 +236,8 @@ pub fn plan_next_lesson_fixed<'a>(
         .preferences
         .max_new_items_per_lesson
         .unwrap_or(3)
-        .min(input.new_card_budget)
         .min(5);
-    if input.method_change_errors > 0 || input.new_card_budget == 0 {
+    if input.method_change_errors > 0 {
         max_new_items = 0;
     } else {
         max_new_items = apply_overdue_pressure(max_new_items, input.overdue_reviews);
@@ -296,7 +278,6 @@ pub fn plan_next_lesson_fixed<'a>(
         priorities,
         priority_len: len,
         recent_signals: input.recent,
-        priority_scenarios: input.preferences.priority_scenarios,
         include_baseline_probe: input.recent.lessons < 2,
     }
 }
@@ -314,7 +295,7 @@ fn apply_overdue_pressure(base: u8, overdue: u32) -> u8 {
 fn choose_difficulty_fixed(input: &LessonPlannerInputView<'_>, primary: &str) -> &'static str {
     if matches!(
         primary,
-        "change_method" | "reduce_prompt_dependence" | "stabilize_confidence"
+        "change_method" | "reduce_prompt_dependence" | "improve_communicative_task_success"
     ) {
         return "supported";
     }
@@ -322,22 +303,27 @@ fn choose_difficulty_fixed(input: &LessonPlannerInputView<'_>, primary: &str) ->
         match preferred {
             "supported" => return "supported",
             "balanced" => return "balanced",
-            "stretch" => return "stretch",
             _ => {}
         }
     }
-    let strong = input
-        .recent
-        .unaided_recall_rate
-        .is_some_and(|value| value >= 0.80)
+
+    // Stretch is an evidence claim, not merely a preference. A short history
+    // stays balanced even when its first observations are perfect.
+    let strong = input.recent.lessons >= 3
+        && input.recent.recall_attempts >= 3
+        && input.recent.recall_lessons >= 2
         && input
             .recent
-            .listening_score
-            .is_none_or(|value| value >= 0.75)
+            .unaided_recall_rate
+            .is_some_and(|value| value >= 0.80)
         && input
             .recent
             .communicative_task_success_rate
-            .is_none_or(|value| value >= 0.80)
+            .is_some_and(|value| {
+                input.recent.communicative_task_attempts >= 3
+                    && input.recent.communicative_task_lessons >= 2
+                    && value >= 0.80
+            })
         && input.overdue_reviews <= 5;
     if strong { "stretch" } else { "balanced" }
 }
@@ -346,12 +332,7 @@ fn choose_difficulty_fixed(input: &LessonPlannerInputView<'_>, primary: &str) ->
 mod tests {
     use super::*;
 
-    fn input<'a>(
-        method_change_errors: u32,
-        due_rechecks: u32,
-        new_budget: u8,
-        scenarios: &'a [&'a str],
-    ) -> LessonPlannerInputView<'a> {
+    fn input(method_change_errors: u32, due_rechecks: u32) -> LessonPlannerInputView<'static> {
         LessonPlannerInputView {
             due_reviews: 0,
             overdue_reviews: 0,
@@ -359,19 +340,24 @@ mod tests {
             active_errors: 0,
             method_change_errors,
             open_recommendations: 0,
-            new_card_budget: new_budget,
             recent: RecentLearningSignals::default(),
             preferences: PlannerPreferencesView {
                 max_new_items_per_lesson: None,
                 preferred_difficulty: None,
-                priority_scenarios: scenarios,
             },
         }
     }
 
     #[test]
+    fn review_card_budget_does_not_gate_lesson_new_material() {
+        let value = input(0, 0);
+        let plan = plan_next_lesson_fixed(&value);
+        assert_eq!(plan.max_new_items, 3);
+    }
+
+    #[test]
     fn one_overdue_review_reduces_but_does_not_block_new_material() {
-        let mut value = input(0, 0, 8, &[]);
+        let mut value = input(0, 0);
         value.overdue_reviews = 1;
         let plan = plan_next_lesson_fixed(&value);
         assert!(plan.max_new_items > 0);
@@ -380,7 +366,7 @@ mod tests {
 
     #[test]
     fn method_change_and_rechecks_beat_new_material() {
-        let input = input(1, 2, 8, &[]);
+        let input = input(1, 2);
         let plan = plan_next_lesson_fixed(&input);
         assert_eq!(plan.primary_objective, "change_method");
         assert_eq!(plan.max_new_items, 0);
@@ -390,12 +376,40 @@ mod tests {
     }
 
     #[test]
+    fn sparse_recall_evidence_probes_before_declaring_prompt_dependence() {
+        let mut input = input(0, 0);
+        input.recent = RecentLearningSignals {
+            lessons: 2,
+            recall_attempts: 1,
+            unaided_recall_rate: Some(0.0),
+            ..RecentLearningSignals::default()
+        };
+        let plan = plan_next_lesson_fixed(&input);
+        assert_eq!(plan.primary_objective, "probe_prompt_independence");
+    }
+
+    #[test]
+    fn single_lesson_recall_cluster_probes_before_declaring_prompt_dependence() {
+        let mut input = input(0, 0);
+        input.recent = RecentLearningSignals {
+            lessons: 4,
+            recall_attempts: 4,
+            recall_lessons: 1,
+            unaided_recall_rate: Some(0.25),
+            ..RecentLearningSignals::default()
+        };
+        let plan = plan_next_lesson_fixed(&input);
+        assert_eq!(plan.primary_objective, "probe_prompt_independence");
+    }
+
+    #[test]
     fn weak_unaided_recall_prioritizes_prompt_independence() {
-        let mut input = input(0, 0, 8, &[]);
+        let mut input = input(0, 0);
         input.recent = RecentLearningSignals {
             lessons: 3,
+            recall_attempts: 4,
+            recall_lessons: 2,
             unaided_recall_rate: Some(0.4),
-            listening_score: Some(0.85),
             ..RecentLearningSignals::default()
         };
         let plan = plan_next_lesson_fixed(&input);
@@ -404,16 +418,17 @@ mod tests {
     }
 
     #[test]
-    fn healthy_state_uses_preference_and_scenarios_without_owned_copy() {
-        let scenarios = ["transport"];
-        let mut input = input(0, 0, 8, &scenarios);
+    fn healthy_state_uses_scalar_preferences() {
+        let mut input = input(0, 0);
         input.recent = RecentLearningSignals {
             lessons: 4,
+            recall_attempts: 4,
+            recall_lessons: 2,
             unaided_recall_rate: Some(0.9),
-            listening_score: Some(0.9),
             confidence: Some(0.8),
             speaking_ratio: Some(0.6),
-            avg_answer_millis: Some(2_000),
+            communicative_task_attempts: 4,
+            communicative_task_lessons: 2,
             communicative_task_success_rate: Some(0.9),
         };
         input.preferences.max_new_items_per_lesson = Some(2);
@@ -422,15 +437,180 @@ mod tests {
         assert_eq!(plan.primary_objective, "introduce_high_utility_material");
         assert_eq!(plan.max_new_items, 2);
         assert_eq!(plan.difficulty, "stretch");
-        assert_eq!(plan.priority_scenarios, ["transport"]);
+    }
+
+    #[test]
+    fn communicative_task_failure_outranks_profile_proxy_weaknesses() {
+        let mut value = input(0, 0);
+        value.recent = RecentLearningSignals {
+            lessons: 4,
+            recall_attempts: 4,
+            recall_lessons: 2,
+            unaided_recall_rate: Some(0.40),
+            communicative_task_attempts: 4,
+            communicative_task_lessons: 2,
+            communicative_task_success_rate: Some(0.40),
+            confidence: Some(0.20),
+            speaking_ratio: Some(0.20),
+        };
+        let plan = plan_next_lesson_fixed(&value);
+        assert_eq!(plan.primary_objective, "improve_communicative_task_success");
+    }
+
+    #[test]
+    fn single_lesson_task_failure_does_not_outrank_distributed_prompt_dependence() {
+        let mut value = input(0, 0);
+        value.recent = RecentLearningSignals {
+            lessons: 4,
+            recall_attempts: 4,
+            recall_lessons: 2,
+            unaided_recall_rate: Some(0.40),
+            communicative_task_attempts: 4,
+            communicative_task_lessons: 1,
+            communicative_task_success_rate: Some(0.0),
+            ..RecentLearningSignals::default()
+        };
+        let plan = plan_next_lesson_fixed(&value);
+        assert_eq!(plan.primary_objective, "reduce_prompt_dependence");
+    }
+
+    #[test]
+    fn sparse_task_failure_does_not_outrank_established_prompt_dependence() {
+        let mut value = input(0, 0);
+        value.recent = RecentLearningSignals {
+            lessons: 4,
+            recall_attempts: 4,
+            recall_lessons: 2,
+            unaided_recall_rate: Some(0.40),
+            communicative_task_attempts: 1,
+            communicative_task_success_rate: Some(0.0),
+            ..RecentLearningSignals::default()
+        };
+        let plan = plan_next_lesson_fixed(&value);
+        assert_eq!(plan.primary_objective, "reduce_prompt_dependence");
+        let task_score = plan_priorities(&plan)
+            .iter()
+            .find(|priority| priority.action == "improve_communicative_task_success")
+            .map(|priority| priority.score);
+        assert!(task_score.is_some_and(|score| score < 90));
+    }
+
+    #[test]
+    fn confidence_and_speaking_share_are_diagnostic_not_lesson_objectives() {
+        let mut value = input(0, 0);
+        value.recent = RecentLearningSignals {
+            lessons: 4,
+            confidence: Some(0.10),
+            speaking_ratio: Some(0.10),
+            ..RecentLearningSignals::default()
+        };
+        let plan = plan_next_lesson_fixed(&value);
+        assert_eq!(plan.primary_objective, "introduce_high_utility_material");
+        assert!(plan_priorities(&plan).iter().all(|priority| !matches!(
+            priority.action,
+            "stabilize_confidence" | "increase_speaking_share"
+        )));
+    }
+
+    #[test]
+    fn single_lesson_success_clusters_block_stretch() {
+        let mut value = input(0, 0);
+        value.recent = RecentLearningSignals {
+            lessons: 5,
+            recall_attempts: 4,
+            recall_lessons: 1,
+            unaided_recall_rate: Some(1.0),
+            communicative_task_attempts: 4,
+            communicative_task_lessons: 1,
+            communicative_task_success_rate: Some(1.0),
+            ..RecentLearningSignals::default()
+        };
+        value.preferences.preferred_difficulty = Some("stretch");
+        let plan = plan_next_lesson_fixed(&value);
+        assert_eq!(plan.difficulty, "balanced");
+    }
+
+    #[test]
+    fn sparse_recall_evidence_blocks_stretch() {
+        let mut value = input(0, 0);
+        value.recent = RecentLearningSignals {
+            lessons: 5,
+            recall_attempts: 1,
+            unaided_recall_rate: Some(1.0),
+            communicative_task_attempts: 4,
+            communicative_task_success_rate: Some(1.0),
+            ..RecentLearningSignals::default()
+        };
+        value.preferences.preferred_difficulty = Some("stretch");
+        let plan = plan_next_lesson_fixed(&value);
+        assert_eq!(plan.difficulty, "balanced");
+    }
+
+    #[test]
+    fn missing_communicative_task_evidence_blocks_stretch() {
+        let mut value = input(0, 0);
+        value.recent = RecentLearningSignals {
+            lessons: 5,
+            recall_attempts: 4,
+            unaided_recall_rate: Some(1.0),
+            ..RecentLearningSignals::default()
+        };
+        value.preferences.preferred_difficulty = Some("stretch");
+        let plan = plan_next_lesson_fixed(&value);
+        assert_eq!(plan.difficulty, "balanced");
+    }
+
+    #[test]
+    fn sparse_communicative_task_evidence_blocks_stretch() {
+        let mut value = input(0, 0);
+        value.recent = RecentLearningSignals {
+            lessons: 5,
+            recall_attempts: 4,
+            unaided_recall_rate: Some(1.0),
+            communicative_task_attempts: 1,
+            communicative_task_success_rate: Some(1.0),
+            ..RecentLearningSignals::default()
+        };
+        value.preferences.preferred_difficulty = Some("stretch");
+        let plan = plan_next_lesson_fixed(&value);
+        assert_eq!(plan.difficulty, "balanced");
+    }
+
+    #[test]
+    fn short_history_never_selects_stretch_difficulty() {
+        let mut value = input(0, 0);
+        value.recent = RecentLearningSignals {
+            lessons: 1,
+            recall_attempts: 1,
+            unaided_recall_rate: Some(1.0),
+            communicative_task_success_rate: Some(1.0),
+            confidence: Some(1.0),
+            speaking_ratio: Some(0.8),
+            ..RecentLearningSignals::default()
+        };
+        value.preferences.preferred_difficulty = Some("stretch");
+        let plan = plan_next_lesson_fixed(&value);
+        assert_eq!(plan.difficulty, "balanced");
+    }
+
+    #[test]
+    fn established_history_uses_one_initial_diagnostic_probe() {
+        let mut value = input(0, 0);
+        value.recent.lessons = 5;
+        let plan = plan_next_lesson_fixed(&value);
+        assert_eq!(
+            plan_diagnostic_probe_count(&plan),
+            1,
+            "known learner state should not force a second diagnostic before intervention"
+        );
     }
 
     #[test]
     fn baseline_probe_is_included_for_new_history() {
-        let input = input(0, 0, 0, &[]);
+        let input = input(0, 0);
         let plan = plan_next_lesson_fixed(&input);
-        assert_eq!(plan_diagnostic_probe_count(&plan), 3);
-        assert!(plan_diagnostic_probe(&plan, 2).is_some());
+        assert_eq!(plan_diagnostic_probe_count(&plan), 2);
+        assert!(plan_diagnostic_probe(&plan, 1).is_some());
         assert_eq!(plan_success_criteria(&plan).len(), 4);
     }
 }

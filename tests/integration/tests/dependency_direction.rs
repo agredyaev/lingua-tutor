@@ -1,13 +1,16 @@
-//! Architecture gate: no generic core crate depends on a concrete language
-//! pack (02-workspace.md §3, 12-testing.md §10). Scans `crates/*/Cargo.toml`.
+//! Architecture gate: generic core crates must not depend on removed
+//! executable language-pack components.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::fs;
 use std::path::PathBuf;
 
-const CONCRETE_PACK: &str = "language-pack-es-es";
-const TEST_PACK: &str = "synthetic-test-pack";
+const REMOVED_RUNTIME_COMPONENTS: &[&str] = &[
+    "language-pack-es-es",
+    "synthetic-test-pack",
+    "language-pack-registry",
+];
 
 fn core_manifests() -> Vec<(String, String)> {
     let crates_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../crates");
@@ -19,7 +22,6 @@ fn core_manifests() -> Vec<(String, String)> {
         .collect()
 }
 
-/// Dependency names listed in the given Cargo.toml section.
 fn section_deps(manifest: &str, section: &str) -> Vec<String> {
     let mut in_section = false;
     let mut deps = Vec::new();
@@ -27,7 +29,6 @@ fn section_deps(manifest: &str, section: &str) -> Vec<String> {
         let line = line.trim();
         if line.starts_with('[') {
             in_section = line == format!("[{section}]");
-            // `[dependencies.NAME]` table syntax declares NAME directly.
             if let Some(name) = line
                 .strip_prefix(&format!("[{section}."))
                 .and_then(|rest| rest.strip_suffix(']'))
@@ -48,24 +49,20 @@ fn section_deps(manifest: &str, section: &str) -> Vec<String> {
 }
 
 #[test]
-fn no_core_crate_depends_on_concrete_pack() {
+fn no_core_crate_depends_on_removed_language_pack_components() {
     let manifests = core_manifests();
     assert!(!manifests.is_empty(), "crates/ scan found nothing");
     for (path, manifest) in &manifests {
-        let runtime = section_deps(manifest, "dependencies");
-        assert!(
-            !runtime.contains(&CONCRETE_PACK.to_owned()),
-            "{path}: core crate depends on {CONCRETE_PACK}"
-        );
-        // Synthetic pack allowed only as dev-dependency (core CI), never runtime.
-        assert!(
-            !runtime.contains(&TEST_PACK.to_owned()),
-            "{path}: core crate has runtime dependency on {TEST_PACK}"
-        );
-        let dev = section_deps(manifest, "dev-dependencies");
-        assert!(
-            !dev.contains(&CONCRETE_PACK.to_owned()),
-            "{path}: core crate test-depends on {CONCRETE_PACK}"
-        );
+        for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+            let dependencies = section_deps(manifest, section);
+            for forbidden in REMOVED_RUNTIME_COMPONENTS {
+                assert!(
+                    !dependencies
+                        .iter()
+                        .any(|dependency| dependency == forbidden),
+                    "{path}: {section} still depends on removed component {forbidden}"
+                );
+            }
+        }
     }
 }

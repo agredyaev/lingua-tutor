@@ -1056,15 +1056,11 @@ version = "0.1.0"
 dependencies = [
  "adaptation",
  "chrono",
- "language-pack-api",
- "language-pack-es-es",
- "language-pack-registry",
  "learning-core",
  "lingua-tutor-local",
  "review-engine",
  "rusqlite",
  "serde_json",
- "synthetic-test-pack",
 ]
 
 [[package]]
@@ -1115,38 +1111,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4933f3f57a8e9d9da04db23fb153356ecaf00cbd14aee46279c33dc80925c37"
 
 [[package]]
-name = "language-pack-api"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "language-pack-es-es"
-version = "0.1.0"
-dependencies = [
- "language-pack-api",
- "serde",
- "serde_json",
- "test-support",
-]
-
-[[package]]
-name = "language-pack-registry"
-version = "0.1.0"
-dependencies = [
- "language-pack-api",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "learning-core"
 version = "0.1.0"
 dependencies = [
- "language-pack-api",
  "serde",
  "serde_json",
 ]
@@ -1343,9 +1310,6 @@ dependencies = [
  "chrono",
  "hex",
  "hmac",
- "language-pack-api",
- "language-pack-es-es",
- "language-pack-registry",
  "learning-core",
  "review-engine",
  "rusqlite",
@@ -2328,14 +2292,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "synthetic-test-pack"
-version = "0.1.0"
-dependencies = [
- "language-pack-api",
- "test-support",
-]
-
-[[package]]
 name = "tachys"
 version = "0.2.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2378,14 +2334,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
-]
-
-[[package]]
-name = "test-support"
-version = "0.1.0"
-dependencies = [
- "language-pack-api",
- "proptest",
 ]
 
 [[package]]
@@ -2556,7 +2504,6 @@ dependencies = [
 name = "tutor-contract"
 version = "0.1.0"
 dependencies = [
- "language-pack-api",
  "learning-core",
  "serde",
  "serde_json",

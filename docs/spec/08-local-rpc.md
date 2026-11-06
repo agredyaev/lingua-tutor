@@ -35,12 +35,10 @@ Rules:
 
 The active browser RPC operations are grouped by capability.
 
-### Profiles and packs
+### Language profiles
 
 ```text
 list_language_profiles
-list_language_packs
-get_language_pack
 create_language_profile
 update_profile
 ```
@@ -133,3 +131,16 @@ MCP -> mcp_tools ----┘
 ```
 
 There is one application execution path and one SQLite system of record.
+
+For chat tutoring, `get_tutor_context` is the authoritative pre-lesson read surface. The narrower MCP read tools remain useful for inspection, but they are not substitutes for lesson context because they do not carry the complete methodology, ranked tutor tasks, learner history, and completion contract together. The native flow is:
+
+```text
+get_tutor_context
+    -> choose scenario/goal from the returned state
+    -> start_lesson
+    -> use start_lesson.adaptive_lesson_plan + start_lesson.tutor_tasks
+       as the final persisted snapshot for the lesson
+    -> complete_lesson using lesson_result_contract
+```
+
+`start_lesson` recomputes and persists the final planner snapshot so a state change between the context read and lesson opening cannot make calibration refer to a different plan than the one returned to the chat model.

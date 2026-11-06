@@ -6,7 +6,7 @@
 #[allow(clippy::unwrap_used, clippy::type_complexity)]
 mod tests {
     use super::*;
-    use crate::{Env, built_in_language_packs};
+    use crate::Env;
     use std::path::PathBuf;
 
     fn create_env(label: &str) -> (PathBuf, Env) {
@@ -17,28 +17,23 @@ mod tests {
         let connection = crate::storage::open(&path).unwrap();
         connection
             .execute_batch(
-                r#"INSERT INTO language_packs
-                (id, package_name, version, contract_version, target_language,
-                 target_locale, display_name, installed_at, updated_at)
-             VALUES
-                ('es-ES', 'language-pack-es-es', '0.2.0', 1, 'es', 'es-ES',
-                 'Spanish (Spain)', '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
+                r#"
              INSERT INTO learner_profile (id, created_at, updated_at)
              VALUES ('learner-1', '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
              INSERT INTO learner_language_profiles
-                (id, learner_id, language_pack_id, source_language, target_locale,
+                (id, learner_id, source_language, target_locale,
                  created_at, updated_at)
              VALUES
-                ('llp-1', 'learner-1', 'es-ES', 'ru', 'es-ES',
+                ('llp-1', 'learner-1', 'ru', 'es-ES',
                  '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
              INSERT INTO cards
-                (id, learner_language_profile_id, language_pack_id, language_pack_version,
+                (id, learner_language_profile_id,
                  intent, status, prompt, prompt_language, answer, answer_language,
-                 accepted_answers_json, answer_evaluation_mode, creation_reason,
+                 accepted_answers_json, creation_reason,
                  content_hash, content_version, created_by, created_at, updated_at)
              VALUES
-                ('card-1', 'llp-1', 'es-ES', '0.2.0', 'production', 'review',
-                 'old prompt', 'ru', 'answer', 'es-ES', '["old"]', 'exact',
+                ('card-1', 'llp-1', 'production', 'review',
+                 'old prompt', 'ru', 'answer', 'es-ES', '["old"]',
                  'seed', 'seed-hash', 1, 'tutor',
                  '2026-10-15T00:00:00Z', '2026-10-15T00:00:00Z');"#,
             )
@@ -54,7 +49,7 @@ mod tests {
                 client_operation_id: "op-create".to_owned(),
                 card_id: None,
                 card: Some(tutor_contract::CardPayload {
-                    intent: language_pack_api::CardIntent::Production,
+                    intent: learning_core::CardIntent::Production,
                     prompt: "created".to_owned(),
                     answer: "respuesta".to_owned(),
                     accepted_answers: vec!["alt".to_owned()],
@@ -75,7 +70,7 @@ mod tests {
                 client_operation_id: "op-update".to_owned(),
                 card_id: Some("card-1".to_owned()),
                 card: Some(tutor_contract::CardPayload {
-                    intent: language_pack_api::CardIntent::Production,
+                    intent: learning_core::CardIntent::Production,
                     prompt: "updated".to_owned(),
                     answer: "answer".to_owned(),
                     accepted_answers: vec!["old".to_owned()],
@@ -112,9 +107,8 @@ mod tests {
     #[test]
     fn standalone_upsert_creates_and_updates_expected_card_state() {
         let (path, env) = create_env("new");
-        let registry = built_in_language_packs().unwrap();
         let input = mutations();
-        upsert_cards(&registry, &env, "llp-1", &input).unwrap();
+        upsert_cards(&env, "llp-1", &input).unwrap();
 
         let rows = snapshot(&env);
         assert_eq!(rows.len(), 2);
@@ -124,7 +118,7 @@ mod tests {
         assert_eq!(
             created.3,
             learning_core::card_content_hash(
-                language_pack_api::CardIntent::Production,
+                learning_core::CardIntent::Production,
                 "created",
                 "respuesta",
                 &["alt".to_owned()],
@@ -136,7 +130,7 @@ mod tests {
         assert_eq!(
             updated.3,
             learning_core::card_content_hash(
-                language_pack_api::CardIntent::Production,
+                learning_core::CardIntent::Production,
                 "updated",
                 "answer",
                 &["old".to_owned()],
@@ -152,7 +146,6 @@ use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use super::card_apply::{apply_card_mutations, prepare_card_mutations};
 
 pub(crate) fn upsert_cards(
-    registry: &crate::BuiltInPackRegistry,
     env: &Env,
     profile_id: &str,
     mutations: &[tutor_contract::CardMutation],
@@ -160,27 +153,17 @@ pub(crate) fn upsert_cards(
     let mut database = env.connection()?;
     let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
-    let (pack_id, source_language, target_locale): (String, String, String) = transaction
+    let (source_language, target_locale): (String, String) = transaction
         .query_row(
-            "SELECT language_pack_id, source_language, target_locale
-             FROM learner_language_profiles WHERE id=?1",
+            "SELECT source_language,target_locale
+                 FROM learner_language_profiles WHERE id=?1",
             params![profile_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?
         .ok_or_else(|| {
             crate::Error::operation(404, "not_found", "unknown profile", serde_json::Value::Null)
         })?;
-
-    let Some(manifest) = language_pack_registry::manifest(registry, &pack_id) else {
-        return Err(crate::Error::operation(
-            409,
-            "pack_unavailable",
-            "active language pack is not available",
-            serde_json::Value::Null,
-        ));
-    };
-    let pack_version = manifest.version;
 
     let now = crate::api::now();
     let at = crate::repositories::to_rfc3339(now);
@@ -191,8 +174,6 @@ pub(crate) fn upsert_cards(
         &plan,
         mutations,
         profile_id,
-        &pack_id,
-        pack_version,
         &source_language,
         &target_locale,
         None,

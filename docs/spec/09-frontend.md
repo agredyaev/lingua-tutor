@@ -25,21 +25,26 @@ Depends on: [08-local-rpc.md](08-local-rpc.md), [05-review-engine.md](05-review-
 | Routing | `leptos_router`. Routes = §3. |
 | Components | Props typed; children composition per book conventions; components small, one responsibility. |
 
-## 3. Routes
+## 3. Routes and learner information architecture
+
+The learner navigation exposes only the workflows a learner needs directly:
 
 ```text
-/                     → redirect /dashboard
-/dashboard
-/languages
-/languages/:profile_id
-/learn
-/review
-/review/summary
-/cards
+/                     → /dashboard
+/dashboard            → Home
+/review               → Review
+/cards                → Library
 /cards/:id
-/cards/redesign
-/lessons
-/lessons/:id
+/stats                 → Progress
+/review/summary
+/lessons               → History
+/languages             → language profile selection/creation
+```
+
+The following routes are implementation, diagnostic, recovery, or advanced inspection surfaces. They are not part of the normal learner navigation and must not be presented as required steps:
+
+```text
+/learn
 /learning-items
 /learning-items/:id
 /errors
@@ -49,7 +54,12 @@ Depends on: [08-local-rpc.md](08-local-rpc.md), [05-review-engine.md](05-review-
 /export
 /settings
 /system
+/cards/redesign
+/lessons/:id
+/languages/:profile_id
 ```
+
+Normal lesson persistence is MCP-owned: Tutor fetches context, starts the lesson, and submits completion. The learner must not copy tutor context or lesson-result JSON during the normal flow.
 
 ## 4. Review UX
 
@@ -59,9 +69,9 @@ One card at a time; speaking aloud prioritized; answer hidden until requested; g
 
 List shows: due status, intent, source, creation reason, recent grade history, redesign warnings, suspend/restore, tutor mutation history, duplicate candidates, search + filters.
 
-## 6. Dashboard
+## 6. Learner home
 
-Content = `get_dashboard` RPC result ([08-local-rpc.md](08-local-rpc.md) §2). Actionable exceptions first (backlog, method-change targets, rechecks due).
+Content = `get_dashboard` RPC result ([08-local-rpc.md](08-local-rpc.md) §2). Show only learner-meaningful state: review due, today's review activity, current focus count, next lesson number/goal, actionable exceptions, and concise tutor focus. Engine-control values such as new-card budget, raw recheck counts, and learning-item lifecycle inventory stay out of the learner home.
 
 ## 7. Offline (bounded)
 
@@ -72,9 +82,9 @@ Content = `get_dashboard` RPC result ([08-local-rpc.md](08-local-rpc.md) §2). A
 - Offline semantic card edits rejected client-side.
 - Stale scheduling state detected via state hash; reconcile safely, never guess.
 
-## 8. Import/export pages
+## 8. Recovery and diagnostic pages
 
-`/import`: paste lesson-result → validate → preview diff (incl. destructive mutations highlighted) → apply with validation token. `/export`: full JSON, tutor context (copy button — primary no-MCP flow), cards.csv.
+`/import` and `/export` are manual recovery/data-portability surfaces, not the primary learner flow. They remain directly addressable for troubleshooting, migration, backup, or operation without MCP, but must not appear in learner navigation. With MCP connected, Tutor uses `get_tutor_context → start_lesson → complete_lesson` and persists the lesson without learner copy/paste. `get_tutor_context` is the authoritative methodology/context read; after opening the lesson, Tutor uses the plan and `tutor_tasks` returned by `start_lesson` as the final persisted snapshot rather than continuing with a potentially stale pre-start plan.
 
 ## 9. Size budget
 

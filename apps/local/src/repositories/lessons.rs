@@ -2,11 +2,10 @@
 
 /// Insert a lesson.
 pub const INSERT_LESSON: &str = "INSERT INTO lessons
-    (id, learner_language_profile_id, language_pack_id, language_pack_version,
-     lesson_number, status, scenario, planned_goal, source, started_at,
+    (id, learner_language_profile_id, lesson_number, status, scenario, planned_goal, source, started_at,
      completed_at, duration_seconds, tutor_summary, next_goal, idempotency_key,
      created_at, updated_at)
- VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)";
+ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)";
 
 /// Complete a lesson (status/outcome fields only).
 pub const COMPLETE_LESSON: &str = "UPDATE lessons SET
@@ -26,14 +25,14 @@ pub const CORRECT_LESSON_RECORD: &str = "UPDATE lessons SET
 
 /// Lesson by ID.
 pub const SELECT_LESSON: &str = "SELECT id, learner_language_profile_id,
-    language_pack_id, language_pack_version, lesson_number, status, scenario,
+    lesson_number, status, scenario,
     planned_goal, source, started_at, completed_at, duration_seconds,
     tutor_summary, next_goal, idempotency_key
  FROM lessons WHERE id = ?1";
 
 /// Lesson by import idempotency key.
 pub const SELECT_LESSON_BY_KEY: &str = "SELECT id, learner_language_profile_id,
-    language_pack_id, language_pack_version, lesson_number, status, scenario,
+    lesson_number, status, scenario,
     planned_goal, source, started_at, completed_at, duration_seconds,
     tutor_summary, next_goal, idempotency_key
  FROM lessons WHERE idempotency_key = ?1";
@@ -44,7 +43,7 @@ pub const SELECT_LESSON_BY_KEY: &str = "SELECT id, learner_language_profile_id,
 /// numbered `current_lesson_number + 1`, colliding (UNIQUE constraint) with
 /// the `active` row `start_lesson` already reserved that same number for.
 pub const SELECT_LATEST_OPEN_LESSON: &str = "SELECT id, learner_language_profile_id,
-    language_pack_id, language_pack_version, lesson_number, status, scenario,
+    lesson_number, status, scenario,
     planned_goal, source, started_at, completed_at, duration_seconds,
     tutor_summary, next_goal, idempotency_key
  FROM lessons WHERE learner_language_profile_id = ?1 AND status IN ('planned','active')
@@ -52,7 +51,7 @@ pub const SELECT_LATEST_OPEN_LESSON: &str = "SELECT id, learner_language_profile
 
 /// Profile lessons, newest first, bounded.
 pub const SELECT_LESSONS: &str = "SELECT id, learner_language_profile_id,
-    language_pack_id, language_pack_version, lesson_number, status, scenario,
+    lesson_number, status, scenario,
     planned_goal, source, started_at, completed_at, duration_seconds,
     tutor_summary, next_goal, idempotency_key
  FROM lessons WHERE learner_language_profile_id = ?1

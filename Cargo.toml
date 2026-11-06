@@ -6,15 +6,10 @@ members = [
     "apps/web",
     "apps/local",
     "crates/adaptation",
-    "crates/language-pack-api",
-    "crates/language-pack-registry",
     "crates/learning-core",
     "crates/review-engine",
     "crates/shared-schema",
     "crates/tutor-contract",
-    "crates/test-support",
-    "language-packs/es-es",
-    "language-packs/synthetic-test-pack",
     "tests/integration",
 ]
 
@@ -26,11 +21,6 @@ publish = false
 
 [workspace.dependencies]
 shared-schema = { path = "crates/shared-schema" }
-language-pack-api = { path = "crates/language-pack-api" }
-language-pack-registry = { path = "crates/language-pack-registry" }
-language-pack-es-es = { path = "language-packs/es-es" }
-synthetic-test-pack = { path = "language-packs/synthetic-test-pack" }
-test-support = { path = "crates/test-support" }
 review-engine = { path = "crates/review-engine" }
 learning-core = { path = "crates/learning-core" }
 tutor-contract = { path = "crates/tutor-contract" }

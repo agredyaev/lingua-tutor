@@ -16,27 +16,21 @@ mod tests {
         ));
         let db = crate::storage::open(&path).unwrap();
         db.execute_batch(
-            r#"INSERT INTO language_packs
-                (id, package_name, version, contract_version, target_language,
-                 target_locale, display_name, installed_at, updated_at)
-             VALUES
-                ('es-ES', 'language-pack-es-es', '0.2.0', 1, 'es', 'es-ES',
-                 'Spanish (Spain)', '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
+            r#"
              INSERT INTO learner_profile (id, created_at, updated_at)
              VALUES ('learner-1', '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
              INSERT INTO learner_language_profiles
-                (id, learner_id, language_pack_id, source_language, target_locale,
+                (id, learner_id, source_language, target_locale,
                  created_at, updated_at)
              VALUES
-                ('llp-1', 'learner-1', 'es-ES', 'ru', 'es-ES',
+                ('llp-1', 'learner-1', 'ru', 'es-ES',
                  '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
              INSERT INTO error_targets
-                (id, learner_language_profile_id, language_pack_id,
-                 language_pack_version, core_category, original_production,
+                (id, learner_language_profile_id,  core_category, original_production,
                  corrected_production, occurrence_count, method_change_required,
                  status, created_at, updated_at)
              VALUES
-                ('et-1', 'llp-1', 'es-ES', '0.2.0', 'grammar',
+                ('et-1', 'llp-1', 'grammar',
                  'wrong', 'right', 3, 0, 'recheck',
                  '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
              INSERT INTO error_rechecks

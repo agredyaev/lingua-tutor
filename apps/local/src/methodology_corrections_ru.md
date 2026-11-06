@@ -11,4 +11,4 @@
 5. Позже в том же уроке проверь эту форму без подсказки и, если возможно, в другом context.
 6. Повторную ошибку связывай с существующим error_target_id. Не создавай новый target для той же проблемы.
 7. При method_change_required не повторяй тот же способ объяснения. Смени представление: contrast, короткое правило, другой scenario, comprehension-first, chunk или role-play.
-8. В lesson-result фиксируй original_production, corrected_production, подходящий es.* code и фактический outcome после коррекции.
+8. В lesson-result фиксируй original_production, corrected_production, стабильный error code, описывающий конкретную проблему и фактический outcome после коррекции.

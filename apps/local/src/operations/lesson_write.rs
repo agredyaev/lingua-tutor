@@ -14,14 +14,12 @@ mod tests {
                 "CREATE TABLE learning_items (
                 id TEXT PRIMARY KEY,
                 learner_language_profile_id TEXT NOT NULL,
-                language_pack_id TEXT NOT NULL,
                 item_type TEXT NOT NULL,
                 target_text TEXT NOT NULL,
                 normalized_target_text TEXT NOT NULL,
                 prompt_text TEXT,
                 prompt_language TEXT,
                 status TEXT NOT NULL,
-                language_metadata_json TEXT NOT NULL,
                 introduced_lesson_id TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -33,7 +31,7 @@ mod tests {
                 kind TEXT NOT NULL,
                 success INTEGER NOT NULL,
                 detail TEXT,
-                pack_metadata_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
                 recorded_at TEXT NOT NULL,
                 observation_order INTEGER NOT NULL DEFAULT 0
             );
@@ -63,7 +61,6 @@ mod tests {
         for i in 0..5 {
             let id = format!("li-{i}");
             let profile = format!("p-{i}");
-            let pack = format!("pack-{i}");
             let item_type = if i % 2 == 0 { "phrase" } else { "word" };
             let target = format!("target-{i}");
             let normalized = format!("norm-{i}");
@@ -76,14 +73,12 @@ mod tests {
                 &transaction,
                 &id,
                 &profile,
-                &pack,
                 item_type,
                 &target,
                 &normalized,
                 prompt.as_deref(),
                 prompt_lang.as_deref(),
                 "introduced",
-                "{}",
                 Some(&lesson),
                 &at,
             )
@@ -166,7 +161,7 @@ mod tests {
 
         let rows: Vec<(String, u8, Option<String>, String)> = connection
             .prepare(
-                "SELECT id, success, detail, pack_metadata_json
+                "SELECT id, success, detail, metadata_json
                  FROM learning_item_evidence ORDER BY rowid",
             )
             .unwrap()
@@ -312,10 +307,10 @@ mod tests {
             connection
                 .execute(
                     "INSERT INTO learning_items
-                 (id, learner_language_profile_id, language_pack_id, item_type,
-                  target_text, normalized_target_text, status, language_metadata_json,
+                 (id, learner_language_profile_id, item_type,
+                  target_text, normalized_target_text, status,
                   created_at, updated_at)
-                 VALUES (?1, 'p', 'pack', 'word', 'x', 'x', 'introduced', '{}', 'a', 'a')",
+                 VALUES (?1, 'p', 'word', 'x', 'x', 'introduced', 'a', 'a')",
                     [format!("li-{i}")],
                 )
                 .unwrap();
@@ -356,14 +351,12 @@ pub(crate) fn insert_learning_item(
     database: &Connection,
     id: &str,
     profile_id: &str,
-    pack_id: &str,
     item_type: &str,
     target_text: &str,
     normalized_target_text: &str,
     prompt_text: Option<&str>,
     prompt_language: Option<&str>,
     status: &str,
-    language_metadata_json: &str,
     introduced_lesson_id: Option<&str>,
     at: &str,
 ) -> Result<()> {
@@ -371,14 +364,12 @@ pub(crate) fn insert_learning_item(
     statement.execute(params![
         id,
         profile_id,
-        pack_id,
         item_type,
         target_text,
         normalized_target_text,
         prompt_text,
         prompt_language,
         status,
-        language_metadata_json,
         introduced_lesson_id,
         at,
     ])?;
@@ -395,7 +386,7 @@ pub(crate) fn insert_evidence(
     kind: &str,
     success: bool,
     detail: Option<&str>,
-    pack_metadata_json: &str,
+    metadata_json: &str,
     recorded_at: &str,
     observation_order: u32,
 ) -> Result<()> {
@@ -407,7 +398,7 @@ pub(crate) fn insert_evidence(
         kind,
         u8::from(success),
         detail,
-        pack_metadata_json,
+        metadata_json,
         recorded_at,
         observation_order,
     ])?;

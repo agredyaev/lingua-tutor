@@ -119,35 +119,26 @@ fn all_closed_enum_spellings_round_trip() {
     }
     assert_eq!(card_actor_from_db("invalid-enum-variant"), None);
     for (value, text) in [
-        (language_pack_api::CoreErrorCategory::Grammar, "grammar"),
+        (learning_core::CoreErrorCategory::Grammar, "grammar"),
+        (learning_core::CoreErrorCategory::Vocabulary, "vocabulary"),
+        (learning_core::CoreErrorCategory::WordOrder, "word_order"),
+        (learning_core::CoreErrorCategory::Register, "register"),
         (
-            language_pack_api::CoreErrorCategory::Vocabulary,
-            "vocabulary",
-        ),
-        (
-            language_pack_api::CoreErrorCategory::WordOrder,
-            "word_order",
-        ),
-        (language_pack_api::CoreErrorCategory::Register, "register"),
-        (
-            language_pack_api::CoreErrorCategory::Pronunciation,
+            learning_core::CoreErrorCategory::Pronunciation,
             "pronunciation",
         ),
-        (
-            language_pack_api::CoreErrorCategory::Orthography,
-            "orthography",
-        ),
-        (language_pack_api::CoreErrorCategory::Other, "other"),
+        (learning_core::CoreErrorCategory::Orthography, "orthography"),
+        (learning_core::CoreErrorCategory::Other, "other"),
     ] {
         assert_eq!(core_error_category_db(&value), text);
         assert_eq!(core_error_category_from_db(text), Some(value));
     }
     assert_eq!(core_error_category_from_db("invalid-enum-variant"), None);
     for (value, text) in [
-        (language_pack_api::CardIntent::Production, "production"),
-        (language_pack_api::CardIntent::Listening, "listening"),
-        (language_pack_api::CardIntent::Contrast, "contrast"),
-        (language_pack_api::CardIntent::Transfer, "transfer"),
+        (learning_core::CardIntent::Production, "production"),
+        (learning_core::CardIntent::Listening, "listening"),
+        (learning_core::CardIntent::Contrast, "contrast"),
+        (learning_core::CardIntent::Transfer, "transfer"),
     ] {
         assert_eq!(card_intent_db(&value), text);
         assert_eq!(card_intent_from_db(text), Some(value));

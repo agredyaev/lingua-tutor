@@ -33,6 +33,8 @@ struct CompactIntervention<'a> {
     action: std::borrow::Cow<'a, str>,
     learning_item_id: std::borrow::Cow<'a, str>,
     target_capability: std::borrow::Cow<'a, str>,
+    #[serde(default)]
+    calibration_eligible: bool,
 }
 #[derive(Deserialize)]
 struct CompactOutcome<'a> {
@@ -141,7 +143,7 @@ fn append_compact_snapshot<'a>(
         let metrics = std::array::from_fn(|i| {
             let estimate = &estimates[i];
             (
-                if i >= 3 {
+                if i == 1 || i >= 3 {
                     estimate.unaided_success_rate
                 } else {
                     estimate.weighted_success_rate
@@ -155,6 +157,9 @@ fn append_compact_snapshot<'a>(
     }
     if outcome.calibration_valid {
         for intervention in outcome.interventions {
+            if !intervention.calibration_eligible {
+                continue;
+            }
             let key = intern_item_key(columns, intervention.learning_item_id);
             push_intervention(
                 columns,
@@ -252,8 +257,10 @@ fn summarize_columns(
         };
         let end = columns.intervention_end[before] as usize;
 
-        // Contiguous intervention IDs: O(C log C) deduplication, then replay
-        // in original order to preserve deterministic accumulation semantics.
+        // Sort by item/capability first so ambiguous causal attribution is
+        // detectable in one adjacent scan. If two different actions targeted
+        // the same item/capability in this lesson, neither action receives the
+        // later outcome as an effectiveness sample.
         let mut interventions: Vec<u32> = (start..end)
             .filter(|&index| columns.intervention_capability[index].is_some())
             .map(|index| u32::try_from(index).unwrap_or(u32::MAX))
@@ -262,15 +269,15 @@ fn summarize_columns(
             let a = a as usize;
             let b = b as usize;
             (
-                columns.intervention_action[a].as_ref(),
                 columns.intervention_item_key[a],
                 columns.intervention_capability[a],
+                columns.intervention_action[a].as_ref(),
                 a,
             )
                 .cmp(&(
-                    columns.intervention_action[b].as_ref(),
                     columns.intervention_item_key[b],
                     columns.intervention_capability[b],
+                    columns.intervention_action[b].as_ref(),
                     b,
                 ))
         });
@@ -281,9 +288,24 @@ fn summarize_columns(
                 && columns.intervention_item_key[a] == columns.intervention_item_key[b]
                 && columns.intervention_capability[a] == columns.intervention_capability[b]
         });
-        interventions.sort_unstable();
-        for intervention in interventions {
-            let intervention = intervention as usize;
+        for position in 0..interventions.len() {
+            let intervention = interventions[position] as usize;
+            let same_target = |other: u32| {
+                let other = other as usize;
+                columns.intervention_item_key[other] == columns.intervention_item_key[intervention]
+                    && columns.intervention_capability[other]
+                        == columns.intervention_capability[intervention]
+            };
+            let confounded = position
+                .checked_sub(1)
+                .and_then(|index| interventions.get(index))
+                .is_some_and(|other| same_target(*other))
+                || interventions
+                    .get(position + 1)
+                    .is_some_and(|other| same_target(*other));
+            if confounded {
+                continue;
+            }
             let Some(capability) = columns.intervention_capability[intervention] else {
                 continue;
             };
@@ -413,9 +435,24 @@ mod tests {
     const OUTCOME: &str = r#"{
       "calibration_valid":true,
       "interventions":[
-        {"action":"fade_prompts","learning_item_id":"li-1","target_capability":"spontaneous_production"}
+        {"action":"fade_prompts","learning_item_id":"li-1","target_capability":"spontaneous_production","calibration_eligible":true}
       ]
     }"#;
+
+    #[test]
+    fn legacy_intervention_without_explicit_eligibility_does_not_calibrate() {
+        let legacy = r#"{
+          "calibration_valid":true,
+          "interventions":[
+            {"action":"fade_prompts","learning_item_id":"li-1","target_capability":"spontaneous_production"}
+          ]
+        }"#;
+        let rows = [(0, EMPTY, legacy), (30_000, IMPROVED, "{}")];
+        assert!(
+            summarize_intervention_history(rows, 21_600).is_empty(),
+            "legacy interventions without explicit calibration eligibility must fail closed"
+        );
+    }
 
     #[test]
     fn compact_history_detects_improvement() {
@@ -430,6 +467,66 @@ mod tests {
     }
 
     #[test]
+    fn listening_calibration_uses_unaided_success() {
+        let before = r#"[
+          {
+            "learning_item_id":"li-1",
+            "recognition":{},
+            "listening":{"weighted_success_rate":0.9,"unaided_success_rate":0.2,"last_observed_at_unix":10},
+            "prompted_production":{},
+            "spontaneous_production":{},
+            "transfer":{}
+          }
+        ]"#;
+        let after = r#"[
+          {
+            "learning_item_id":"li-1",
+            "recognition":{},
+            "listening":{"weighted_success_rate":0.9,"unaided_success_rate":0.8,"last_observed_at_unix":30},
+            "prompted_production":{},
+            "spontaneous_production":{},
+            "transfer":{}
+          }
+        ]"#;
+        let outcome = r#"{
+          "calibration_valid":true,
+          "interventions":[
+            {"action":"listening_probe","learning_item_id":"li-1","target_capability":"listening","calibration_eligible":true}
+          ]
+        }"#;
+        let effects =
+            summarize_intervention_history([(0, before, outcome), (30_000, after, "{}")], 21_600);
+        assert_eq!(effects.len(), 1);
+        assert_eq!(effects[0].improved, 1);
+        assert_eq!(effects[0].mean_success_delta, Some(0.6000000000000001));
+    }
+
+    #[test]
+    fn ambiguous_same_item_capability_interventions_do_not_claim_effectiveness() {
+        let outcome = r#"{
+          "calibration_valid":true,
+          "interventions":[
+            {"action":"fade_prompts","learning_item_id":"li-1","target_capability":"spontaneous_production","calibration_eligible":true},
+            {"action":"automaticity_drill","learning_item_id":"li-1","target_capability":"spontaneous_production","calibration_eligible":true}
+          ]
+        }"#;
+        let rows = [(0, EMPTY, outcome), (30_000, IMPROVED, "{}")];
+        assert!(summarize_intervention_history(rows, 21_600).is_empty());
+    }
+
+    #[test]
+    fn intervention_without_same_target_diagnostic_does_not_calibrate() {
+        let outcome = r#"{
+          "calibration_valid":true,
+          "interventions":[
+            {"action":"fade_prompts","learning_item_id":"li-1","target_capability":"spontaneous_production","calibration_eligible":false}
+          ]
+        }"#;
+        let rows = [(0, EMPTY, outcome), (30_000, IMPROVED, "{}")];
+        assert!(summarize_intervention_history(rows, 21_600).is_empty());
+    }
+
+    #[test]
     fn planned_candidates_without_actual_intervention_do_not_calibrate() {
         let no_actual = r#"{"calibration_valid":true,"interventions":[]}"#;
         let rows = [(0, EMPTY, no_actual), (30_000, IMPROVED, "{}")];
@@ -441,7 +538,7 @@ mod tests {
         let invalid = r#"{
           "calibration_valid":false,
           "interventions":[
-            {"action":"fade_prompts","learning_item_id":"li-1","target_capability":"spontaneous_production"}
+            {"action":"fade_prompts","learning_item_id":"li-1","target_capability":"spontaneous_production","calibration_eligible":true}
           ]
         }"#;
         let rows = [(0, EMPTY, invalid), (30_000, IMPROVED, "{}")];

@@ -4,10 +4,10 @@
 
 /// Insert a learning item.
 pub const INSERT_ITEM: &str = "INSERT INTO learning_items
-    (id, learner_language_profile_id, language_pack_id, item_type, target_text,
+    (id, learner_language_profile_id, item_type, target_text,
      normalized_target_text, prompt_text, prompt_language, status,
-     language_metadata_json, introduced_lesson_id, created_at, updated_at)
- VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)";
+     introduced_lesson_id, created_at, updated_at)
+ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)";
 
 /// Update item status.
 pub const UPDATE_ITEM_STATUS: &str =
@@ -15,45 +15,41 @@ pub const UPDATE_ITEM_STATUS: &str =
 
 /// Item by ID.
 pub const SELECT_ITEM: &str = "SELECT id, learner_language_profile_id,
-    language_pack_id, item_type, target_text, normalized_target_text,
-    prompt_text, prompt_language, status, language_metadata_json,
-    introduced_lesson_id
+    item_type, target_text, normalized_target_text,
+    prompt_text, prompt_language, status, introduced_lesson_id
  FROM learning_items WHERE id = ?1";
 
 /// Duplicate check by canonical text (uses `ix_items_normalized`).
 pub const SELECT_ITEM_BY_NORMALIZED: &str = "SELECT id, learner_language_profile_id,
-    language_pack_id, item_type, target_text, normalized_target_text,
-    prompt_text, prompt_language, status, language_metadata_json,
-    introduced_lesson_id
+    item_type, target_text, normalized_target_text,
+    prompt_text, prompt_language, status, introduced_lesson_id
  FROM learning_items
  WHERE learner_language_profile_id = ?1 AND normalized_target_text = ?2";
 
 /// Profile items filtered by status (uses `ix_items_profile_status`).
 pub const SELECT_ITEMS_BY_STATUS: &str = "SELECT id, learner_language_profile_id,
-    language_pack_id, item_type, target_text, normalized_target_text,
-    prompt_text, prompt_language, status, language_metadata_json,
-    introduced_lesson_id
+    item_type, target_text, normalized_target_text,
+    prompt_text, prompt_language, status, introduced_lesson_id
  FROM learning_items
  WHERE learner_language_profile_id = ?1 AND status = ?2 LIMIT ?3";
 
 /// Insert evidence.
 pub const INSERT_EVIDENCE: &str = "INSERT INTO learning_item_evidence
-    (id, learning_item_id, lesson_id, kind, success, detail, pack_metadata_json,
+    (id, learning_item_id, lesson_id, kind, success, detail, metadata_json,
      recorded_at, observation_order)
  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)";
 
 /// Evidence trail for one item (uses `ix_evidence_item`).
 pub const SELECT_EVIDENCE_FOR_ITEM: &str = "SELECT id, learning_item_id, lesson_id,
-    kind, success, detail, pack_metadata_json, recorded_at
+    kind, success, detail, metadata_json, recorded_at
  FROM learning_item_evidence WHERE learning_item_id = ?1 ORDER BY recorded_at";
 
 /// Insert an error target.
 pub const INSERT_ERROR_TARGET: &str = "INSERT INTO error_targets
-    (id, learner_language_profile_id, language_pack_id, language_pack_version,
-     core_category, pack_error_code, original_production, corrected_production,
+    (id, learner_language_profile_id, core_category, error_code, original_production, corrected_production,
      explanation, occurrence_count, method_change_required, status,
      created_at, updated_at)
- VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)";
+ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)";
 
 /// Update target counters/status after a sighting.
 pub const UPDATE_ERROR_TARGET: &str = "UPDATE error_targets SET
@@ -62,14 +58,14 @@ pub const UPDATE_ERROR_TARGET: &str = "UPDATE error_targets SET
 
 /// Target by ID.
 pub const SELECT_ERROR_TARGET: &str = "SELECT id, learner_language_profile_id,
-    language_pack_id, language_pack_version, core_category, pack_error_code,
+    core_category, error_code,
     original_production, corrected_production, explanation, occurrence_count,
     method_change_required, status
  FROM error_targets WHERE id = ?1";
 
 /// Profile targets by status (uses `ix_errors_profile_status`).
 pub const SELECT_ERROR_TARGETS: &str = "SELECT id, learner_language_profile_id,
-    language_pack_id, language_pack_version, core_category, pack_error_code,
+    core_category, error_code,
     original_production, corrected_production, explanation, occurrence_count,
     method_change_required, status
  FROM error_targets

@@ -16,23 +16,22 @@ mod tests {
         ));
         let db = crate::storage::open(&path).unwrap();
         db.execute_batch(
-            r#"INSERT INTO language_packs
-                (id,package_name,version,contract_version,target_language,target_locale,display_name,installed_at,updated_at)
-               VALUES('es-ES','language-pack-es-es','0.2.0',1,'es','es-ES','Spanish (Spain)','a','a');
+            r#"
                INSERT INTO learner_profile(id,created_at,updated_at) VALUES('learner-1','a','a');
                INSERT INTO learner_language_profiles
-                (id,learner_id,language_pack_id,source_language,target_locale,created_at,updated_at)
-               VALUES('llp-1','learner-1','es-ES','ru','es-ES','a','a');
+                (id,learner_id,source_language,target_locale,created_at,updated_at)
+               VALUES('llp-1','learner-1', 'ru','es-ES','a','a');
                INSERT INTO cards
-                (id,learner_language_profile_id,language_pack_id,language_pack_version,intent,status,prompt,prompt_language,
-                 answer,answer_language,accepted_answers_json,answer_evaluation_mode,explanation,pronunciation_note,
+                (id,learner_language_profile_id,intent,status,prompt,prompt_language,
+                 answer,answer_language,accepted_answers_json,explanation,pronunciation_note,
                  creation_reason,content_hash,content_version,created_by,created_at,updated_at)
                VALUES
-                ('card-1','llp-1','es-ES','0.2.0','production','review','old prompt','ru','answer','es-ES',
-                 '["old"]','exact','old exp',NULL,'seed','old-hash',1,'tutor','a','a'),
-                ('card-2','llp-1','es-ES','0.2.0','production','review','two','ru','answer','es-ES',
-                 '[]','exact',NULL,NULL,'seed','h2',1,'tutor','a','a');"#
-        ).unwrap();
+                ('card-1','llp-1','production','review','old prompt','ru','answer','es-ES',
+                 '["old"]','old exp',NULL,'seed','old-hash',1,'tutor','a','a'),
+                ('card-2','llp-1','production','review','two','ru','answer','es-ES',
+                 '[]',NULL,NULL,'seed','h2',1,'tutor','a','a');"#,
+        )
+        .unwrap();
         drop(db);
         (path.clone(), Env::new(path, "test-signing-key".to_owned()))
     }
@@ -258,7 +257,7 @@ pub(crate) fn patch_card(
     let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let current = transaction
         .query_row(
-            "SELECT language_pack_id,language_pack_version,intent,prompt,answer,
+            "SELECT intent,prompt,answer,
                     accepted_answers_json,explanation,pronunciation_note
              FROM cards WHERE id=?1",
             params![card_id],
@@ -268,18 +267,14 @@ pub(crate) fn patch_card(
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, Option<String>>(6)?,
-                    row.get::<_, Option<String>>(7)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             },
         )
         .optional()?;
 
     let Some((
-        pack_id,
-        pack_version,
         intent_text,
         current_prompt,
         current_answer,
@@ -409,8 +404,6 @@ pub(crate) fn patch_card(
         None,
         "user",
         &reason,
-        &pack_id,
-        &pack_version,
         "applied",
         &at,
     )?;
@@ -430,20 +423,13 @@ pub(crate) fn set_card_status(
 
     let current = transaction
         .query_row(
-            "SELECT status,language_pack_id,language_pack_version
-             FROM cards WHERE id=?1",
+            "SELECT status FROM cards WHERE id=?1",
             params![card_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            },
+            |row| row.get::<_, String>(0),
         )
         .optional()?;
 
-    let Some((current_status, pack_id, pack_version)) = current else {
+    let Some(current_status) = current else {
         return crate::api::operation_error(404, "not_found", "unknown card");
     };
 
@@ -483,8 +469,6 @@ pub(crate) fn set_card_status(
         None,
         "user",
         reason.unwrap_or("user action"),
-        &pack_id,
-        &pack_version,
         "applied",
         &at,
     )?;

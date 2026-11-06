@@ -80,7 +80,8 @@ pub fn visit_tutor_focus_decisions<'a>(
             .spontaneous_production
             .unaided_success_rate
             .is_some_and(|rate| rate >= 0.75)
-        && item.spontaneous_production.evidence_strength >= 0.55;
+        && item.spontaneous_production.evidence_strength >= 0.55
+        && item.spontaneous_production.qualified_success_streak >= 2;
     if spontaneous_ready {
         emit_if_needed(
             item,
@@ -173,7 +174,11 @@ fn consolidated(capability: CapabilityKind, estimate: CapabilityEstimateView<'_>
             estimate
                 .weighted_success_rate
                 .is_some_and(|rate| rate >= 0.85)
+                && estimate
+                    .unaided_success_rate
+                    .is_some_and(|rate| rate >= 0.80)
                 && estimate.evidence_strength >= 0.65
+                && estimate.qualified_success_streak >= 2
         }
         CapabilityKind::SpontaneousProduction => {
             estimate
@@ -314,6 +319,149 @@ mod tests {
         let mut count = 0;
         visit_tutor_focus_decisions(crate::item_capability_view(&state), 100, |_| count += 1);
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn assisted_listening_does_not_consolidate() {
+        let state = item(
+            "li",
+            "learning",
+            CapabilityEstimateFixed {
+                attempts: 3,
+                successes: 3,
+                weighted_success_rate: Some(1.0),
+                unaided_success_rate: None,
+                evidence_strength: 0.9,
+                qualified_success_streak: 0,
+                last_observed_at_unix: Some(100),
+                last_observed_qualified_success: Some(false),
+                ..CapabilityEstimateFixed::default()
+            },
+            CapabilityEstimateFixed {
+                attempts: 1,
+                weighted_success_rate: Some(0.9),
+                unaided_success_rate: Some(0.9),
+                evidence_strength: 0.8,
+                qualified_success_streak: 2,
+                last_observed_qualified_success: Some(true),
+                ..CapabilityEstimateFixed::default()
+            },
+            CapabilityEstimateFixed::default(),
+        );
+        let mut listening = None;
+        visit_tutor_focus_decisions(crate::item_capability_view(&state), 200, |decision| {
+            if decision.capability == CapabilityKind::Listening {
+                listening = Some((decision.due_now, decision.stage));
+            }
+        });
+        assert_eq!(listening, Some((true, 0)));
+    }
+
+    #[test]
+    fn transfer_focus_requires_distributed_spontaneous_success() {
+        let state = item(
+            "li",
+            "learning",
+            CapabilityEstimateFixed {
+                attempts: 3,
+                weighted_success_rate: Some(0.95),
+                unaided_success_rate: Some(0.95),
+                evidence_strength: 0.8,
+                qualified_success_streak: 2,
+                last_observed_at_unix: Some(100),
+                last_observed_qualified_success: Some(true),
+                ..CapabilityEstimateFixed::default()
+            },
+            CapabilityEstimateFixed {
+                attempts: 6,
+                weighted_success_rate: Some(0.95),
+                unaided_success_rate: Some(0.95),
+                evidence_strength: 0.8,
+                independent_evidence_episodes: 3,
+                qualified_success_streak: 1,
+                last_observed_at_unix: Some(100),
+                last_observed_qualified_success: Some(true),
+                ..CapabilityEstimateFixed::default()
+            },
+            CapabilityEstimateFixed::default(),
+        );
+
+        let mut transfer = false;
+        visit_tutor_focus_decisions(crate::item_capability_view(&state), 200, |decision| {
+            transfer |= decision.capability == CapabilityKind::Transfer;
+        });
+        assert!(!transfer);
+    }
+
+    #[test]
+    fn decay_reopens_consolidated_spontaneous_capability_for_revalidation() {
+        let capability = [CapabilityKind::SpontaneousProduction; 4];
+        let success = [true; 4];
+        let assistance = [0; 4];
+        let present = [true; 4];
+        let millis = [1_000; 4];
+        let contexts = [None; 4];
+        let families = [None; 4];
+        let episodes = [Some("les-4"), Some("les-3"), Some("les-2"), Some("les-1")];
+        let base = 1_000_i64;
+        let at = [base; 4];
+
+        let fresh = crate::project_item_capabilities_columns(
+            "li",
+            "target",
+            "mastered",
+            4,
+            &capability,
+            &success,
+            &assistance,
+            &present,
+            &millis,
+            &present,
+            &contexts,
+            &families,
+            &episodes,
+            &at,
+            base,
+        );
+        let mut fresh_spontaneous = false;
+        visit_tutor_focus_decisions(crate::item_capability_view(&fresh), base, |decision| {
+            fresh_spontaneous |= decision.capability == CapabilityKind::SpontaneousProduction;
+        });
+        assert!(
+            !fresh_spontaneous,
+            "fresh strong distributed production should be consolidated"
+        );
+
+        let later = base + 28 * DAY_SECONDS;
+        let stale = crate::project_item_capabilities_columns(
+            "li",
+            "target",
+            "mastered",
+            4,
+            &capability,
+            &success,
+            &assistance,
+            &present,
+            &millis,
+            &present,
+            &contexts,
+            &families,
+            &episodes,
+            &at,
+            later,
+        );
+        let mut stale_spontaneous = None;
+        visit_tutor_focus_decisions(crate::item_capability_view(&stale), later, |decision| {
+            if decision.capability == CapabilityKind::SpontaneousProduction {
+                stale_spontaneous = Some((decision.due_now, decision.stage));
+            }
+        });
+
+        assert_eq!(
+            stale_spontaneous,
+            Some((true, 4)),
+            "calendar decay must reopen even previously consolidated mastery for due revalidation"
+        );
     }
 
     #[test]

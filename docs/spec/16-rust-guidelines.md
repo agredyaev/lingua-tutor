@@ -7,7 +7,7 @@ Depends on: [02-workspace.md](02-workspace.md), [12-testing.md](12-testing.md).
 
 | Rule | Test |
 |---|---|
-| No abstraction before second consumer | Behavior traits are not an architectural escape hatch. Closed behavior uses explicit function passes plus dense integer selectors when dispatch is required; `ReviewScheduler` and `LanguagePack` traits are forbidden. |
+| No abstraction before second consumer | Behavior traits are not an architectural escape hatch. Closed behavior uses explicit function passes plus dense integer selectors when dispatch is required; behavior traits that recreate scheduler or linguistic dispatch are forbidden. |
 | No new crate before first real code | Crate exists only when its first type lands ([02-workspace.md](02-workspace.md) §1). |
 | Enum over trait object | Closed set of behaviors → `enum` + `match`, not `Box<dyn Trait>`. |
 | No builder pattern for ≤ 4 fields | Struct literal or `new()`. |
@@ -24,7 +24,7 @@ Decision: expected failure → `Result`; normal absence → `Option`; bug/invari
 
 | Layer | Strategy |
 |---|---|
-| Library crates (`learning-core`, `review-engine`, `language-pack-api`, …) | `thiserror` enums, precise variants, `#[from]` preserves source. No `anyhow`. |
+| Library crates (`learning-core`, `review-engine`, `adaptation`, `tutor-contract`, …) | `thiserror` enums, precise variants, `#[from]` preserves source. No `anyhow`. |
 | `apps/local` handlers | Map crate errors → stable operation error codes at the transport boundary ([08-local-rpc.md](08-local-rpc.md) §1). |
 | `apps/web` | Typed error enum from `shared-schema`; rendered via `<ErrorBoundary>` ([09-frontend.md](09-frontend.md) §2). |
 

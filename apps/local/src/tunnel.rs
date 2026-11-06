@@ -144,11 +144,7 @@ impl Client {
         }
     }
 
-    async fn poll_loop(
-        self: &Arc<Self>,
-        env: Env,
-        registry: Arc<crate::BuiltInPackRegistry>,
-    ) -> Result<(), String> {
+    async fn poll_loop(self: &Arc<Self>, env: Env) -> Result<(), String> {
         let mut in_flight = JoinSet::new();
         let mut failures = 0_u32;
         let poll_url = format!("{}/poll", self.endpoint);
@@ -217,9 +213,8 @@ impl Client {
             for raw in envelope.commands {
                 let client = Arc::clone(self);
                 let command_env = env.clone();
-                let command_registry = Arc::clone(&registry);
                 in_flight.spawn(async move {
-                    process_command(client, command_env, command_registry, raw, received_at).await
+                    process_command(client, command_env, raw, received_at).await
                 });
             }
         }
@@ -382,7 +377,6 @@ impl Client {
 async fn process_command(
     client: Arc<Client>,
     env: Env,
-    registry: Arc<crate::BuiltInPackRegistry>,
     raw: Box<RawValue>,
     received_at: Instant,
 ) -> Result<(), String> {
@@ -422,7 +416,7 @@ async fn process_command(
             synthetic_error(&command, "client_internal", 502)?
         }
         CommandType::Jsonrpc => match command.jsonrpc.as_deref() {
-            Some(jsonrpc) => dispatch_jsonrpc(&env, &registry, &command, jsonrpc)?,
+            Some(jsonrpc) => dispatch_jsonrpc(&env, &command, jsonrpc)?,
             None => synthetic_error(&command, "protocol", 502)?,
         },
         CommandType::Other => unreachable!("unsupported command types are filtered above"),
@@ -443,11 +437,10 @@ fn command_type_has_terminal_response(command_type: &CommandType) -> bool {
 
 fn dispatch_jsonrpc(
     env: &Env,
-    registry: &crate::BuiltInPackRegistry,
     command: &WireCommand,
     jsonrpc: &RawValue,
 ) -> Result<Vec<u8>, String> {
-    match mcp::dispatch_jsonrpc(env, registry, jsonrpc.get().as_bytes()) {
+    match mcp::dispatch_jsonrpc(env, jsonrpc.get().as_bytes()) {
         Ok(DirectDispatch::Response(response)) => {
             let raw = RawValue::from_string(response).map_err(|error| error.to_string())?;
             encode_response(command, Some(raw.as_ref()), 200, "jsonrpc_response")
@@ -745,17 +738,13 @@ fn new_instance_id() -> String {
 }
 
 /// Connect Lingua Tutor's in-process MCP service to OpenAI Secure MCP Tunnel.
-pub async fn run(
-    env: Env,
-    registry: Arc<crate::BuiltInPackRegistry>,
-    config: TunnelConfig,
-) -> Result<(), String> {
+pub async fn run(env: Env, config: TunnelConfig) -> Result<(), String> {
     let client = Client::new(config)?;
     println!("  tunnel: connecting");
     client.validate().await?;
     println!("  tunnel: connected");
 
-    client.poll_loop(env, registry).await
+    client.poll_loop(env).await
 }
 
 #[cfg(test)]

@@ -12,8 +12,7 @@ This decision is based on the final `refactor/core-data-path` working tree. Func
 - `apps/local/src/old` and `crates/application` are removed.
 - `learning-core` no longer owns entity records/object graphs or string-ID wrappers; it contains only scalar contracts, timestamps, and pure rules/hashes with real consumers.
 - Review scheduling uses explicit `u32` algorithm IDs and free passes; no scheduler behavior trait remains.
-- Language-pack behavior uses concrete data plus free passes; no `LanguagePack` trait/dynamic dispatch remains.
-- The pack registry is SoA/CSR storage with free lookup/build passes and dense `PackIndex = u32`.
+- No executable language-pack behavior or registry remains; target/source language are profile metadata and linguistic interpretation stays at the tutor-contract boundary.
 - Adaptation retained data has no inherent processing methods; behavior is expressed as free passes.
 - Lesson/card retained relationships are dense `u32`; `usize` is transient only at array/slice access.
 - Architecture tests reject the removed object layers, dynamic dispatch, and retained relationship regressions.

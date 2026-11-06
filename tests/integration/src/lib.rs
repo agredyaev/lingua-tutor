@@ -29,6 +29,13 @@ pub fn migrated_connection() -> Connection {
     assert!(!files.is_empty(), "no migration files found");
 
     for file in files {
+        if file.file_name().is_some_and(|name| {
+            let name = name.to_string_lossy();
+            name.starts_with("0006_language_neutral_storage")
+                || name.starts_with("0007_semantic_metadata")
+        }) {
+            continue;
+        }
         let sql = fs::read_to_string(&file).unwrap();
         conn.execute_batch(&sql)
             .unwrap_or_else(|e| panic!("{} failed: {e}", file.display()));
@@ -36,18 +43,14 @@ pub fn migrated_connection() -> Connection {
     conn
 }
 
-/// Seeds pack + learner + language profile (`llp-1`) for row-level tests.
-pub fn seed_profile_and_pack(conn: &Connection) {
+/// Seeds learner + language profile (`llp-1`) for row-level tests.
+pub fn seed_profile(conn: &Connection) {
     conn.execute_batch(
-        "INSERT INTO language_packs (id, package_name, version, contract_version,
-             target_language, target_locale, display_name, installed_at, updated_at)
-         VALUES ('test-pack', 'synthetic-test-pack', '0.1.0', 1, 'zz', 'zz-ZZ',
-                 'Synthetic', '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z');
-         INSERT INTO learner_profile (id, created_at, updated_at)
+        "INSERT INTO learner_profile (id, created_at, updated_at)
          VALUES ('learner-1', '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z');
-         INSERT INTO learner_language_profiles (id, learner_id, language_pack_id,
+         INSERT INTO learner_language_profiles (id, learner_id,
              source_language, target_locale, created_at, updated_at)
-         VALUES ('llp-1', 'learner-1', 'test-pack', 'ru', 'zz-ZZ',
+         VALUES ('llp-1', 'learner-1', 'ru', 'zz-ZZ',
                  '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z');",
     )
     .unwrap();

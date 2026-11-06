@@ -13,9 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 adaptation = { workspace = true }
-language-pack-api = { workspace = true }
-language-pack-es-es = { workspace = true }
-language-pack-registry = { workspace = true }
 learning-core = { workspace = true }
 review-engine = { workspace = true }
 shared-schema = { workspace = true }

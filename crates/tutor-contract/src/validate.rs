@@ -49,8 +49,6 @@ fn header(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
     for (path, value) in [
         ("client_operation_id", &r.client_operation_id),
         ("language_profile_id", &r.language_profile_id),
-        ("language_pack_id", &r.language_pack_id),
-        ("language_pack_version", &r.language_pack_version),
     ] {
         if value.trim().is_empty() {
             issue(
@@ -563,13 +561,40 @@ fn measurement_coverage(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
             .iter()
             .filter(|entry| entry.probe_phase == Some(crate::ProbePhase::Diagnostic))
             .count();
-    if diagnostic_count < 2 {
+    let independent_measurement_count = r
+        .evidence
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry.probe_phase,
+                Some(
+                    crate::ProbePhase::Diagnostic
+                        | crate::ProbePhase::DelayedRetrieval
+                        | crate::ProbePhase::Transfer
+                )
+            )
+        })
+        .count()
+        + r.listening_attempts
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.probe_phase,
+                    Some(
+                        crate::ProbePhase::Diagnostic
+                            | crate::ProbePhase::DelayedRetrieval
+                            | crate::ProbePhase::Transfer
+                    )
+                )
+            })
+            .count();
+    if diagnostic_count < 1 || independent_measurement_count < 2 {
         issue(
             issues,
             "insufficient_measurement_coverage",
             "evidence".to_owned(),
             format!(
-                "lesson completion requires at least 2 measured diagnostic probes, got {diagnostic_count}"
+                "lesson completion requires at least 1 diagnostic baseline and 2 independent measured probes overall; got {diagnostic_count} diagnostic and {independent_measurement_count} independent"
             ),
         );
     }
@@ -674,6 +699,15 @@ fn interventions(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
                     "target_capability must match referenced evidence kind".to_owned(),
                 );
             }
+            if evidence.probe_phase == Some(crate::ProbePhase::Diagnostic) {
+                issue(
+                    issues,
+                    "inconsistent_intervention",
+                    format!("{base}/evidence_index"),
+                    "intervention immediate outcome must be post-intervention, not diagnostic"
+                        .to_owned(),
+                );
+            }
             if evidence.learning_item_id.as_deref() != id
                 || evidence.client_item_key.as_deref() != key
             {
@@ -701,6 +735,15 @@ fn interventions(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
                     "inconsistent_intervention",
                     format!("{base}/target_capability"),
                     "listening outcome requires target_capability=listening".to_owned(),
+                );
+            }
+            if attempt.probe_phase == Some(crate::ProbePhase::Diagnostic) {
+                issue(
+                    issues,
+                    "inconsistent_intervention",
+                    format!("{base}/listening_attempt_index"),
+                    "intervention immediate outcome must be post-intervention, not diagnostic"
+                        .to_owned(),
                 );
             }
             if attempt.learning_item_id.as_deref() != id

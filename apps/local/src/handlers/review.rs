@@ -1,4 +1,4 @@
-//! Review sessions, events, undo, stats, and pack evaluation.
+//! Review sessions, events, undo, stats, and answer evaluation.
 //! Scheduling rules live in review-engine; transport mapping lives elsewhere.
 
 use crate::api::{now, operation_error};
@@ -155,7 +155,6 @@ pub(crate) fn retention_for(env: &Env, profile_id: &str, days: i64) -> Result<se
 }
 
 pub(crate) fn evaluate(
-    registry: &crate::BuiltInPackRegistry,
     env: &Env,
     card_id: &str,
     learner_answer: &str,
@@ -163,9 +162,8 @@ pub(crate) fn evaluate(
     let database = env.connection()?;
     let card = database
         .query_row(
-            "SELECT language_pack_id, answer, accepted_answers_json,
-                answer_evaluation_mode, language_pack_version, intent, status, created_by
-         FROM cards WHERE id=?1",
+            "SELECT answer, accepted_answers_json, intent, status, created_by
+             FROM cards WHERE id=?1",
             params![card_id],
             |row| {
                 Ok((
@@ -174,21 +172,15 @@ pub(crate) fn evaluate(
                     row.get::<_, String>(2)?,
                     row.get::<_, String>(3)?,
                     row.get::<_, String>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
-                    row.get::<_, String>(7)?,
                 ))
             },
         )
         .optional()?;
-    let Some((pack_id, answer, accepted_json, evaluation_mode, version, intent, status, actor)) =
-        card
-    else {
+    let Some((answer, accepted_json, intent, status, actor)) = card else {
         return operation_error(404, "not_found", "unknown card");
     };
 
-    if semver::Version::parse(&version).is_err()
-        || crate::repositories::card_intent_from_db(&intent).is_none()
+    if crate::repositories::card_intent_from_db(&intent).is_none()
         || crate::repositories::card_status_from_db(&status).is_none()
         || crate::repositories::card_actor_from_db(&actor).is_none()
     {
@@ -197,15 +189,24 @@ pub(crate) fn evaluate(
     let Ok(accepted_answers) = serde_json::from_str::<Vec<String>>(&accepted_json) else {
         return operation_error(500, "corrupt_row", "stored card is invalid");
     };
-    if language_pack_registry::get(registry, &pack_id).is_none() {
-        return operation_error(409, "pack_incompatible", "card's pack not registered");
-    }
-    let evaluation =
-        language_pack_es_es::evaluate_answer(&language_pack_api::AnswerEvaluationRequest {
-            expected_answer: answer,
-            accepted_answers,
-            learner_answer: learner_answer.to_owned(),
-            evaluation_mode,
-        });
-    crate::json(&evaluation)
+    let same_answer = |candidate: &str| {
+        candidate
+            .split_whitespace()
+            .eq(learner_answer.split_whitespace())
+    };
+    let (verdict, matched_answer) = if same_answer(&answer) {
+        ("correct", Some(answer))
+    } else if let Some(matched) = accepted_answers
+        .into_iter()
+        .find(|value| same_answer(value))
+    {
+        ("acceptable_variant", Some(matched))
+    } else {
+        ("incorrect", None)
+    };
+    crate::json(&serde_json::json!({
+        "verdict": verdict,
+        "matched_answer": matched_answer,
+        "feedback": null
+    }))
 }

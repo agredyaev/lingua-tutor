@@ -3,8 +3,8 @@
 //! row structs round-trip through domain types.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
-use integration_tests::{migrated_connection, seed_profile_and_pack};
-use lingua_tutor_local::repositories::{cards, lessons, packs, profiles, records, review};
+use integration_tests::{migrated_connection, seed_profile};
+use lingua_tutor_local::repositories::{cards, lessons, profiles, records, review};
 use rusqlite::params;
 
 const NOW: &str = "2026-07-12T10:00:00Z";
@@ -39,7 +39,7 @@ fn learner_profile_upsert_and_select() {
 #[test]
 fn language_profile_insert_select_update_roundtrip() {
     let conn = migrated_connection();
-    seed_profile_and_pack(&conn);
+    seed_profile(&conn);
     let (source, status, preferences): (String, String, String) = conn
         .query_row(profiles::SELECT_LANGUAGE_PROFILE, ["llp-1"], |row| {
             Ok((
@@ -67,45 +67,28 @@ fn language_profile_insert_select_update_roundtrip() {
 }
 
 #[test]
-fn pack_upsert_from_manifest() {
+fn locale_metadata_is_profile_data() {
     let conn = migrated_connection();
-    let (manifest, _) = language_pack_es_es::register();
-    let capabilities_json = serde_json::to_string(&manifest.capabilities).unwrap();
-    conn.execute(
-        packs::UPSERT_PACK,
-        params![
-            manifest.id,
-            manifest.package,
-            manifest.version,
-            manifest.contract_version,
-            manifest.target_language,
-            manifest.target_locale,
-            manifest.display_name,
-            capabilities_json,
-            NOW
-        ],
-    )
-    .unwrap();
-    let (id, enabled): (String, u8) = conn
-        .query_row(packs::SELECT_PACK, ["es-ES"], |r| {
-            Ok((r.get(0)?, r.get(8)?))
-        })
+    seed_profile(&conn);
+    let (source, target): (String, String) = conn
+        .query_row(
+            "SELECT source_language, target_locale FROM learner_language_profiles WHERE id='llp-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
         .unwrap();
-    assert_eq!(id, "es-ES");
-    assert_eq!(enabled, 1);
+    assert_eq!((source.as_str(), target.as_str()), ("ru", "zz-ZZ"));
 }
 
 #[test]
 fn lesson_insert_complete_and_idempotency_lookup() {
     let conn = migrated_connection();
-    seed_profile_and_pack(&conn);
+    seed_profile(&conn);
     conn.execute(
         lessons::INSERT_LESSON,
         params![
             "les-1",
             "llp-1",
-            "test-pack",
-            "0.1.0",
             1,
             "active",
             "pharmacy",
@@ -173,15 +156,13 @@ fn latest_open_lesson_excludes_completed_and_picks_most_recent() {
     // `lesson_number` for. `SELECT_LATEST_OPEN_LESSON` is what lets the
     // handler attach to that row instead.
     let conn = migrated_connection();
-    seed_profile_and_pack(&conn);
+    seed_profile(&conn);
     let insert = |id: &str, number: i64, status: &str, started_at: &str| {
         conn.execute(
             lessons::INSERT_LESSON,
             params![
                 id,
                 "llp-1",
-                "test-pack",
-                "0.1.0",
                 number,
                 status,
                 "pharmacy",
@@ -213,20 +194,18 @@ fn latest_open_lesson_excludes_completed_and_picks_most_recent() {
 #[test]
 fn item_evidence_and_duplicate_lookup() {
     let conn = migrated_connection();
-    seed_profile_and_pack(&conn);
+    seed_profile(&conn);
     conn.execute(
         records::INSERT_ITEM,
         params![
             "li-1",
             "llp-1",
-            "test-pack",
             "phrase",
             "¿Qué tal?",
             "¿qué tal?",
             Some("Как дела?"),
             Some("ru"),
             "introduced",
-            "{}",
             Option::<String>::None,
             NOW
         ],
@@ -274,14 +253,12 @@ fn item_evidence_and_duplicate_lookup() {
 #[test]
 fn error_target_lifecycle_and_due_rechecks() {
     let conn = migrated_connection();
-    seed_profile_and_pack(&conn);
+    seed_profile(&conn);
     conn.execute(
         records::INSERT_ERROR_TARGET,
         params![
             "et-1",
             "llp-1",
-            "test-pack",
-            "0.1.0",
             "grammar",
             Some("es.verb.ser_estar"),
             "estoy médico",
@@ -359,7 +336,7 @@ fn error_target_lifecycle_and_due_rechecks() {
 #[test]
 fn listening_attempt_insert_and_list() {
     let conn = migrated_connection();
-    seed_profile_and_pack(&conn);
+    seed_profile(&conn);
     conn.execute(
         records::INSERT_LISTENING_ATTEMPT,
         params![
@@ -390,15 +367,14 @@ fn listening_attempt_insert_and_list() {
 #[test]
 fn retention_query_excludes_undo_lineage_both_ways() {
     let conn = migrated_connection();
-    seed_profile_and_pack(&conn);
+    seed_profile(&conn);
     conn.execute_batch(
-        "INSERT INTO cards (id, learner_language_profile_id, language_pack_id,
-             language_pack_version, intent, status, prompt, prompt_language, answer,
-             answer_language, accepted_answers_json, answer_evaluation_mode,
+        "INSERT INTO cards (id, learner_language_profile_id, intent, status, prompt, prompt_language, answer,
+             answer_language, accepted_answers_json,
              creation_reason, created_by, created_at, updated_at, content_hash,
              content_version)
-         VALUES ('crd-1', 'llp-1', 'test-pack', '0.1.0', 'production', 'review',
-                 'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+         VALUES ('crd-1', 'llp-1', 'production', 'review',
+                 'p', 'ru', 'a', 'zz-ZZ', '[]', 'seed', 'tutor',
                  '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z', 'h', 1);
          INSERT INTO review_sessions (id, learner_language_profile_id, started_at,
              source, created_at)
@@ -440,22 +416,21 @@ fn count_new_cards_introduced_today_counts_first_grade_not_creation() {
     // minted `new` today but never yet shown must NOT count as "already
     // introduced", or it can never enter its own introducing session.
     let conn = migrated_connection();
-    seed_profile_and_pack(&conn);
+    seed_profile(&conn);
     conn.execute_batch(
-        "INSERT INTO cards (id, learner_language_profile_id, language_pack_id,
-             language_pack_version, intent, status, prompt, prompt_language, answer,
-             answer_language, accepted_answers_json, answer_evaluation_mode,
+        "INSERT INTO cards (id, learner_language_profile_id, intent, status, prompt, prompt_language, answer,
+             answer_language, accepted_answers_json,
              creation_reason, created_by, created_at, updated_at, content_hash,
              content_version)
          VALUES
-           ('crd-old-graded-today', 'llp-1', 'test-pack', '0.1.0', 'production',
-            'learning', 'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+           ('crd-old-graded-today', 'llp-1', 'production',
+            'learning', 'p', 'ru', 'a', 'zz-ZZ', '[]', 'seed', 'tutor',
             '2020-01-01T00:00:00Z', '2020-01-01T00:00:00Z', 'h1', 1),
-           ('crd-new-ungraded', 'llp-1', 'test-pack', '0.1.0', 'production',
-            'new', 'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+           ('crd-new-ungraded', 'llp-1', 'production',
+            'new', 'p', 'ru', 'a', 'zz-ZZ', '[]', 'seed', 'tutor',
             '2026-07-12T00:00:00Z', '2026-07-12T00:00:00Z', 'h2', 1),
-           ('crd-reviewed-again', 'llp-1', 'test-pack', '0.1.0', 'production',
-            'review', 'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+           ('crd-reviewed-again', 'llp-1', 'production',
+            'review', 'p', 'ru', 'a', 'zz-ZZ', '[]', 'seed', 'tutor',
             '2020-01-01T00:00:00Z', '2020-01-01T00:00:00Z', 'h3', 1);
          INSERT INTO review_sessions (id, learner_language_profile_id, started_at,
              source, created_at)
@@ -544,22 +519,21 @@ fn oldest_candidates_selected_first_and_bounded() {
     // `promote_candidates` give the longest-waiting ones first claim on the
     // next day's budget.
     let conn = migrated_connection();
-    seed_profile_and_pack(&conn);
+    seed_profile(&conn);
     conn.execute_batch(
-        "INSERT INTO cards (id, learner_language_profile_id, language_pack_id,
-             language_pack_version, intent, status, prompt, prompt_language, answer,
-             answer_language, accepted_answers_json, answer_evaluation_mode,
+        "INSERT INTO cards (id, learner_language_profile_id, intent, status, prompt, prompt_language, answer,
+             answer_language, accepted_answers_json,
              creation_reason, created_by, created_at, updated_at, content_hash,
              content_version)
          VALUES
-           ('crd-a', 'llp-1', 'test-pack', '0.1.0', 'production', 'candidate',
-            'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+           ('crd-a', 'llp-1', 'production', 'candidate',
+            'p', 'ru', 'a', 'zz-ZZ', '[]', 'seed', 'tutor',
             '2026-07-10T00:00:00Z', '2026-07-10T00:00:00Z', 'h1', 1),
-           ('crd-b', 'llp-1', 'test-pack', '0.1.0', 'production', 'candidate',
-            'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+           ('crd-b', 'llp-1', 'production', 'candidate',
+            'p', 'ru', 'a', 'zz-ZZ', '[]', 'seed', 'tutor',
             '2026-07-11T00:00:00Z', '2026-07-11T00:00:00Z', 'h2', 1),
-           ('crd-c', 'llp-1', 'test-pack', '0.1.0', 'production', 'new',
-            'p', 'ru', 'a', 'zz-ZZ', '[]', 'exact', 'seed', 'tutor',
+           ('crd-c', 'llp-1', 'production', 'new',
+            'p', 'ru', 'a', 'zz-ZZ', '[]', 'seed', 'tutor',
             '2026-07-09T00:00:00Z', '2026-07-09T00:00:00Z', 'h3', 1);",
     )
     .unwrap();

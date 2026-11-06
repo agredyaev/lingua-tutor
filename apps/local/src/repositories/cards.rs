@@ -2,19 +2,18 @@
 
 /// Insert a card.
 pub const INSERT_CARD: &str = "INSERT INTO cards
-    (id, learner_language_profile_id, language_pack_id, language_pack_version,
-     intent, status, prompt, prompt_language, answer, answer_language,
-     accepted_answers_json, answer_evaluation_mode, explanation,
+    (id, learner_language_profile_id, intent, status, prompt, prompt_language, answer, answer_language,
+     accepted_answers_json, explanation,
      pronunciation_note, source_learning_item_id, source_error_target_id,
      source_lesson_id, creation_reason, priority_score, content_hash,
      content_version, parent_card_id, suspended_reason, created_by,
      created_at, updated_at)
- VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
-         ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?25)";
+ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+         ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?22)";
 
-const CARD_COLUMNS: &str = "id, learner_language_profile_id, language_pack_id,
-    language_pack_version, intent, status, prompt, prompt_language, answer,
-    answer_language, accepted_answers_json, answer_evaluation_mode, explanation,
+const CARD_COLUMNS: &str =
+    "id, learner_language_profile_id, intent, status, prompt, prompt_language, answer,
+    answer_language, accepted_answers_json, explanation,
     pronunciation_note, source_learning_item_id, source_error_target_id,
     source_lesson_id, creation_reason, priority_score, content_hash,
     content_version, parent_card_id, suspended_reason, created_by";
@@ -79,9 +78,8 @@ pub const SELECT_OLDEST_CANDIDATES: &str = "SELECT id FROM cards
 /// Audit row per attempted mutation (applied or not, 07 §3).
 pub const INSERT_CARD_MUTATION: &str = "INSERT INTO card_mutations
     (id, card_id, operation, client_operation_id, before_json, after_json,
-     source_lesson_id, actor, reason, language_pack_id, language_pack_version,
-     validation_result, created_at)
- VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+     source_lesson_id, actor, reason, validation_result, created_at)
+ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
  ON CONFLICT(client_operation_id) DO NOTHING";
 
 /// Tag insert.

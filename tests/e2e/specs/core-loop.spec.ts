@@ -25,7 +25,7 @@ const lessonResult = (profileId: string) =>
     client_operation_id: `op-e2e-${Date.now()}`,
     language_profile_id: profileId,
     language_pack_id: "es-ES",
-    language_pack_version: "0.2.0",
+    language_pack_version: "1.0.0",
     lesson: { scenario: "pharmacy", duration_seconds: 900 },
     new_learning_items: [
       { client_item_key: "cough", item_type: "phrase", target_text: "¿Tiene algo para la tos?" },
@@ -74,7 +74,7 @@ test("app shell loads with navigation", async ({ page }) => {
 test("create profile, import lesson, review the card", async ({ page }) => {
   // Profile
   await page.goto("/languages");
-  await page.getByRole("button", { name: /Start Spanish/ }).click();
+  await page.getByRole("button", { name: "Create language profile" }).click();
   await expect(page.getByRole("button", { name: /es-ES/ })).toBeVisible();
 
   // Profile id through the same JSON-RPC transport used by the PWA.
@@ -164,7 +164,7 @@ test("real lesson lifecycle creates a review card and advances the next lesson",
         client_operation_id: `op-e2e-cycle-${op}`,
         language_profile_id: profileId,
         language_pack_id: "es-ES",
-        language_pack_version: "0.2.0",
+        language_pack_version: "1.0.0",
         lesson: {
           scenario: "restaurant",
           duration_seconds: 720,
@@ -304,7 +304,7 @@ test("offline review grade is queued and replayed after reconnect", async ({ pag
         client_operation_id: `op-e2e-offline-${op}`,
         language_profile_id: profileId,
         language_pack_id: "es-ES",
-        language_pack_version: "0.2.0",
+        language_pack_version: "1.0.0",
         lesson: {
           scenario: "cafe",
           duration_seconds: 480,

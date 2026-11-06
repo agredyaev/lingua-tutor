@@ -11,11 +11,7 @@ pub enum DirectDispatch {
 }
 
 /// Dispatch one bounded MCP JSON-RPC message in-process.
-pub fn dispatch_jsonrpc(
-    env: &Env,
-    registry: &crate::BuiltInPackRegistry,
-    input: &[u8],
-) -> Result<DirectDispatch, String> {
+pub fn dispatch_jsonrpc(env: &Env, input: &[u8]) -> Result<DirectDispatch, String> {
     if input.len() > 512 * 1024 {
         return Err("MCP request exceeds 512 KB".to_owned());
     }
@@ -63,8 +59,8 @@ pub fn dispatch_jsonrpc(
                 .pointer("/params/arguments")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({}));
-            let outcome = mcp_tools::call(definition, &arguments, env, registry)
-                .map_err(|error| error.to_string())?;
+            let outcome =
+                mcp_tools::call(definition, &arguments, env).map_err(|error| error.to_string())?;
             serde_json::json!({
                 "content": [{"type":"text","text": outcome.body}],
                 "isError": outcome.is_error
@@ -100,22 +96,16 @@ mod tests {
         let connection = storage::open(&db).unwrap();
         connection
             .execute_batch(
-                "INSERT INTO language_packs
-                   (id, package_name, version, contract_version, target_language,
-                    target_locale, display_name, capabilities_json, enabled,
-                    installed_at, updated_at)
-                 VALUES
-                   ('es-ES','language-pack-es-es','0.1.0',1,'es','es-ES',
-                    'Spanish (Spain)','[]',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+                "
                  INSERT INTO learner_profile
                    (id, created_at, updated_at)
                  VALUES
                    ('learner-1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
                  INSERT INTO learner_language_profiles
-                   (id, learner_id, language_pack_id, source_language, target_locale,
+                   (id, learner_id, source_language, target_locale,
                     status, is_default, preferences_json, created_at, updated_at)
                  VALUES
-                   ('llp-1','learner-1','es-ES','ru','es-ES','active',1,'{}',
+                   ('llp-1','learner-1', 'ru','es-ES','active',1,'{}',
                     '2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');",
             )
             .unwrap();
@@ -128,10 +118,8 @@ mod tests {
     async fn direct_dispatch_lists_tools_and_writes_lesson() {
         let (db, env) = seeded_env();
 
-        let registry = crate::built_in_language_packs().unwrap();
         let tools = dispatch_jsonrpc(
             &env,
-            &registry,
             br#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#,
         )
         .unwrap();
@@ -139,12 +127,36 @@ mod tests {
             panic!("expected tools response");
         };
         let tools: serde_json::Value = serde_json::from_str(&tools).unwrap();
-        assert_eq!(tools["result"]["tools"].as_array().map(Vec::len), Some(15));
+        assert_eq!(tools["result"]["tools"].as_array().map(Vec::len), Some(13));
+
+        let context = dispatch_jsonrpc(
+            &env,
+            br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_tutor_context","arguments":{"language_profile_id":"llp-1"}}}"#,
+        )
+        .unwrap();
+        let DirectDispatch::Response(context) = context else {
+            panic!("expected tutor context response");
+        };
+        let context: serde_json::Value = serde_json::from_str(&context).unwrap();
+        assert_eq!(context["result"]["isError"], false);
+        let context_body: serde_json::Value =
+            serde_json::from_str(context["result"]["content"][0]["text"].as_str().unwrap())
+                .unwrap();
+        assert!(context_body["tutor_instructions"]["instructions"].is_string());
+        assert!(context_body["adaptive_lesson_plan"].is_object());
+        assert!(context_body["tutor_tasks"].is_array());
+        assert!(
+            context_body["lesson_result_contract"]["instructions"]
+                .as_str()
+                .unwrap()
+                .contains(
+                    "минимум 1 diagnostic baseline и минимум 2 независимых measured probes overall"
+                )
+        );
 
         let start = dispatch_jsonrpc(
             &env,
-            &registry,
-            br#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"start_lesson","arguments":{"language_profile_id":"llp-1","scenario":"MCP smoke"}}}"#,
+            br#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"start_lesson","arguments":{"language_profile_id":"llp-1","scenario":"MCP smoke"}}}"#,
         )
         .unwrap();
         let DirectDispatch::Response(start) = start else {
@@ -152,8 +164,22 @@ mod tests {
         };
         let start: serde_json::Value = serde_json::from_str(&start).unwrap();
         assert_eq!(start["result"]["isError"], false);
+        let start_body: serde_json::Value =
+            serde_json::from_str(start["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(start_body["planner_version"], "planner-v3");
+        assert!(start_body["adaptive_lesson_plan"].is_object());
+        assert!(start_body["tutor_tasks"].is_array());
 
         let connection = Connection::open(&db).unwrap();
+        let persisted_plan: String = connection
+            .query_row(
+                "SELECT plan_json FROM planner_decisions ORDER BY created_at DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let persisted_plan: serde_json::Value = serde_json::from_str(&persisted_plan).unwrap();
+        assert_eq!(start_body["adaptive_lesson_plan"], persisted_plan);
         let source: String = connection
             .query_row(
                 "SELECT source FROM lessons ORDER BY created_at DESC LIMIT 1",

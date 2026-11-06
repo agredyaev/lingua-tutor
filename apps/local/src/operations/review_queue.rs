@@ -493,7 +493,7 @@ fn load_payload(database: &rusqlite::Connection, card_id: &str) -> Result<serde_
     database
         .query_row(
             "SELECT c.id,c.intent,c.status,c.prompt,c.prompt_language,c.answer,
-                    c.accepted_answers_json,c.answer_evaluation_mode,c.explanation,
+                    c.accepted_answers_json,c.explanation,
                     c.pronunciation_note,
                     s.algorithm,s.algorithm_version,s.parameter_set_id,s.difficulty,
                     s.stability,s.last_review_at,s.due_at,s.scheduled_interval_seconds,
@@ -508,19 +508,19 @@ fn load_payload(database: &rusqlite::Connection, card_id: &str) -> Result<serde_
                     serde_json::from_str(&accepted_text).unwrap_or_else(|_| serde_json::json!([]));
 
                 let state = {
-                    let algorithm: Option<String> = row.get(10)?;
+                    let algorithm: Option<String> = row.get(9)?;
                     if let Some(algorithm) = algorithm {
                         let algorithm_version: String = row
-                            .get::<_, Option<String>>(11)?
+                            .get::<_, Option<String>>(10)?
                             .ok_or(rusqlite::Error::InvalidQuery)?;
-                        let last_review_at: Option<String> = row.get(15)?;
-                        let due_at: Option<String> = row.get(16)?;
+                        let last_review_at: Option<String> = row.get(14)?;
+                        let due_at: Option<String> = row.get(15)?;
                         Some(ScheduledState {
                             algorithm,
                             algorithm_version,
-                            parameter_set_id: row.get(12)?,
-                            difficulty: row.get(13)?,
-                            stability: row.get(14)?,
+                            parameter_set_id: row.get(11)?,
+                            difficulty: row.get(12)?,
+                            stability: row.get(13)?,
                             last_review_at: last_review_at
                                 .as_deref()
                                 .and_then(|value| from_rfc3339(value).ok())
@@ -529,10 +529,10 @@ fn load_payload(database: &rusqlite::Connection, card_id: &str) -> Result<serde_
                                 .as_deref()
                                 .and_then(|value| from_rfc3339(value).ok())
                                 .map(|value| review_engine::Timestamp(value.0)),
-                            scheduled_interval_seconds: row.get(17)?,
-                            lapse_count: row.get::<_, Option<u32>>(18)?.unwrap_or(0),
-                            review_count: row.get::<_, Option<u32>>(19)?.unwrap_or(0),
-                            state_version: row.get::<_, Option<u32>>(20)?.unwrap_or(1),
+                            scheduled_interval_seconds: row.get(16)?,
+                            lapse_count: row.get::<_, Option<u32>>(17)?.unwrap_or(0),
+                            review_count: row.get::<_, Option<u32>>(18)?.unwrap_or(0),
+                            state_version: row.get::<_, Option<u32>>(19)?.unwrap_or(1),
                         })
                     } else {
                         None
@@ -548,9 +548,8 @@ fn load_payload(database: &rusqlite::Connection, card_id: &str) -> Result<serde_
                     "prompt_language": row.get::<_,String>(4)?,
                     "answer": row.get::<_,String>(5)?,
                     "accepted_answers": accepted,
-                    "answer_evaluation_mode": row.get::<_,String>(7)?,
-                    "explanation": row.get::<_,Option<String>>(8)?,
-                    "pronunciation_note": row.get::<_,Option<String>>(9)?,
+                    "explanation": row.get::<_,Option<String>>(7)?,
+                    "pronunciation_note": row.get::<_,Option<String>>(8)?,
                     "prior_state_hash": prior_state_hash,
                 }))
             },
@@ -572,16 +571,13 @@ mod tests {
         ));
         let db = crate::storage::open(&path).unwrap();
         db.execute_batch(&format!(
-            r#"INSERT INTO language_packs
-                (id,package_name,version,contract_version,target_language,target_locale,
-                 display_name,installed_at,updated_at)
-               VALUES('es-ES','language-pack-es-es','0.2.0',1,'es','es-ES','Spanish','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
+            r#"
                INSERT INTO learner_profile
                 (id,timezone,max_new_cards,created_at,updated_at)
                VALUES('learner-1','Europe/Madrid',{max_new_cards},'2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
                INSERT INTO learner_language_profiles
-                (id,learner_id,language_pack_id,source_language,target_locale,created_at,updated_at)
-               VALUES('llp-1','learner-1','es-ES','ru','es-ES','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
+                (id,learner_id,source_language,target_locale,created_at,updated_at)
+               VALUES('llp-1','learner-1', 'ru','es-ES','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
                INSERT INTO review_sessions
                 (id,learner_language_profile_id,started_at,source,card_count,created_at)
                VALUES('rs-1','llp-1','2026-10-16T00:00:00Z','online',0,'2026-10-16T00:00:00Z');"#
@@ -593,12 +589,12 @@ mod tests {
     fn insert_card(db: &rusqlite::Connection, id: &str, status: &str, created_at: &str) {
         db.execute(
             "INSERT INTO cards
-             (id,learner_language_profile_id,language_pack_id,language_pack_version,
+             (id,learner_language_profile_id,
               intent,status,prompt,prompt_language,answer,answer_language,
-              accepted_answers_json,answer_evaluation_mode,creation_reason,content_hash,
+              accepted_answers_json,creation_reason,content_hash,
               content_version,created_by,created_at,updated_at)
-             VALUES(?1,'llp-1','es-ES','0.2.0','production',?2,?1,'ru','a','es-ES',
-                    '[]','exact','seed',?1,1,'tutor',?3,?3)",
+             VALUES(?1,'llp-1','production',?2,?1,'ru','a','es-ES',
+                    '[]','seed',?1,1,'tutor',?3,?3)",
             params![id, status, created_at],
         )
         .unwrap();

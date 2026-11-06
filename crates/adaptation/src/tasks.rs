@@ -2,6 +2,8 @@
 
 use crate::{CapabilityEstimateView, ItemCapabilityView};
 
+const AUTOMATICITY_RETRIEVAL_THRESHOLD_MILLIS: u32 = 5_000;
+
 /// Borrowed candidate emitted by the canonical scoring pass.
 #[derive(Debug, Clone, Copy)]
 pub struct TaskCandidateView<'a> {
@@ -34,21 +36,49 @@ pub fn visit_task_candidates<'a>(
     let spontaneous = item.spontaneous_production;
     let transfer = item.transfer;
 
-    if needs_diagnostic(spontaneous) {
+    let spontaneous_uncertain = needs_diagnostic(spontaneous)
+        || decision_fragile(
+            spontaneous.unaided_success_rate,
+            spontaneous.unaided_evidence_weight,
+            0.60,
+        )
+        || decision_fragile(
+            spontaneous.unaided_success_rate,
+            spontaneous.unaided_evidence_weight,
+            0.70,
+        )
+        || decision_fragile(
+            spontaneous.weighted_success_rate,
+            spontaneous.effective_evidence_weight,
+            0.75,
+        );
+    if spontaneous_uncertain {
+        let diagnostic_score = (66 + uncertainty_points(spontaneous))
+            .saturating_add(
+                u8::from(matches!(
+                    primary_objective,
+                    "reduce_prompt_dependence" | "probe_prompt_independence"
+                )) * 8,
+            )
+            .min(100);
         emit(view(
             item,
             "diagnostic_spontaneous",
-            boosted(
-                66 + uncertainty_points(spontaneous),
-                primary_objective,
-                "reduce_prompt_dependence",
-            ),
+            diagnostic_score,
             "spontaneous ability is uncertain or stale; probe without hints before teaching",
             "spontaneous_production",
         ));
     }
 
-    if prompted.weighted_success_rate.unwrap_or(0.0) >= 0.70
+    let prompted_established = !needs_diagnostic(prompted)
+        && !decision_fragile(
+            prompted.weighted_success_rate,
+            prompted.effective_evidence_weight,
+            0.70,
+        );
+    if !spontaneous_uncertain
+        && prompted_established
+        && prompted.weighted_success_rate.unwrap_or(0.0) >= 0.70
         && spontaneous.unaided_success_rate.unwrap_or(0.0) < 0.60
     {
         emit(view(
@@ -60,7 +90,10 @@ pub fn visit_task_candidates<'a>(
         ));
     }
 
-    if spontaneous.attempts > 0 && spontaneous.unaided_success_rate.unwrap_or(0.0) < 0.70 {
+    if !spontaneous_uncertain
+        && spontaneous.attempts > 0
+        && spontaneous.unaided_success_rate.unwrap_or(0.0) < 0.70
+    {
         let gap = gap_points(spontaneous.unaided_success_rate, 0.70, 24);
         emit(view(
             item,
@@ -71,18 +104,40 @@ pub fn visit_task_candidates<'a>(
         ));
     }
 
-    if listening.attempts == 0
-        || listening.weighted_success_rate.unwrap_or(0.0) < 0.75
-        || (listening.attempts >= 2 && listening.distinct_success_contexts < 2)
-    {
+    let listening_uncertain = needs_diagnostic(listening)
+        || listening.unaided_evidence_episodes < 2
+        || decision_fragile(
+            listening.weighted_success_rate,
+            listening.effective_evidence_weight,
+            0.75,
+        )
+        || decision_fragile(
+            listening.unaided_success_rate,
+            listening.unaided_evidence_weight,
+            0.70,
+        );
+    let listening_gap = listening.weighted_success_rate.unwrap_or(0.0) < 0.75
+        || listening.unaided_success_rate.unwrap_or(0.0) < 0.70;
+    let listening_variation_gap =
+        listening.attempts >= 2 && listening.distinct_success_contexts < 2;
+    if listening_uncertain || (!listening_gap && listening_variation_gap) {
         let base = 62
-            + gap_points(listening.weighted_success_rate, 0.75, 24)
+            + gap_points(listening.unaided_success_rate, 0.70, 24)
             + uncertainty_points(listening) / 2;
         emit(view(
             item,
             "listening_probe",
             boosted(base, primary_objective, "strengthen_listening"),
-            "listening evidence is weak, stale, or lacks source/talker variation",
+            "listening state is uncertain/stale or needs an independent source/context check",
+            "listening",
+        ));
+    } else if listening_gap {
+        let base = 76 + gap_points(listening.unaided_success_rate, 0.70, 18);
+        emit(view(
+            item,
+            "listening_repair",
+            boosted(base, primary_objective, "strengthen_listening"),
+            "independent listening weakness is established; repair before spending more time diagnosing it",
             "listening",
         ));
     }
@@ -93,8 +148,10 @@ pub fn visit_task_candidates<'a>(
         && spontaneous
             .unaided_success_rate
             .is_some_and(|rate| rate >= 0.70)
-        && spontaneous.evidence_strength >= 0.45;
-    if spontaneous_ready
+        && spontaneous.evidence_strength >= 0.45
+        && spontaneous.qualified_success_streak >= 2;
+    if !spontaneous_uncertain
+        && spontaneous_ready
         && (transfer.distinct_success_families < 3
             || transfer.weighted_success_rate.unwrap_or(0.0) < 0.80
             || transfer.evidence_strength < 0.65)
@@ -111,10 +168,15 @@ pub fn visit_task_candidates<'a>(
 
     if spontaneous
         .latency_weighted_millis
-        .is_some_and(|latency| latency > automaticity_threshold_millis(item.target_text))
+        .is_some_and(|latency| latency > AUTOMATICITY_RETRIEVAL_THRESHOLD_MILLIS)
+        && spontaneous.latency_evidence_episodes >= 2
+        && spontaneous
+            .weighted_success_rate
+            .is_some_and(|rate| rate >= 0.80)
         && spontaneous
             .unaided_success_rate
-            .is_some_and(|rate| rate >= 0.60)
+            .is_some_and(|rate| rate >= 0.80)
+        && spontaneous.evidence_strength >= 0.65
         && spontaneous.qualified_success_streak >= 2
     {
         emit(view(
@@ -127,13 +189,6 @@ pub fn visit_task_candidates<'a>(
     }
 }
 
-fn automaticity_threshold_millis(target_text: &str) -> u32 {
-    let words = u32::try_from(target_text.split_whitespace().count()).unwrap_or(u32::MAX);
-    2_000_u32
-        .saturating_add(words.saturating_mul(600))
-        .clamp(3_000, 8_000)
-}
-
 fn actionable_status(status: &str) -> bool {
     matches!(
         status,
@@ -142,11 +197,26 @@ fn actionable_status(status: &str) -> bool {
 }
 
 fn needs_diagnostic(estimate: CapabilityEstimateView<'_>) -> bool {
-    estimate.attempts == 0 || estimate.evidence_strength < 0.45
+    estimate.attempts == 0
+        || estimate.independent_evidence_episodes < 3
+        || estimate.evidence_strength < 0.45
 }
 
 fn uncertainty_points(estimate: CapabilityEstimateView<'_>) -> u8 {
     ((1.0 - estimate.evidence_strength).clamp(0.0, 1.0) * 18.0).round() as u8
+}
+
+fn decision_fragile(rate: Option<f64>, weight: f64, threshold: f64) -> bool {
+    let Some(rate) = rate else {
+        return true;
+    };
+    if weight <= f64::EPSILON {
+        return true;
+    }
+    let current = rate >= threshold;
+    let after_success = ((rate * weight + 1.0) / (weight + 1.0)) >= threshold;
+    let after_failure = ((rate * weight) / (weight + 1.0)) >= threshold;
+    current != after_success || current != after_failure
 }
 
 fn gap_points(rate: Option<f64>, target: f64, max: u8) -> u8 {
@@ -200,9 +270,11 @@ mod tests {
                 ..CapabilityEstimateFixed::default()
             },
             prompted_production: CapabilityEstimateFixed {
-                attempts: 2,
+                attempts: 6,
                 weighted_success_rate: Some(prompted),
-                evidence_strength: 0.8,
+                evidence_strength: 0.9,
+                effective_evidence_weight: 5.0,
+                independent_evidence_episodes: 6,
                 ..CapabilityEstimateFixed::default()
             },
             spontaneous_production: CapabilityEstimateFixed {
@@ -210,6 +282,9 @@ mod tests {
                 weighted_success_rate: spontaneous,
                 unaided_success_rate: spontaneous,
                 evidence_strength: 0.8,
+                effective_evidence_weight: 3.2,
+                unaided_evidence_weight: 3.2,
+                independent_evidence_episodes: 3,
                 ..CapabilityEstimateFixed::default()
             },
             transfer: CapabilityEstimateFixed::default(),
@@ -222,6 +297,373 @@ mod tests {
         let mut count = 0;
         visit_task_candidates(crate::item_capability_view(&item), "x", |_| count += 1);
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn slow_but_inaccurate_production_does_not_trigger_automaticity_drill() {
+        let mut item = state("learning", 0.9, Some(0.65));
+        item.spontaneous_production.attempts = 4;
+        item.spontaneous_production.latency_weighted_millis = Some(9_000);
+        item.spontaneous_production.evidence_strength = 0.8;
+        item.spontaneous_production.qualified_success_streak = 2;
+        let mut automaticity = false;
+        visit_task_candidates(crate::item_capability_view(&item), "x", |candidate| {
+            automaticity |= candidate.task_type == "automaticity_drill";
+        });
+        assert!(!automaticity);
+    }
+
+    #[test]
+    fn raw_unaided_rate_cannot_hide_decayed_accuracy_for_automaticity() {
+        let mut item = state("learning", 0.9, Some(0.80));
+        item.spontaneous_production.attempts = 10;
+        item.spontaneous_production.weighted_success_rate = Some(0.76);
+        item.spontaneous_production.unaided_success_rate = Some(0.80);
+        item.spontaneous_production.latency_weighted_millis = Some(9_000);
+        item.spontaneous_production.evidence_strength = 0.9;
+        item.spontaneous_production.independent_evidence_episodes = 10;
+        item.spontaneous_production.qualified_success_streak = 2;
+
+        let mut automaticity = false;
+        visit_task_candidates(crate::item_capability_view(&item), "x", |candidate| {
+            automaticity |= candidate.task_type == "automaticity_drill";
+        });
+
+        assert!(
+            !automaticity,
+            "automaticity work must wait until recency-weighted accuracy is also at least 80%"
+        );
+    }
+
+    #[test]
+    fn one_latency_sample_cannot_trigger_automaticity_drill() {
+        let mut item = state("learning", 0.9, Some(0.90));
+        item.spontaneous_production.attempts = 6;
+        item.spontaneous_production.latency_weighted_millis = Some(9_000);
+        item.spontaneous_production.latency_evidence_episodes = 1;
+        item.spontaneous_production.evidence_strength = 0.9;
+        item.spontaneous_production.independent_evidence_episodes = 6;
+        item.spontaneous_production.qualified_success_streak = 3;
+
+        let mut automaticity = false;
+        visit_task_candidates(crate::item_capability_view(&item), "x", |candidate| {
+            automaticity |= candidate.task_type == "automaticity_drill";
+        });
+
+        assert!(
+            !automaticity,
+            "automaticity must not be diagnosed from a single measured latency episode"
+        );
+    }
+
+    #[test]
+    fn slow_accurate_distributed_production_can_trigger_automaticity_drill() {
+        let mut item = state("learning", 0.9, Some(0.90));
+        item.spontaneous_production.attempts = 4;
+        item.spontaneous_production.latency_weighted_millis = Some(9_000);
+        item.spontaneous_production.latency_evidence_episodes = 2;
+        item.spontaneous_production.evidence_strength = 0.8;
+        item.spontaneous_production.qualified_success_streak = 2;
+        let mut automaticity = false;
+        visit_task_candidates(crate::item_capability_view(&item), "x", |candidate| {
+            automaticity |= candidate.task_type == "automaticity_drill";
+        });
+        assert!(automaticity);
+    }
+
+    #[test]
+    fn assisted_listening_volume_cannot_hide_sparse_unaided_evidence() {
+        let mut item = state("learning", 0.9, Some(0.90));
+        item.listening.attempts = 6;
+        item.listening.weighted_success_rate = Some(0.90);
+        item.listening.unaided_success_rate = Some(0.0);
+        item.listening.evidence_strength = 0.90;
+        item.listening.effective_evidence_weight = 5.0;
+        item.listening.unaided_evidence_weight = 1.0;
+        item.listening.unaided_evidence_episodes = 1;
+        item.listening.independent_evidence_episodes = 6;
+        item.listening.qualified_success_streak = 0;
+
+        let mut probe = false;
+        let mut repair = false;
+        visit_task_candidates(
+            crate::item_capability_view(&item),
+            "strengthen_listening",
+            |candidate| match candidate.task_type {
+                "listening_probe" => probe = true,
+                "listening_repair" => repair = true,
+                _ => {}
+            },
+        );
+
+        assert!(
+            probe,
+            "one unaided listening episode is still diagnostically sparse"
+        );
+        assert!(
+            !repair,
+            "assisted volume must not make sparse unaided listening look like an established independent gap"
+        );
+    }
+
+    #[test]
+    fn established_listening_gap_uses_repair_not_another_diagnostic_probe() {
+        let mut item = state("learning", 0.9, Some(0.90));
+        item.listening.attempts = 6;
+        item.listening.weighted_success_rate = Some(0.20);
+        item.listening.unaided_success_rate = Some(0.20);
+        item.listening.evidence_strength = 0.90;
+        item.listening.effective_evidence_weight = 5.0;
+        item.listening.unaided_evidence_weight = 5.0;
+        item.listening.unaided_evidence_episodes = 6;
+        item.listening.independent_evidence_episodes = 6;
+        item.listening.qualified_success_streak = 0;
+
+        let mut probe = false;
+        let mut repair = false;
+        visit_task_candidates(
+            crate::item_capability_view(&item),
+            "strengthen_listening",
+            |candidate| match candidate.task_type {
+                "listening_probe" => probe = true,
+                "listening_repair" => repair = true,
+                _ => {}
+            },
+        );
+
+        assert!(
+            repair,
+            "established listening weakness should trigger intervention"
+        );
+        assert!(
+            !probe,
+            "do not spend another slot diagnosing an already stable gap"
+        );
+    }
+
+    #[test]
+    fn diagnostic_uncertainty_blocks_transfer_promotion() {
+        let mut item = state("learning", 0.9, Some(0.95));
+        item.spontaneous_production.attempts = 2;
+        item.spontaneous_production.evidence_strength = 0.48;
+        item.spontaneous_production.independent_evidence_episodes = 2;
+        item.spontaneous_production.qualified_success_streak = 2;
+
+        let mut diagnostic = false;
+        let mut transfer = false;
+        visit_task_candidates(
+            crate::item_capability_view(&item),
+            "diagnose_and_expand",
+            |candidate| match candidate.task_type {
+                "diagnostic_spontaneous" => diagnostic = true,
+                "transfer_practice" => transfer = true,
+                _ => {}
+            },
+        );
+
+        assert!(diagnostic);
+        assert!(
+            !transfer,
+            "the same state cannot be both diagnostically uncertain and ready for transfer promotion"
+        );
+    }
+
+    #[test]
+    fn aggregate_rates_without_distributed_success_do_not_unlock_transfer() {
+        let mut item = state("learning", 0.9, Some(0.95));
+        item.spontaneous_production.attempts = 6;
+        item.spontaneous_production.evidence_strength = 0.75;
+        item.spontaneous_production.independent_evidence_episodes = 3;
+        item.spontaneous_production.qualified_success_streak = 1;
+
+        let mut transfer = false;
+        visit_task_candidates(
+            crate::item_capability_view(&item),
+            "diagnose_and_expand",
+            |candidate| {
+                transfer |= candidate.task_type == "transfer_practice";
+            },
+        );
+        assert!(!transfer);
+    }
+
+    #[test]
+    fn retrieval_latency_threshold_is_independent_of_target_word_count() {
+        let mut short = state("learning", 0.9, Some(0.90));
+        short.target_text = "sí";
+        short.spontaneous_production.attempts = 4;
+        short.spontaneous_production.latency_weighted_millis = Some(7_000);
+        short.spontaneous_production.latency_evidence_episodes = 2;
+        short.spontaneous_production.evidence_strength = 0.8;
+        short.spontaneous_production.qualified_success_streak = 2;
+
+        let mut long = short;
+        long.target_text = "una frase bastante más larga con muchas palabras conocidas";
+
+        let mut short_drill = false;
+        let mut long_drill = false;
+        visit_task_candidates(crate::item_capability_view(&short), "x", |candidate| {
+            short_drill |= candidate.task_type == "automaticity_drill";
+        });
+        visit_task_candidates(crate::item_capability_view(&long), "x", |candidate| {
+            long_drill |= candidate.task_type == "automaticity_drill";
+        });
+
+        assert_eq!(short_drill, long_drill);
+    }
+
+    #[test]
+    fn sparse_prompted_success_cannot_establish_prompt_dependence() {
+        let mut item = state("learning", 1.0, Some(0.20));
+        item.prompted_production.attempts = 1;
+        item.prompted_production.weighted_success_rate = Some(1.0);
+        item.prompted_production.evidence_strength = 0.25;
+        item.prompted_production.effective_evidence_weight = 1.0;
+        item.prompted_production.independent_evidence_episodes = 1;
+
+        item.spontaneous_production.attempts = 6;
+        item.spontaneous_production.weighted_success_rate = Some(0.20);
+        item.spontaneous_production.unaided_success_rate = Some(0.20);
+        item.spontaneous_production.evidence_strength = 0.90;
+        item.spontaneous_production.effective_evidence_weight = 5.0;
+        item.spontaneous_production.unaided_evidence_weight = 5.0;
+        item.spontaneous_production.independent_evidence_episodes = 6;
+
+        let mut fade = false;
+        let mut retrieval = false;
+        visit_task_candidates(
+            crate::item_capability_view(&item),
+            "reduce_prompt_dependence",
+            |candidate| match candidate.task_type {
+                "fade_prompts" => fade = true,
+                "spontaneous_retrieval" => retrieval = true,
+                _ => {}
+            },
+        );
+
+        assert!(
+            !fade,
+            "prompt dependence needs established prompted evidence too"
+        );
+        assert!(
+            retrieval,
+            "the established unaided retrieval gap still needs work"
+        );
+    }
+
+    #[test]
+    fn decision_fragile_spontaneous_state_probes_before_committing_to_retrieval() {
+        let mut item = state("learning", 0.95, Some(0.67));
+        item.spontaneous_production.attempts = 3;
+        item.spontaneous_production.weighted_success_rate = Some(0.67);
+        item.spontaneous_production.unaided_success_rate = Some(0.67);
+        item.spontaneous_production.evidence_strength = 0.68;
+        item.spontaneous_production.effective_evidence_weight = 2.72;
+        item.spontaneous_production.unaided_evidence_weight = 2.72;
+        item.spontaneous_production.independent_evidence_episodes = 3;
+        item.spontaneous_production.qualified_success_streak = 1;
+
+        let mut diagnostic = false;
+        let mut retrieval = false;
+        visit_task_candidates(
+            crate::item_capability_view(&item),
+            "reduce_prompt_dependence",
+            |candidate| match candidate.task_type {
+                "diagnostic_spontaneous" => diagnostic = true,
+                "spontaneous_retrieval" => retrieval = true,
+                _ => {}
+            },
+        );
+
+        assert!(
+            diagnostic,
+            "when one fresh independent observation can flip the action boundary, measure before committing"
+        );
+        assert!(!retrieval);
+    }
+
+    #[test]
+    fn uncertain_spontaneous_state_probes_before_intervention() {
+        let mut item = state("learning", 0.95, Some(0.20));
+        item.spontaneous_production.attempts = 1;
+        item.spontaneous_production.evidence_strength = 0.20;
+        item.spontaneous_production.independent_evidence_episodes = 1;
+
+        let mut diagnostic = false;
+        let mut fade = false;
+        let mut retrieval = false;
+        visit_task_candidates(
+            crate::item_capability_view(&item),
+            "reduce_prompt_dependence",
+            |candidate| match candidate.task_type {
+                "diagnostic_spontaneous" => diagnostic = true,
+                "fade_prompts" => fade = true,
+                "spontaneous_retrieval" => retrieval = true,
+                _ => {}
+            },
+        );
+
+        assert!(diagnostic);
+        assert!(!fade);
+        assert!(!retrieval);
+    }
+
+    #[test]
+    fn prompt_independence_objective_boosts_diagnostic_probe() {
+        let mut item = state("learning", 0.95, Some(0.50));
+        item.spontaneous_production.attempts = 1;
+        item.spontaneous_production.evidence_strength = 0.20;
+        item.spontaneous_production.independent_evidence_episodes = 1;
+
+        let mut neutral_score = None;
+        visit_task_candidates(crate::item_capability_view(&item), "x", |candidate| {
+            if candidate.task_type == "diagnostic_spontaneous" {
+                neutral_score = Some(candidate.score);
+            }
+        });
+
+        let mut objective_score = None;
+        visit_task_candidates(
+            crate::item_capability_view(&item),
+            "probe_prompt_independence",
+            |candidate| {
+                if candidate.task_type == "diagnostic_spontaneous" {
+                    objective_score = Some(candidate.score);
+                }
+            },
+        );
+
+        assert_eq!(
+            objective_score,
+            neutral_score.map(|score| score.saturating_add(8).min(100)),
+            "planner probe_prompt_independence objective must raise the matching diagnostic task"
+        );
+    }
+
+    #[test]
+    fn two_conflicting_independent_episodes_still_probe_before_intervention() {
+        let mut item = state("learning", 0.95, Some(0.50));
+        item.spontaneous_production.attempts = 2;
+        item.spontaneous_production.evidence_strength = 0.48;
+        item.spontaneous_production.independent_evidence_episodes = 2;
+
+        let mut diagnostic = false;
+        let mut fade = false;
+        let mut retrieval = false;
+        visit_task_candidates(
+            crate::item_capability_view(&item),
+            "reduce_prompt_dependence",
+            |candidate| match candidate.task_type {
+                "diagnostic_spontaneous" => diagnostic = true,
+                "fade_prompts" => fade = true,
+                "spontaneous_retrieval" => retrieval = true,
+                _ => {}
+            },
+        );
+
+        assert!(diagnostic);
+        assert!(!fade);
+        assert!(!retrieval);
     }
 
     #[test]

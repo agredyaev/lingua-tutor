@@ -26,10 +26,12 @@ pub use planner::{
     RecentLearningSignals, plan_diagnostic_probe, plan_diagnostic_probe_count,
     plan_next_lesson_fixed, plan_priorities, plan_success_criteria,
 };
-pub use queue::{TutorTask, criterion, default_action, default_focus_score, evidence_capability};
+pub use queue::{
+    TutorTask, criterion, criterion_for_action, default_action, default_focus_score,
+    evidence_capability,
+};
 pub use rules::{
-    CardSignalView, GRADE_WINDOW, RecommendationView, error_escalation_action,
-    recheck_failed_fields, visit_card_rules,
+    CardSignalView, GRADE_WINDOW, RecommendationView, recheck_failed_fields, visit_card_rules,
 };
 pub use tasks::{TaskCandidateView, visit_task_candidates};
 

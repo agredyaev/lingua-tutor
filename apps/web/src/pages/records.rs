@@ -5,8 +5,7 @@ use crate::app::{Page, use_active_profile};
 use leptos::prelude::*;
 use shared_schema::{ApiError, ErrorTargetDto};
 
-/// `/learning-items` + `/listening`: item inventory by status
-/// (dedicated listening stats land with analytics, WBS 8).
+/// `/learning-items` + `/listening`: item inventory by status.
 #[component]
 pub fn ItemsPage() -> impl IntoView {
     let active = use_active_profile();
@@ -24,10 +23,17 @@ pub fn ItemsPage() -> impl IntoView {
             .map(Some)
         }
     });
+
     view! {
         <Page>
-            <h1>"Learning items"</h1>
-            <Suspense fallback=|| view! { <p>"Loading…"</p> }>
+            <header class="page-header">
+                <div>
+                    <p class="eyebrow">"Inventory"</p>
+                    <h1>"Learning items"</h1>
+                </div>
+            </header>
+
+            <Suspense fallback=|| view! { <p class="loading">"Loading inventory…"</p> }>
                 {move || {
                     state
                         .get()
@@ -37,21 +43,41 @@ pub fn ItemsPage() -> impl IntoView {
                                     .as_object()
                                     .map(|m| {
                                         m.iter()
-                                            .map(|(k, v)| format!("{k}: {v}"))
+                                            .map(|(name, value)| {
+                                                (
+                                                    name.replace('_', " "),
+                                                    value.as_u64().unwrap_or_default(),
+                                                )
+                                            })
                                             .collect::<Vec<_>>()
                                     })
                                     .unwrap_or_default();
                                 view! {
-                                    <ul>
+                                    <div class="status-grid status-grid-adaptive">
                                         {items
                                             .into_iter()
-                                            .map(|line| view! { <li>{line}</li> })
+                                            .map(|(name, count)| {
+                                                view! {
+                                                    <div>
+                                                        <span>{count}</span>
+                                                        <small>{name}</small>
+                                                    </div>
+                                                }
+                                            })
                                             .collect::<Vec<_>>()}
-                                    </ul>
+                                    </div>
                                 }
                                     .into_any()
                             }
-                            Ok(None) => view! { <p>"No profile selected."</p> }.into_any(),
+                            Ok(None) => {
+                                view! {
+                                    <div class="empty-state">
+                                        <p class="empty-state-title">"No profile selected"</p>
+                                        <p>"Choose a language profile to inspect its learning state."</p>
+                                    </div>
+                                }
+                                    .into_any()
+                            }
                             Err(e) => {
                                 view! { <p class="error" role="alert">{e.to_string()}</p> }.into_any()
                             }
@@ -79,42 +105,58 @@ pub fn ErrorsPage() -> impl IntoView {
             .await
         }
     });
+
     view! {
         <Page>
-            <h1>"Error targets"</h1>
-            <Suspense fallback=|| view! { <p>"Loading…"</p> }>
+            <header class="page-header">
+                <div>
+                    <p class="eyebrow">"Adaptive signals"</p>
+                    <h1>"Error targets"</h1>
+                </div>
+            </header>
+
+            <Suspense fallback=|| view! { <p class="loading">"Loading error targets…"</p> }>
                 {move || {
                     targets
                         .get()
                         .map(|result| match result {
+                            Ok(list) if list.is_empty() => {
+                                view! {
+                                    <div class="empty-state">
+                                        <p class="empty-state-title">"No active error targets"</p>
+                                        <p>"Recurring corrections will appear here when the evidence warrants tracking."</p>
+                                    </div>
+                                }
+                                    .into_any()
+                            }
                             Ok(list) => {
                                 view! {
-                                    <ul class="errors">
+                                    <ul class="entity-list errors">
                                         {list
                                             .iter()
                                             .map(|t| {
                                                 view! {
                                                     <li class=("method-change", t.method_change_required)>
-                                                        <strong>
-                                                            {format!(
-                                                                "{} → {}",
-                                                                t.original_production,
-                                                                t.corrected_production,
-                                                            )}
-                                                        </strong>
-                                                        <p>
-                                                            {format!(
-                                                                "{} · {} sightings · {}{}",
-                                                                t.core_category,
-                                                                t.occurrence_count,
-                                                                t.status,
-                                                                if t.method_change_required {
-                                                                    " · METHOD CHANGE"
-                                                                } else {
-                                                                    ""
-                                                                },
-                                                            )}
-                                                        </p>
+                                                        <div class="error-pair">
+                                                            <span class="error-original">{t.original_production.clone()}</span>
+                                                            <span class="error-arrow" aria-hidden="true">"→"</span>
+                                                            <span class="error-corrected">{t.corrected_production.clone()}</span>
+                                                        </div>
+                                                        <div class="entity-meta-row">
+                                                            <span class="badge">{t.core_category.clone()}</span>
+                                                            <span class="badge">{t.status.clone()}</span>
+                                                            <span class="entity-meta">
+                                                                {format!("{} sightings", t.occurrence_count)}
+                                                            </span>
+                                                            {t.method_change_required
+                                                                .then(|| {
+                                                                    view! {
+                                                                        <span class="method-change-label">
+                                                                            "Method change"
+                                                                        </span>
+                                                                    }
+                                                                })}
+                                                        </div>
                                                     </li>
                                                 }
                                             })

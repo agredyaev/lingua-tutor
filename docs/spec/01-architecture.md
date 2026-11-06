@@ -14,32 +14,30 @@ flowchart LR
     T[OpenAI Secure MCP Tunnel]
     CORE[learning-core]
     REV[review-engine]
-    REG[language-pack-registry]
-    LP[Active Language Pack]
+    ADAPT[adaptation]
 
     U --> P
     P -->|POST /rpc + static/download HTTP| L
     L --> D
     L --> CORE
     CORE --> REV
-    CORE --> REG
-    REG --> LP
+    L --> ADAPT
     C --> T
     L -->|outbound MCP tunnel| T
 ```
 
-One local application owns the PWA assets, browser JSON-RPC boundary, in-process MCP dispatch, secure tunnel transport, and SQLite access. There is no application server, database, authentication service, or deployment environment outside the machine.
+One local application owns the PWA assets, browser JSON-RPC boundary, in-process MCP dispatch, secure tunnel transport, methodology processing, and SQLite access. Target-language behavior is not compiled into the runtime.
 
 ## 2. Trust boundaries
 
 | # | Boundary | Rule |
 |---|---|---|
 | 1 | Browser | UI talks only to loopback HTTP. No secrets in WASM. |
-| 2 | Local runtime | Validates schemas, idempotency, limits, and all writes. |
+| 2 | Local runtime | Validates schemas, idempotency, limits, profile ownership and all writes. |
 | 3 | Database | One local SQLite database; only the local runtime opens it for application traffic. |
-| 4 | Review | review-engine has no network or language behavior. |
-| 5 | Plugin | Language packs receive bounded typed inputs; no storage or network access. |
-| 6 | ChatGPT | Access is only through the in-process secure MCP tunnel; tunnel credentials are session-only and never persisted. |
+| 4 | Review/adaptation | Deterministic processing has no network or language-specific behavior. |
+| 5 | Tutor | Linguistic interpretation arrives only through the bounded tutor contract; tutor cannot write persistence directly. |
+| 6 | ChatGPT transport | Access is only through the in-process secure MCP tunnel; tunnel credentials are session-only and never persisted. |
 | 7 | Repository | Code and schema only; never runtime secrets or database copies. |
 
 ## 3. Binding decisions
@@ -48,14 +46,13 @@ One local application owns the PWA assets, browser JSON-RPC boundary, in-process
 - Runtime: native Rust executable; loopback HTTP serves static assets, `POST /rpc`, and explicit file downloads only.
 - Persistence: one SQLite database with WAL and foreign keys enabled.
 - PWA operations: JSON-RPC 2.0 over `POST /rpc`; no REST resource layer for application commands/queries.
-- MCP: one in-process tool dispatcher calling the same handlers directly; no secondary MCP server, synthetic HTTP, or stdio transport.
+- MCP: one in-process tool dispatcher calling the same operations directly; no secondary MCP server, synthetic HTTP, or stdio transport.
 - Remote reachability: outbound OpenAI Secure MCP Tunnel protocol adapted from Rivet; no public MCP listener, tunnel-client, cloudflared, or child MCP process.
-- Plugins: compile-time registration, runtime selection.
+- Language behavior: tutor semantic reasoning plus scalar language-profile metadata; no registry, executable pack, virtual language dispatch or dynamic plugin loader.
 - Interoperability: versioned JSON/CSV export; no second system of record.
 
 ## 4. Data-flow invariants
 
 - Card schedule update + review event insert are atomic.
 - Lesson completion and card mutations are atomic and idempotent.
-- Every language-specific record carries language-pack identity/version where required.
-- Historical records are not silently re-normalized after pack upgrades.
+- Language-specific interpretation is never inferred by core from concrete-language heuristics.

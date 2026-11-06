@@ -1,24 +1,8 @@
-//! Language-pack and learner-profile operations.
+//! Learner language-profile operations.
 
-use crate::api::operation_error;
 use crate::repositories::profiles;
 use crate::{Env, Result};
 use serde::Deserialize;
-
-pub(crate) fn list_packs(registry: &crate::BuiltInPackRegistry) -> Result<serde_json::Value> {
-    let manifests: Vec<_> = language_pack_registry::manifests(registry).collect();
-    crate::json(&manifests)
-}
-
-pub(crate) fn get_pack(
-    registry: &crate::BuiltInPackRegistry,
-    pack_id: &str,
-) -> Result<serde_json::Value> {
-    match language_pack_registry::manifest(registry, pack_id) {
-        Some(manifest) => crate::json(&manifest),
-        None => operation_error(404, "not_found", "unknown language pack"),
-    }
-}
 
 // Streaming SQLite -> JSON without an intermediate row/domain graph.
 fn project_profile_wire(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<serde_json::Value>> {
@@ -33,7 +17,6 @@ fn project_profile_wire(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<serd
     Ok(Some(serde_json::json!({
         "id": row.get::<_, String>("id")?,
         "learner_id": row.get::<_, String>("learner_id")?,
-        "language_pack_id": row.get::<_, String>("language_pack_id")?,
         "source_language": row.get::<_, String>("source_language")?,
         "target_locale": row.get::<_, String>("target_locale")?,
         "estimated_level": row.get::<_, Option<String>>("estimated_level")?,
@@ -72,10 +55,10 @@ mod dod_profile_projection_tests {
     use super::*;
 
     const PROFILE_ROW: &str = "SELECT 'llp-1' AS id, 'learner-1' AS learner_id,
-        'es-ES' AS language_pack_id, 'ru' AS source_language, 'es-ES' AS target_locale,
+        'ru' AS source_language, 'es-ES' AS target_locale,
         'A1' AS estimated_level, 7 AS current_lesson_number,
         'active' AS status, 1 AS is_default,
-        '{\"priority_scenarios\":[\"pharmacy\"]}' AS preferences_json";
+        '{\"max_new_items_per_lesson\":2}' AS preferences_json";
 
     #[test]
     fn profile_sql_projection_matches_wire_fixture() {
@@ -87,10 +70,10 @@ mod dod_profile_projection_tests {
         assert_eq!(
             wire,
             serde_json::json!({
-                "id":"llp-1","learner_id":"learner-1","language_pack_id":"es-ES",
+                "id":"llp-1","learner_id":"learner-1",
                 "source_language":"ru","target_locale":"es-ES","estimated_level":"A1",
                 "current_lesson_number":7,"status":"active","is_default":true,
-                "preferences":{"priority_scenarios":["pharmacy"]}
+                "preferences":{"max_new_items_per_lesson":2}
             })
         );
     }
@@ -101,7 +84,7 @@ mod dod_profile_projection_tests {
         for invalid in [
             PROFILE_ROW.replace("'active' AS status", "'oops' AS status"),
             PROFILE_ROW.replace(
-                "'{\"priority_scenarios\":[\"pharmacy\"]}' AS preferences_json",
+                "'{\"max_new_items_per_lesson\":2}' AS preferences_json",
                 "'not-json' AS preferences_json",
             ),
         ] {

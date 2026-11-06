@@ -13,7 +13,7 @@ mod tests {
             client_operation_id: op.to_owned(),
             card_id: None,
             card: Some(tutor_contract::CardPayload {
-                intent: language_pack_api::CardIntent::Production,
+                intent: learning_core::CardIntent::Production,
                 prompt: prompt.to_owned(),
                 answer: answer.to_owned(),
                 accepted_answers: vec!["alt".to_owned()],
@@ -251,10 +251,10 @@ mod tests {
     #[test]
     fn existing_card_intent_preserves_update_semantics_for_all_variants() {
         for (stored, kind) in [
-            ("production", language_pack_api::CardIntent::Production),
-            ("listening", language_pack_api::CardIntent::Listening),
-            ("contrast", language_pack_api::CardIntent::Contrast),
-            ("transfer", language_pack_api::CardIntent::Transfer),
+            ("production", learning_core::CardIntent::Production),
+            ("listening", learning_core::CardIntent::Listening),
+            ("contrast", learning_core::CardIntent::Contrast),
+            ("transfer", learning_core::CardIntent::Transfer),
         ] {
             let mut state = state();
             add_existing_card(&mut state, "card", "review", stored, "answer", &[]).unwrap();
@@ -265,10 +265,8 @@ mod tests {
             let plan = plan_card_mutations(&[update.clone()], &state).unwrap();
             assert_eq!(plan.effect[0], CardEffectKind::UpdateContent, "{stored}");
             update.card.as_mut().unwrap().intent = match kind {
-                language_pack_api::CardIntent::Production => {
-                    language_pack_api::CardIntent::Listening
-                }
-                _ => language_pack_api::CardIntent::Production,
+                learning_core::CardIntent::Production => learning_core::CardIntent::Listening,
+                _ => learning_core::CardIntent::Production,
             };
             let plan = plan_card_mutations(&[update], &state).unwrap();
             assert_eq!(plan.verdict[0], CardVerdict::Rejected, "{stored}");
@@ -414,7 +412,7 @@ pub(crate) struct CardPlanState {
     card_len: usize,
     card_id: [TextRef; MAX_EXISTING],
     card_status: [TextRef; MAX_EXISTING],
-    card_intent: [Option<language_pack_api::CardIntent>; MAX_EXISTING],
+    card_intent: [Option<learning_core::CardIntent>; MAX_EXISTING],
     card_prompt: [TextRef; MAX_EXISTING],
     card_answer: [TextRef; MAX_EXISTING],
     accepted_count: [u8; MAX_EXISTING],
@@ -583,7 +581,7 @@ pub(crate) fn card_answer(state: &CardPlanState, index: usize) -> &str {
 pub(crate) fn card_intent(
     state: &CardPlanState,
     index: usize,
-) -> Option<language_pack_api::CardIntent> {
+) -> Option<learning_core::CardIntent> {
     state.card_intent[index]
 }
 
