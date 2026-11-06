@@ -125,7 +125,7 @@ jobs:
             response="$(curl -fsS -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"health","params":{}}' http://127.0.0.1:18787/rpc)"
             grep -Fq '"result"' <<< "$response"
 
-            created="$(curl -fsS -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":2,"method":"create_language_profile","params":{"language_pack_id":"es-ES","source_language":"ru"}}' http://127.0.0.1:18787/rpc)"
+            created="$(curl -fsS -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":2,"method":"create_language_profile","params":{"target_locale":"es-ES","source_language":"ru"}}' http://127.0.0.1:18787/rpc)"
             grep -Fq '"result"' <<< "$created"
 
             backup_path="$("$binary" backup)"
@@ -139,7 +139,7 @@ jobs:
 
             start_runtime
             restored="$(curl -fsS -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":3,"method":"list_language_profiles","params":{}}' http://127.0.0.1:18787/rpc)"
-            grep -Fq '"language_pack_id":"es-ES"' <<< "$restored"
+            grep -Fq '"target_locale":"es-ES"' <<< "$restored"
             grep -Fq '"source_language":"ru"' <<< "$restored"
           )
 
