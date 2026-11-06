@@ -4,38 +4,58 @@ on:
   workflow_call:
     inputs:
       tag:
-        description: Existing release tag whose tested CI artifacts should be published
+        description: Existing release tag to build and publish
         required: true
         type: string
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag whose tested CI artifacts should be published
+        description: Existing release tag to build and publish
         required: true
         type: string
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release.yml"
 
 permissions:
   actions: read
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: 1.98.1
+
 jobs:
-  publish-assets:
+  resolve:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       actions: read
-      contents: write
+      contents: read
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      sha: ${{ steps.release.outputs.sha }}
+      version: ${{ steps.release.outputs.version }}
+      build_needed: ${{ steps.release.outputs.build_needed }}
     steps:
-      - name: Resolve tested CI run for release commit
-        id: ci
+      - name: Resolve release and successful CI
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.tag }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
 
-          ref_json="$(gh api "repos/$GH_REPO/git/ref/tags/$TAG")"
+          tag="$INPUT_TAG"
+          if [[ -z "$tag" ]]; then
+            tag="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)"
+          fi
+
+          release_json="$(gh api "repos/$GH_REPO/releases/tags/$tag")"
+
+          ref_json="$(gh api "repos/$GH_REPO/git/ref/tags/$tag")"
           sha="$(jq -r '.object.sha' <<< "$ref_json")"
           type="$(jq -r '.object.type' <<< "$ref_json")"
           if [[ "$type" == "tag" ]]; then
@@ -45,54 +65,11 @@ jobs:
 
           cargo_toml="$(gh api "repos/$GH_REPO/contents/apps/local/Cargo.toml?ref=$sha" --jq .content | tr -d '\n' | base64 --decode)"
           version="$(sed -n 's/^version = "\([^"]*\)".*/\1/p' <<< "$cargo_toml" | head -n1)"
-          if [[ -z "$version" || "$TAG" != "v$version" ]]; then
-            echo "::error::Release tag $TAG does not match apps/local/Cargo.toml version $version."
+          if [[ -z "$version" || "$tag" != "v$version" ]]; then
+            echo "::error::Release tag $tag does not match apps/local/Cargo.toml version $version."
             exit 1
           fi
 
-          runs="$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=20")"
-          run_id="$(jq -r '
-            .workflow_runs
-            | map(select(.status == "completed" and .conclusion == "success"))
-            | sort_by(.created_at)
-            | reverse
-            | .[0].id // empty
-          ' <<< "$runs")"
-
-          if [[ -z "$run_id" ]]; then
-            echo "::error::No successful CI run found for release commit $sha."
-            exit 1
-          fi
-
-          artifact="$(gh api "repos/$GH_REPO/actions/runs/$run_id/artifacts" --jq '.artifacts[] | select(.name == "lingua-tutor-release-assets" and .expired == false) | .id' | head -n1)"
-          if [[ -z "$artifact" ]]; then
-            echo "::error::CI run $run_id has no lingua-tutor-release-assets artifact."
-            exit 1
-          fi
-
-          echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
-          echo "Using tested CI run $run_id for release commit $sha"
-
-      - name: Download tested release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          RUN_ID: ${{ steps.ci.outputs.run_id }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          gh run download "$RUN_ID" --repo "$GH_REPO" --name lingua-tutor-release-assets --dir dist
-
-      - name: Verify and publish existing CI artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-
-          version="${TAG#v}"
           expected=(
             "lingua-tutor-v$version-linux-x64.zip"
             "lingua-tutor-v$version-linux-aarch64.zip"
@@ -100,30 +77,292 @@ jobs:
             "lingua-tutor-v$version-windows-x64.zip"
             SHA256SUMS
           )
-          for asset in "${expected[@]}"; do
-            test -f "dist/$asset"
-          done
-
+          published="$(jq -r '.assets[].name' <<< "$release_json" | sort)"
           expected_list="$(printf '%s\n' "${expected[@]}" | sort)"
-          actual_list="$(find dist -maxdepth 1 -type f -exec basename {} \; | sort)"
-          if [[ "$actual_list" != "$expected_list" ]]; then
-            echo "::error::Unexpected release artifact set."
-            printf 'Expected:\n%s\nActual:\n%s\n' "$expected_list" "$actual_list"
-            exit 1
+
+          if [[ "$published" == "$expected_list" ]]; then
+            echo "Release $tag already has the complete asset set."
+            build_needed=false
+          else
+            runs="$(gh api "repos/$GH_REPO/actions/workflows/ci.yml/runs?head_sha=$sha&per_page=20")"
+            run_id="$(jq -r '
+              .workflow_runs
+              | map(select(.status == "completed" and .conclusion == "success"))
+              | sort_by(.created_at)
+              | reverse
+              | .[0].id // empty
+            ' <<< "$runs")"
+            if [[ -z "$run_id" ]]; then
+              echo "::error::No successful CI run found for release commit $sha."
+              exit 1
+            fi
+            echo "Release $tag will be built from CI-verified commit $sha (CI run $run_id)."
+            build_needed=true
           fi
 
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "build_needed=$build_needed" >> "$GITHUB_OUTPUT"
+
+  web:
+    needs: resolve
+    if: ${{ needs.resolve.outputs.build_needed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-web
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: trunk@0.21.14
+
+      - name: Build embedded web assets
+        working-directory: apps/web
+        run: trunk build --release --cargo-profile wasm-release
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-web-assets
+          path: apps/web/dist
+          if-no-files-found: error
+
+  linux:
+    needs: [resolve, web]
+    if: ${{ needs.resolve.outputs.build_needed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-linux
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-web-assets
+          path: apps/web/dist
+
+      - name: Representative performance gate
+        run: >-
+          cargo test --locked --release -p lingua-tutor-local
+          representative_single_learner_latency_stays_within_budget
+          -- --ignored --nocapture
+
+      - name: Install cross toolchain
+        run: python3 -m pip install cargo-zigbuild==0.23.4 ziglang==0.17.0
+
+      - name: Build Linux release binaries
+        run: |
+          set -euo pipefail
+          export PATH="$(python3 -c 'import pathlib, ziglang; print(pathlib.Path(ziglang.__file__).parent)'):$PATH"
+          test "$(zig version)" = "0.17.0"
+          cargo zigbuild --locked --release -p lingua-tutor-local --bin lingua-tutor \
+            --target x86_64-unknown-linux-gnu \
+            --target aarch64-unknown-linux-gnu
+
+      - name: Verify Linux binaries
+        run: |
+          set -euo pipefail
+          file target/x86_64-unknown-linux-gnu/release/lingua-tutor | grep -Eq 'ELF 64-bit.*x86-64'
+          file target/aarch64-unknown-linux-gnu/release/lingua-tutor | grep -Eq 'ELF 64-bit.*ARM aarch64'
+          target/x86_64-unknown-linux-gnu/release/lingua-tutor --help
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-linux-x64
+          path: target/x86_64-unknown-linux-gnu/release/lingua-tutor
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-linux-arm64
+          path: target/aarch64-unknown-linux-gnu/release/lingua-tutor
+          if-no-files-found: error
+
+  macos:
+    needs: [resolve, web]
+    if: ${{ needs.resolve.outputs.build_needed == 'true' }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-macos
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-web-assets
+          path: apps/web/dist
+
+      - name: Build macOS arm64 binary
+        run: cargo build --locked --release -p lingua-tutor-local --bin lingua-tutor --target aarch64-apple-darwin
+
+      - name: Verify macOS arm64 binary
+        run: file target/aarch64-apple-darwin/release/lingua-tutor | grep -Eq 'Mach-O 64-bit executable arm64'
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-macos-arm64
+          path: target/aarch64-apple-darwin/release/lingua-tutor
+          if-no-files-found: error
+
+  windows:
+    needs: [resolve, web]
+    if: ${{ needs.resolve.outputs.build_needed == 'true' }}
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-windows
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-web-assets
+          path: apps/web/dist
+
+      - name: Build Windows x64 binary
+        run: cargo build --locked --release -p lingua-tutor-local --bin lingua-tutor --target x86_64-pc-windows-msvc
+
+      - name: Verify Windows x64 binary
+        shell: pwsh
+        run: |
+          $binary = "target/x86_64-pc-windows-msvc/release/lingua-tutor.exe"
+          if (-not (Test-Path $binary)) {
+            throw "Windows x64 binary was not produced: $binary"
+          }
+          & $binary --help
+          if ($LASTEXITCODE -ne 0) {
+            throw "Windows x64 binary smoke test failed with exit code $LASTEXITCODE"
+          }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-windows-x64
+          path: target/x86_64-pc-windows-msvc/release/lingua-tutor.exe
+          if-no-files-found: error
+
+  publish:
+    needs: [resolve, linux, macos, windows]
+    if: >-
+      ${{ always()
+          && needs.resolve.outputs.build_needed == 'true'
+          && needs.linux.result == 'success'
+          && needs.macos.result == 'success'
+          && needs.windows.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-linux-x64
+          path: staged/linux-x64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-linux-arm64
+          path: staged/linux-arm64
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-macos-arm64
+          path: staged/macos
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-windows-x64
+          path: staged/windows
+
+      - name: Package and verify release assets
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          package() {
+            binary="$1"
+            entry="$2"
+            asset="$3"
+            package_dir="$(mktemp -d)"
+            cp "$binary" "$package_dir/$entry"
+            if [[ "$entry" != *.exe ]]; then
+              chmod +x "$package_dir/$entry"
+            fi
+            (cd "$package_dir" && zip -q "$GITHUB_WORKSPACE/dist/$asset" "$entry")
+            test "$(unzip -Z1 "dist/$asset")" = "$entry"
+          }
+
+          package staged/linux-x64/lingua-tutor lingua-tutor "lingua-tutor-v$VERSION-linux-x64.zip"
+          package staged/linux-arm64/lingua-tutor lingua-tutor "lingua-tutor-v$VERSION-linux-aarch64.zip"
+          package staged/macos/lingua-tutor lingua-tutor "lingua-tutor-v$VERSION-darwin-arm64.zip"
+          package staged/windows/lingua-tutor.exe lingua-tutor.exe "lingua-tutor-v$VERSION-windows-x64.zip"
+
+          (cd dist && sha256sum lingua-tutor-*.zip > SHA256SUMS)
           (cd dist && sha256sum -c SHA256SUMS)
-          gh release upload "$TAG" dist/lingua-tutor-*.zip dist/SHA256SUMS --clobber
 
-          release_assets="$(gh release view "$TAG" --json assets --jq '.assets[].name' | sort)"
-          if [[ "$release_assets" != "$expected_list" ]]; then
+          expected="$(printf '%s\n' \
+            SHA256SUMS \
+            "lingua-tutor-v$VERSION-darwin-arm64.zip" \
+            "lingua-tutor-v$VERSION-linux-aarch64.zip" \
+            "lingua-tutor-v$VERSION-linux-x64.zip" \
+            "lingua-tutor-v$VERSION-windows-x64.zip" | sort)"
+          actual="$(find dist -maxdepth 1 -type f -exec basename {} \; | sort)"
+          test "$actual" = "$expected"
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" dist/lingua-tutor-*.zip dist/SHA256SUMS --repo "$GH_REPO" --clobber
+
+          expected="$(printf '%s\n' \
+            SHA256SUMS \
+            "lingua-tutor-v$VERSION-darwin-arm64.zip" \
+            "lingua-tutor-v$VERSION-linux-aarch64.zip" \
+            "lingua-tutor-v$VERSION-linux-x64.zip" \
+            "lingua-tutor-v$VERSION-windows-x64.zip" | sort)"
+          published="$(gh release view "$TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' | sort)"
+          if [[ "$published" != "$expected" ]]; then
             echo "::error::Published release asset set does not match the supported platform set."
-            printf 'Expected:\n%s\nActual:\n%s\n' "$expected_list" "$release_assets"
-            exit 1
-          fi
-
-          latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)"
-          if [[ "$latest" != "$TAG" ]]; then
-            echo "::error::Published release $TAG is not GitHub releases/latest (got $latest)."
+            printf 'Expected:\n%s\nActual:\n%s\n' "$expected" "$published"
             exit 1
           fi
