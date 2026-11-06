@@ -24,6 +24,8 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: stable-linux
       - uses: taiki-e/install-action@v2
         with:
           tool: trunk@0.21.14
