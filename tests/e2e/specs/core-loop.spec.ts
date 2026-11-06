@@ -24,9 +24,7 @@ const lessonResult = (profileId: string) =>
     schema_version: "2",
     client_operation_id: `op-e2e-${Date.now()}`,
     language_profile_id: profileId,
-    language_pack_id: "es-ES",
-    language_pack_version: "1.0.0",
-    lesson: { scenario: "pharmacy", duration_seconds: 900 },
+            lesson: { scenario: "pharmacy", duration_seconds: 900 },
     new_learning_items: [
       { client_item_key: "cough", item_type: "phrase", target_text: "¿Tiene algo para la tos?" },
     ],
@@ -67,7 +65,7 @@ const lessonResult = (profileId: string) =>
 
 test("app shell loads with navigation", async ({ page }) => {
   await page.goto("/dashboard");
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Home" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Review" })).toBeVisible();
 });
 
@@ -163,9 +161,7 @@ test("real lesson lifecycle creates a review card and advances the next lesson",
         schema_version: "2",
         client_operation_id: `op-e2e-cycle-${op}`,
         language_profile_id: profileId,
-        language_pack_id: "es-ES",
-        language_pack_version: "1.0.0",
-        lesson: {
+                        lesson: {
           scenario: "restaurant",
           duration_seconds: 720,
           tutor_summary: "Practised ordering a meal.",
@@ -303,9 +299,7 @@ test("offline review grade is queued and replayed after reconnect", async ({ pag
         schema_version: "2",
         client_operation_id: `op-e2e-offline-${op}`,
         language_profile_id: profileId,
-        language_pack_id: "es-ES",
-        language_pack_version: "1.0.0",
-        lesson: {
+                        lesson: {
           scenario: "cafe",
           duration_seconds: 480,
           tutor_summary: "Practised ordering water.",

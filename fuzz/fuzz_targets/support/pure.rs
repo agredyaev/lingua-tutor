@@ -1,8 +1,4 @@
 use adaptation::{evidence_capability, new_card_budget, DailySignal};
-use language_pack_api::{
-    AnswerEvaluationRequest, LanguageErrorClassificationRequest, LanguagePackManifest,
-    NormalizationMode,
-};
 use review_engine::{
     apply_review, initial_state, new_scheduler_scratch, Grade, ReviewEventInput, SchedulerSettings,
     Timestamp, FALLBACK_ID, FSRS_ID, MIN_INTERVAL_SECONDS,
@@ -17,64 +13,11 @@ pub fn exercise(data: &[u8]) {
     let split = data.len() / 2;
     let b = text(&data[split..]);
 
-    for mode in [NormalizationMode::Canonical, NormalizationMode::Comparison] {
-        let first = language_pack_es_es::normalize_target_text(&a, mode);
-        let second = language_pack_es_es::normalize_target_text(&a, mode);
-        assert_eq!(first, second);
-    }
-
-    let accepted = vec![b.clone(), a.trim().to_owned()];
-    let request = AnswerEvaluationRequest {
-        expected_answer: a.clone(),
-        accepted_answers: accepted,
-        learner_answer: b.clone(),
-        evaluation_mode: "normalized".to_owned(),
-    };
-    let first = language_pack_es_es::evaluate_answer(&request);
-    let second = language_pack_es_es::evaluate_answer(&request);
-    assert_eq!(first, second);
-
-    let classification_request = LanguageErrorClassificationRequest {
-        original_production: a.clone(),
-        corrected_production: b.clone(),
-        context: Some("fuzz".to_owned()),
-    };
-    let (_, pack) = language_pack_es_es::register();
-    assert_eq!(
-        language_pack_es_es::classify_error(&pack, &classification_request),
-        language_pack_es_es::classify_error(&pack, &classification_request)
-    );
-
-    let registry = language_pack_registry::build_registry([language_pack_es_es::register()])
-        .expect("built-in pack must always register");
-    assert!(language_pack_registry::get(&registry, "es-ES").is_some());
-    assert!(language_pack_registry::manifest(&registry, "es-ES").is_some());
-    let _ = language_pack_es_es::scenario_at(&pack, data.first().copied().unwrap_or(0) as u32);
-    let _ = language_pack_es_es::seed_at(&pack, data.get(1).copied().unwrap_or(0) as u32);
-    let _ = language_pack_es_es::card_template_at(&pack, data.get(2).copied().unwrap_or(0) as u32);
-
-    if let Ok(manifest) = serde_json::from_slice::<LanguagePackManifest>(data) {
-        let _ = language_pack_registry::build_registry([(manifest, ())]);
-    }
-
-    let (manifest, _) = language_pack_es_es::register();
-    let mut manifest_doc = serde_json::to_value(&manifest).expect("manifest JSON");
-    manifest_doc["contract_version"] = serde_json::json!(1);
-    let _ = serde_json::from_value::<LanguagePackManifest>(manifest_doc);
-    for value in ["de el parque", "a el parque", "áéíóúüÁÉÍÓÚÜ"] {
-        let _ = language_pack_es_es::normalize_target_text(value, NormalizationMode::Canonical);
-        let _ = language_pack_es_es::evaluate_answer(&AnswerEvaluationRequest {
-            expected_answer: value.to_owned(),
-            accepted_answers: vec![],
-            learner_answer: "aeiouuAEIOUU".into(),
-            evaluation_mode: "normalized".into(),
-        });
-    }
     let intent = match data.first().copied().unwrap_or(0) % 4 {
-        0 => language_pack_api::CardIntent::Production,
-        1 => language_pack_api::CardIntent::Listening,
-        2 => language_pack_api::CardIntent::Contrast,
-        _ => language_pack_api::CardIntent::Transfer,
+        0 => learning_core::CardIntent::Production,
+        1 => learning_core::CardIntent::Listening,
+        2 => learning_core::CardIntent::Contrast,
+        _ => learning_core::CardIntent::Transfer,
     };
     let mut answers = vec![a.clone(), b.clone()];
     let hash_a = learning_core::card_content_hash(intent, &a, &b, &answers);
