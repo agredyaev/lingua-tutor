@@ -1466,6 +1466,7 @@ mod harness_tests {
         for seed in 0..16 {
             super::exercise_contract(&[seed]);
             super::exercise_card_model(&[seed]);
+            super::exercise_adaptation_model(&[seed]);
             super::exercise_boundaries(&[seed]);
             super::exercise_review_states(&[seed]);
         }

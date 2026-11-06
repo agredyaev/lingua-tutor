@@ -139,6 +139,27 @@ pub(super) fn lesson_model(seed: u8) {
         &mut state, "li-fuzz", None, families,
     )
     .expect("mastery history");
+    add_known_lesson_item(&mut state, "li-fuzz").expect("duplicate known item is idempotent");
+    let mut capacity_state = new_lesson_plan_state("p", 0);
+    let normalized_capacity_hit = (0..128)
+        .any(|index| set_lesson_normalized_item(&mut capacity_state, index, "bounded").is_err());
+    assert!(normalized_capacity_hit);
+    let existing_capacity_hit = (0..128).any(|index| {
+        add_lesson_existing_normalized(&mut capacity_state, "bounded", &format!("existing-{index}"))
+            .is_err()
+    });
+    assert!(existing_capacity_hit);
+    let error_capacity_hit = (0..128).any(|index| {
+        add_lesson_error_target(
+            &mut capacity_state,
+            &format!("error-{index}"),
+            index as u32,
+            false,
+        )
+        .is_err()
+    });
+    assert!(error_capacity_hit);
+
     result.mastery_changes[0].new_status = match seed % 7 {
         0 => learning_core::LearningItemStatus::Candidate,
         1 => learning_core::LearningItemStatus::Introduced,

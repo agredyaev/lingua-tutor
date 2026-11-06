@@ -99,10 +99,11 @@ test("create profile, import lesson, review the card", async ({ page }) => {
   // Import: paste → validate → preview → apply
   await page.goto("/import");
   await page.locator("textarea").fill(lessonResult(profileId));
-  await page.getByRole("button", { name: "Validate" }).click();
-  await expect(page.getByText(/Preview — pharmacy/)).toBeVisible();
-  await expect(page.getByText("1 card mutations")).toBeVisible();
-  await page.getByRole("button", { name: "Apply" }).click();
+  await page.getByRole("button", { name: "Validate result", exact: true }).click();
+  await expect(page.getByText("Validated preview", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "pharmacy", exact: true })).toBeVisible();
+  await expect(page.getByText("Card mutations", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Apply to learner state", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Applied" })).toBeVisible();
   await expect(page.getByText(/applied/)).toBeVisible();
 

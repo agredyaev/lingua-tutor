@@ -23,7 +23,12 @@ pub(super) fn exercise(seed: u8) {
                     _ => json!(0.4),
                 };
                 row[capability] = json!({"weighted_success_rate":rate,"unaided_success_rate":rate,"last_observed_at_unix":time*100+1,"distinct_success_families":time+item});
-                let intervention = json!({"action":if item%2==0 {"repeat"}else{"change"},"learning_item_id":id,"target_capability":capability});
+                let intervention = json!({
+                    "action": if item % 2 == 0 { "repeat" } else { "change" },
+                    "learning_item_id": id,
+                    "target_capability": capability,
+                    "calibration_eligible": true
+                });
                 interventions.push(intervention.clone());
                 interventions.push(intervention);
             }
@@ -47,6 +52,9 @@ pub(super) fn exercise(seed: u8) {
     };
     let a = summarize();
     assert_eq!(a, summarize());
+    let malformed =
+        adaptation::summarize_intervention_history([(0, "{", "{}"), (30_000, "[]", "{")], 1_000);
+    assert!(malformed.is_empty());
     for effect in a {
         assert_eq!(
             effect.samples,
