@@ -412,6 +412,20 @@ fn rich_lesson_result(
         detail: Some("stateful fuzz evidence".to_owned()),
     });
     result.evidence.push(tutor_contract::EvidenceEntry {
+        learning_item_id: Some("li-fuzz".to_owned()),
+        client_item_key: None,
+        context: Some("fuzz:conversation:post-intervention".to_owned()),
+        context_family: None,
+        kind: learning_core::EvidenceKind::SpontaneousProduction,
+        success: true,
+        assistance_level: Some(0),
+        response_millis: Some(450 + u32::from(seed) * 9),
+        probe_phase: Some(tutor_contract::ProbePhase::Practice),
+        pronunciation_intelligible: Some(true),
+        pronunciation_repeat_required: Some(false),
+        detail: Some("stateful fuzz post-intervention outcome".to_owned()),
+    });
+    result.evidence.push(tutor_contract::EvidenceEntry {
         learning_item_id: None,
         client_item_key: Some(item_key.clone()),
         context: Some("fuzz:recognition".to_owned()),
@@ -436,7 +450,7 @@ fn rich_lesson_result(
             learning_item_id: Some("li-fuzz".to_owned()),
             client_item_key: None,
             target_capability: learning_core::EvidenceKind::SpontaneousProduction,
-            evidence_index: Some(0),
+            evidence_index: Some(1),
             listening_attempt_index: None,
         });
     result
@@ -1454,6 +1468,13 @@ mod harness_tests {
             super::exercise_card_model(&[seed]);
             super::exercise_boundaries(&[seed]);
             super::exercise_review_states(&[seed]);
+        }
+    }
+
+    #[test]
+    fn storage_fuzz_uses_real_historical_schemas() {
+        for seed in 0..5 {
+            super::exercise_storage(&[seed]);
         }
     }
 }

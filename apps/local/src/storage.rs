@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 const INIT: &str = include_str!("../migrations/0001_init.sql");
+#[cfg(any(test, fuzzing))]
+const LEGACY_INIT: &str = include_str!("test_fixtures_legacy_0001.sql");
 const MIGRATION_2: &str = include_str!("../migrations/0002_planner_history.sql");
 const MIGRATION_3: &str = include_str!("../migrations/0003_review_methodology.sql");
 const MIGRATION_4: &str = include_str!("../migrations/0004_methodology_calibration.sql");
@@ -417,8 +419,6 @@ pub fn backup_if_due(path: &Path) -> Result<Option<PathBuf>, String> {
 #[allow(clippy::unwrap_used, clippy::type_complexity)]
 mod tests {
     use super::*;
-
-    const LEGACY_INIT: &str = include_str!("test_fixtures_legacy_0001.sql");
 
     #[test]
     fn local_database_backup_and_unknown_schema() {
@@ -855,13 +855,13 @@ pub(crate) fn fuzz_storage(data: &[u8]) {
     let path = dir.join("db.sqlite3");
     let version = 1 + i64::from(seed % 5);
     let db = Connection::open(&path).expect("db");
-    db.execute_batch(INIT).expect("v1 schema");
+    db.execute_batch(LEGACY_INIT).expect("v1 schema");
     db.execute_batch("CREATE TABLE schema_migrations(id INTEGER PRIMARY KEY,name TEXT UNIQUE NOT NULL,applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL); INSERT INTO schema_migrations(id,name) VALUES(1,'0001_init.sql');PRAGMA user_version=1;").expect("history");
     for (v, sql, name) in [
         (2, MIGRATION_2, "0002_planner_history.sql"),
         (3, MIGRATION_3, "0003_review_methodology.sql"),
         (4, MIGRATION_4, "0004_methodology_calibration.sql"),
-        (5, MIGRATION_5, SCHEMA_NAME),
+        (5, MIGRATION_5, "0005_methodology_semantics.sql"),
     ] {
         if v <= version {
             db.execute_batch(sql).expect("seed schema");
@@ -906,7 +906,7 @@ pub(crate) fn fuzz_storage(data: &[u8]) {
     assert!(open(&bad).is_err());
     let current = Connection::open(&path).expect("current db");
     current
-        .execute("UPDATE schema_migrations SET name='unknown' WHERE id=5", [])
+        .execute("UPDATE schema_migrations SET name='unknown' WHERE id=7", [])
         .expect("unknown migration name");
     drop(current);
     assert!(open(&path).is_err());

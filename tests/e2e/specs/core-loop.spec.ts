@@ -72,7 +72,9 @@ test("app shell loads with navigation", async ({ page }) => {
 test("create profile, import lesson, review the card", async ({ page }) => {
   // Profile
   await page.goto("/languages");
-  await page.getByRole("button", { name: "Create language profile" }).click();
+  await page.getByLabel("Target locale").fill("es-ES");
+  await page.getByLabel("Explanation language").fill("ru");
+  await page.getByRole("button", { name: "Create profile", exact: true }).click();
   await expect(page.getByRole("button", { name: /es-ES/ })).toBeVisible();
 
   // Profile id through the same JSON-RPC transport used by the PWA.
