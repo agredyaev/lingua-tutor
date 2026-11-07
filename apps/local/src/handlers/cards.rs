@@ -1,9 +1,25 @@
 //! Card operations and persistence-facing card state transitions.
 
 use crate::api::operation_error;
-use crate::repositories::cards;
 use crate::{Env, Result};
 use rusqlite::{OptionalExtension as _, params};
+
+const SELECT_CARD: &str =
+    "SELECT id,learner_language_profile_id,intent,status,prompt,prompt_language,
+    answer,answer_language,accepted_answers_json,explanation,pronunciation_note,
+    source_learning_item_id,source_error_target_id,source_lesson_id,creation_reason,
+    priority_score,content_hash,content_version,parent_card_id,suspended_reason,created_by
+ FROM cards WHERE id=?1";
+const SELECT_CARDS: &str =
+    "SELECT id,learner_language_profile_id,intent,status,prompt,prompt_language,
+    answer,answer_language,accepted_answers_json,explanation,pronunciation_note,
+    source_learning_item_id,source_error_target_id,source_lesson_id,creation_reason,
+    priority_score,content_hash,content_version,parent_card_id,suspended_reason,created_by
+ FROM cards
+ WHERE learner_language_profile_id=?1
+   AND (?2 IS NULL OR status=?2)
+   AND (?3 IS NULL OR intent=?3)
+ ORDER BY created_at DESC LIMIT ?4";
 
 // Each SQLite row is consumed once and projected directly into the wire value.
 fn project_card_wire(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<serde_json::Value>> {
@@ -51,8 +67,7 @@ pub(crate) fn list_for(
     intent: Option<&str>,
 ) -> Result<serde_json::Value> {
     let connection = env.connection()?;
-    let sql = cards::select_cards_sql();
-    let mut statement = connection.prepare(&sql)?;
+    let mut statement = connection.prepare(SELECT_CARDS)?;
     let mut rows = statement.query(params![profile_id, status, intent, 100])?;
     let mut output = Vec::new();
     while let Some(row) = rows.next()? {
@@ -65,30 +80,14 @@ pub(crate) fn list_for(
 
 pub(crate) fn get(env: &Env, card_id: &str) -> Result<serde_json::Value> {
     let connection = env.connection()?;
-    let sql = cards::select_card_sql();
     let item = connection
-        .query_row(&sql, params![card_id], project_card_wire)
+        .query_row(SELECT_CARD, params![card_id], project_card_wire)
         .optional()?
         .flatten();
     match item {
         Some(wire) => crate::json(&wire),
         None => operation_error(404, "not_found", "unknown card"),
     }
-}
-
-#[derive(serde::Deserialize)]
-pub(crate) struct CardPatchParams {
-    pub edit_class: String,
-    #[serde(default)]
-    pub prompt: Option<String>,
-    #[serde(default)]
-    pub answer: Option<String>,
-    #[serde(default)]
-    pub explanation: Option<String>,
-    #[serde(default)]
-    pub pronunciation_note: Option<String>,
-    #[serde(default)]
-    pub accepted_answers: Option<Vec<String>>,
 }
 
 #[cfg(test)]

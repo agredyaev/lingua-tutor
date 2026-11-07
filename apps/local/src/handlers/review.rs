@@ -1,11 +1,25 @@
 //! Review sessions, events, undo, stats, and answer evaluation.
 //! Scheduling rules live in review-engine; transport mapping lives elsewhere.
 
-use crate::api::{now, operation_error};
-use crate::repositories::{review, to_rfc3339};
+use crate::api::now;
+use crate::sqlite::to_rfc3339;
 use crate::{Env, Result};
 use learning_core::Timestamp;
 use rusqlite::{OptionalExtension as _, params};
+
+const SELECT_DUE_BETWEEN: &str = "SELECT s.due_at
+ FROM card_schedule_state s
+ JOIN cards c ON c.id=s.card_id
+ WHERE c.learner_language_profile_id=?1
+   AND c.status IN ('learning','review','relearning')
+   AND s.due_at IS NOT NULL AND s.due_at<?2";
+const SELECT_EVENTS_FOR_RETENTION: &str = "SELECT e.grade,e.created_at
+ FROM review_events e
+ JOIN cards c ON c.id=e.card_id
+ WHERE c.learner_language_profile_id=?1 AND e.created_at>=?2
+   AND e.compensates_event_id IS NULL
+   AND NOT EXISTS (SELECT 1 FROM review_events x WHERE x.compensates_event_id=e.id)
+ ORDER BY e.created_at";
 
 #[derive(serde::Deserialize)]
 pub(crate) struct ReviewEventParams {
@@ -50,7 +64,7 @@ pub(crate) fn summary_for(env: &Env, profile_id: &str) -> Result<serde_json::Val
     let mut millis = 0_u64;
     let mut reviews_today = 0_u64;
     {
-        let mut statement = database.prepare(review::SELECT_EVENTS_SINCE)?;
+        let mut statement = database.prepare(crate::sqlite::SELECT_EVENTS_SINCE)?;
         let mut rows = statement.query(params![profile_id, day_start])?;
         while let Some(row) = rows.next()? {
             let grade: u8 = row.get("grade")?;
@@ -78,11 +92,11 @@ pub(crate) fn forecast_for(env: &Env, profile_id: &str, days: i64) -> Result<ser
     let database = env.connection()?;
     let mut per_day = vec![0_u32; usize::try_from(days).unwrap_or(7)];
     {
-        let mut statement = database.prepare(review::SELECT_DUE_BETWEEN)?;
+        let mut statement = database.prepare(SELECT_DUE_BETWEEN)?;
         let mut rows = statement.query(params![profile_id, horizon])?;
         while let Some(row) = rows.next()? {
             let due_at: String = row.get("due_at")?;
-            if let Ok(due) = crate::repositories::from_rfc3339(&due_at) {
+            if let Ok(due) = crate::sqlite::from_rfc3339(&due_at) {
                 let offset = ((due.0 - at.0).max(0)) / 86_400;
                 if let Ok(index) = usize::try_from(offset)
                     && index < per_day.len()
@@ -104,12 +118,12 @@ pub(crate) fn retention_for(env: &Env, profile_id: &str, days: i64) -> Result<se
     let mut buckets = vec![(0_u32, 0_u32, [0_u32; 4]); bucket_count];
     let mut total = (0_u32, 0_u32);
     {
-        let mut statement = database.prepare(review::SELECT_EVENTS_FOR_RETENTION)?;
+        let mut statement = database.prepare(SELECT_EVENTS_FOR_RETENTION)?;
         let mut rows = statement.query(params![profile_id, to_rfc3339(since)])?;
         while let Some(row) = rows.next()? {
             let grade: u8 = row.get("grade")?;
             let created_at: String = row.get("created_at")?;
-            let Ok(created) = crate::repositories::from_rfc3339(&created_at) else {
+            let Ok(created) = crate::sqlite::from_rfc3339(&created_at) else {
                 continue;
             };
             let offset = ((created.0 - since.0).max(0)) / (7 * 86_400);
@@ -151,62 +165,5 @@ pub(crate) fn retention_for(env: &Env, profile_id: &str, days: i64) -> Result<se
         "reviews": total.0,
         "retention": rate(total.1, total.0),
         "weeks": weeks,
-    }))
-}
-
-pub(crate) fn evaluate(
-    env: &Env,
-    card_id: &str,
-    learner_answer: &str,
-) -> Result<serde_json::Value> {
-    let database = env.connection()?;
-    let card = database
-        .query_row(
-            "SELECT answer, accepted_answers_json, intent, status, created_by
-             FROM cards WHERE id=?1",
-            params![card_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
-                ))
-            },
-        )
-        .optional()?;
-    let Some((answer, accepted_json, intent, status, actor)) = card else {
-        return operation_error(404, "not_found", "unknown card");
-    };
-
-    if crate::repositories::card_intent_from_db(&intent).is_none()
-        || crate::repositories::card_status_from_db(&status).is_none()
-        || crate::repositories::card_actor_from_db(&actor).is_none()
-    {
-        return operation_error(500, "corrupt_row", "stored card is invalid");
-    }
-    let Ok(accepted_answers) = serde_json::from_str::<Vec<String>>(&accepted_json) else {
-        return operation_error(500, "corrupt_row", "stored card is invalid");
-    };
-    let same_answer = |candidate: &str| {
-        candidate
-            .split_whitespace()
-            .eq(learner_answer.split_whitespace())
-    };
-    let (verdict, matched_answer) = if same_answer(&answer) {
-        ("correct", Some(answer))
-    } else if let Some(matched) = accepted_answers
-        .into_iter()
-        .find(|value| same_answer(value))
-    {
-        ("acceptable_variant", Some(matched))
-    } else {
-        ("incorrect", None)
-    };
-    crate::json(&serde_json::json!({
-        "verdict": verdict,
-        "matched_answer": matched_answer,
-        "feedback": null
     }))
 }

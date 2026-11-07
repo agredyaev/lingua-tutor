@@ -126,11 +126,16 @@ CREATE TABLE error_occurrences (
 CREATE TABLE error_rechecks (
     id              TEXT PRIMARY KEY,
     error_target_id TEXT NOT NULL REFERENCES error_targets(id),
+    cycle           INTEGER NOT NULL DEFAULT 0 CHECK (cycle >= 0),
     offset_days     INTEGER NOT NULL CHECK (offset_days IN (1,3,7)),
     due_at          TEXT NOT NULL,
     completed_at    TEXT,
     passed          INTEGER,
-    UNIQUE (error_target_id, offset_days)
+    assistance_level INTEGER CHECK (assistance_level BETWEEN 0 AND 3),
+    context         TEXT,
+    repair_applied  INTEGER CHECK (repair_applied IN (0,1)),
+    repair_action   TEXT,
+    UNIQUE (error_target_id, cycle, offset_days)
 );
 CREATE INDEX ix_rechecks_due ON error_rechecks(due_at) WHERE completed_at IS NULL;
 
@@ -189,7 +194,6 @@ CREATE TABLE card_schedule_state (
     card_id                    TEXT PRIMARY KEY REFERENCES cards(id),
     algorithm                  TEXT NOT NULL,
     algorithm_version          TEXT NOT NULL,
-    parameter_set_id           TEXT REFERENCES scheduler_parameter_sets(id),
     difficulty                 REAL,
     stability                  REAL,
     last_review_at             TEXT,
@@ -239,9 +243,8 @@ CREATE TABLE card_mutations (
     id                    TEXT PRIMARY KEY,
     card_id               TEXT REFERENCES cards(id),   -- NULL for rejected creates
     operation             TEXT NOT NULL
-        CHECK (operation IN ('create','update','split','merge','suspend',
-                             'restore','retire','add_accepted_answer',
-                             'remove_accepted_answer','add_listening_variant','link')),
+        CHECK (operation IN ('create','update','suspend','restore','retire',
+                             'add_accepted_answer','remove_accepted_answer')),
     client_operation_id   TEXT NOT NULL UNIQUE,
     before_json           TEXT,
     after_json            TEXT,
@@ -252,16 +255,6 @@ CREATE TABLE card_mutations (
     created_at            TEXT NOT NULL
 );
 
-CREATE TABLE scheduler_parameter_sets (
-    id                          TEXT PRIMARY KEY,
-    learner_language_profile_id TEXT REFERENCES learner_language_profiles(id), -- NULL = global default
-    algorithm                   TEXT NOT NULL,
-    algorithm_version           TEXT NOT NULL,
-    parameters_json             TEXT NOT NULL,
-    origin                      TEXT NOT NULL CHECK (origin IN ('default','optimized')),
-    activated_at                TEXT,
-    created_at                  TEXT NOT NULL
-);
 
 CREATE TABLE recommendations (
     id                          TEXT PRIMARY KEY,

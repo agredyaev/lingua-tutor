@@ -37,6 +37,8 @@ fn minimal_lesson_result(
         evidence: Vec::new(),
         interventions: Vec::new(),
         error_occurrences: Vec::new(),
+        error_rechecks: Vec::new(),
+        recommendation_resolutions: Vec::new(),
         listening_attempts: Vec::new(),
         mastery_changes: Vec::new(),
         card_mutations: Vec::new(),
@@ -48,7 +50,9 @@ fn latest_open(env: &Env, profile_id: &str) -> Option<(String, u32)> {
     env.connection()
         .ok()?
         .query_row(
-            crate::repositories::lessons::SELECT_LATEST_OPEN_LESSON,
+            "SELECT id, lesson_number FROM lessons
+             WHERE learner_language_profile_id=?1 AND status IN ('planned','active')
+             ORDER BY started_at DESC LIMIT 1",
             params![profile_id],
             |row| {
                 Ok((
@@ -246,16 +250,6 @@ pub fn exercise_lesson_lifecycle(data: &[u8]) {
             }
             _ => {
                 let level = if byte & 0x80 == 0 { "A1" } else { "A2" };
-                let _ = no_storage_error(crate::operations::profile_write::patch_profile(
-                    &env,
-                    &profile_id,
-                    crate::operations::profile_write::PatchProfileInput {
-                        estimated_level: Some(level),
-                        status: None,
-                        is_default: None,
-                        preferences: None,
-                    },
-                ));
             }
         }
         assert_lesson_invariants(&env, &profile_id);
@@ -338,11 +332,6 @@ pub fn exercise_tunnel_wire(data: &[u8]) {
     }
 }
 
-/// Existing direct SQLite error-write fuzz pass.
-pub fn exercise_error_writes(data: &[u8]) {
-    crate::operations::error::fuzz_error_occurrence_sequence(data);
-}
-
 fn cleanup_fuzz_database(path: &std::path::Path) {
     let _ = std::fs::remove_file(path);
     let _ = std::fs::remove_file(format!("{}-wal", path.display()));
@@ -350,7 +339,7 @@ fn cleanup_fuzz_database(path: &std::path::Path) {
 }
 
 fn seed_fuzz_learning_item(env: &Env, profile_id: &str) {
-    let at = crate::repositories::to_rfc3339(crate::api::now());
+    let at = crate::sqlite::to_rfc3339(crate::api::now());
     env.connection()
         .expect("seed learning item connection")
         .execute(
@@ -638,7 +627,7 @@ fn card_mutation_result(
 ) -> tutor_contract::LessonResult {
     let mut result = rich_lesson_result(profile_id, operation_id, None, 0);
     result.card_mutations.clear();
-    let (operation, accepted_answer, reason) = match seed % 6 {
+    let (operation, accepted_answer, reason) = match seed % 5 {
         0 => (
             tutor_contract::MutationOperation::Suspend,
             None,
@@ -659,15 +648,10 @@ fn card_mutation_result(
             Some(format!("accepted-{}", seed.saturating_sub(1))),
             Some("remove variant".to_owned()),
         ),
-        4 => (
+        _ => (
             tutor_contract::MutationOperation::Retire,
             None,
             Some("retire".to_owned()),
-        ),
-        _ => (
-            tutor_contract::MutationOperation::Link,
-            None,
-            Some("unsupported".to_owned()),
         ),
     };
     result.card_mutations.push(tutor_contract::CardMutation {
@@ -708,38 +692,8 @@ pub fn exercise_card_lifecycle(data: &[u8]) {
 
     let source = if data.is_empty() { &[0_u8][..] } else { data };
     for (step, seed) in source.iter().copied().take(16).enumerate() {
-        match seed % 7 {
+        match seed % 3 {
             0 => {
-                let accepted = vec![format!("alt-{step}"), format!("unicode-ñ-{}", seed % 5)];
-                let _ = no_storage_error(crate::operations::card_direct::patch_card(
-                    &env,
-                    &card_id,
-                    crate::operations::card_direct::CardPatchInput {
-                        edit_class: "cosmetic",
-                        prompt: Some("fuzz cosmetic prompt"),
-                        answer: None,
-                        explanation: Some("fuzz explanation"),
-                        pronunciation_note: Some("fuzz pronunciation"),
-                        accepted_answers: Some(&accepted),
-                    },
-                ));
-            }
-            1 => {
-                let answer = format!("semantic-answer-{step}");
-                let _ = no_storage_error(crate::operations::card_direct::patch_card(
-                    &env,
-                    &card_id,
-                    crate::operations::card_direct::CardPatchInput {
-                        edit_class: "semantic",
-                        prompt: None,
-                        answer: Some(&answer),
-                        explanation: None,
-                        pronunciation_note: None,
-                        accepted_answers: None,
-                    },
-                ));
-            }
-            2 => {
                 let _ = no_storage_error(crate::operations::card_direct::set_card_status(
                     &env,
                     &card_id,
@@ -747,7 +701,7 @@ pub fn exercise_card_lifecycle(data: &[u8]) {
                     Some("fuzz pause"),
                 ));
             }
-            3 => {
+            1 => {
                 let _ = no_storage_error(crate::operations::card_direct::set_card_status(
                     &env,
                     &card_id,
@@ -817,7 +771,7 @@ pub fn exercise_review_lifecycle(data: &[u8]) {
             }
             1 | 2 => {
                 if let Some(prior) = schedule_hash(&env, &card_id) {
-                    let at = crate::repositories::to_rfc3339(learning_core::Timestamp(
+                    let at = crate::sqlite::to_rfc3339(learning_core::Timestamp(
                         crate::api::now().0.saturating_add(step as i64 + 1),
                     ));
                     let operation = format!("review-{step}-{seed}");
@@ -842,7 +796,7 @@ pub fn exercise_review_lifecycle(data: &[u8]) {
             }
             3 => {
                 if let Some(prior) = schedule_hash(&env, &card_id) {
-                    let at = crate::repositories::to_rfc3339(learning_core::Timestamp(
+                    let at = crate::sqlite::to_rfc3339(learning_core::Timestamp(
                         crate::api::now().0.saturating_add(step as i64 + 1),
                     ));
                     let operation = format!("review-duplicate-{step}");
@@ -872,7 +826,7 @@ pub fn exercise_review_lifecycle(data: &[u8]) {
             }
             4 => {
                 if schedule_hash(&env, &card_id).is_some() {
-                    let at = crate::repositories::to_rfc3339(learning_core::Timestamp(
+                    let at = crate::sqlite::to_rfc3339(learning_core::Timestamp(
                         crate::api::now().0.saturating_add(step as i64 + 1),
                     ));
                     let operation = format!("review-stale-{step}");
@@ -1004,9 +958,9 @@ pub fn exercise_adaptation_model(data: &[u8]) {
     );
     let item = adaptation::item_capability_view(&state);
     let objective = match source[0] % 4 {
-        0 => "reduce_prompt_dependence",
-        1 => "strengthen_listening",
-        2 => "build_automaticity",
+        0 => "probe_prompt_independence",
+        1 => "introduce_high_utility_material",
+        2 => "improve_communicative_task_success",
         _ => "diagnose_and_expand",
     };
     adaptation::visit_task_candidates(item, objective, |candidate| {
@@ -1030,12 +984,6 @@ pub fn exercise_adaptation_model(data: &[u8]) {
             decision.estimate.distinct_success_families,
         );
     });
-    adaptation::visit_tutor_focus_threads(item, 1_800_000_000, |thread| {
-        assert!(thread.stage <= 4);
-        assert!(!thread.next_context_policy.is_empty());
-        assert!(!thread.rationale.is_empty());
-    });
-
     let ratio = |offset: usize| -> Option<f64> {
         source
             .get(offset % source.len())
@@ -1050,15 +998,20 @@ pub fn exercise_adaptation_model(data: &[u8]) {
         open_recommendations: u32::from(*source.get(5 % source.len()).unwrap_or(&0) % 10),
         recent: adaptation::RecentLearningSignals {
             lessons: *source.get(7 % source.len()).unwrap_or(&0) % 12,
-            speaking_ratio: ratio(8),
             recall_attempts: u16::from(*source.get(9 % source.len()).unwrap_or(&0) % 12),
             recall_lessons: *source.get(10 % source.len()).unwrap_or(&0) % 8,
             unaided_recall_rate: ratio(9),
+            recall_temporally_distributed: source
+                .get(15 % source.len())
+                .is_some_and(|value| value & 1 == 1),
             communicative_task_attempts: u16::from(
                 *source.get(11 % source.len()).unwrap_or(&0) % 12,
             ),
             communicative_task_lessons: *source.get(12 % source.len()).unwrap_or(&0) % 8,
             communicative_task_success_rate: ratio(12),
+            communicative_task_temporally_distributed: source
+                .get(16 % source.len())
+                .is_some_and(|value| value & 1 == 1),
             confidence: ratio(13),
         },
         preferences: adaptation::PlannerPreferencesView {
@@ -1095,11 +1048,6 @@ pub fn exercise_adaptation_model(data: &[u8]) {
             learning_item_id: Some("li-fuzz"),
             recent_grades: &grades,
             avg_response_millis: Some(500 + u32::from(source[0]) * 100),
-            spontaneous_failures: u32::from(source[0] % 5),
-            spontaneous_successes: u32::from(source[0].rotate_left(1) % 5),
-            prompted_successes: u32::from(source[0].rotate_left(2) % 5),
-            listening_failures: u32::from(source[0].rotate_left(3) % 5),
-            review_count: u32::from(source[0]),
         },
         |recommendation| {
             assert!(!recommendation.action.is_empty());
@@ -1115,7 +1063,6 @@ pub fn exercise_adaptation_model(data: &[u8]) {
             _ => learning_core::CommunicativeImpact::High,
         },
     );
-    let _ = adaptation::recheck_failed_fields(u32::from(source[0] % 30));
     let _ = adaptation::new_card_budget(
         source[0] % 12,
         source[0].rotate_left(1) % 12,
@@ -1161,13 +1108,13 @@ pub fn exercise_adaptation_model(data: &[u8]) {
     }
 }
 
-/// Standalone maintenance/write APIs that are intentionally outside lesson completion.
-pub fn exercise_maintenance_writes(data: &[u8]) {
+/// Auxiliary local writes that remain outside lesson completion.
+pub fn exercise_auxiliary_writes(data: &[u8]) {
     let path = std::env::temp_dir().join(format!(
-        "lingua-maintenance-fuzz-{}.sqlite3",
+        "lingua-auxiliary-fuzz-{}.sqlite3",
         uuid::Uuid::new_v4()
     ));
-    crate::storage::open(&path).expect("initialize maintenance fuzz database");
+    crate::storage::open(&path).expect("initialize auxiliary fuzz database");
     let env = Env::new(
         path.clone(),
         "fuzz-signing-key-012345678901234567890123".to_owned(),
@@ -1177,11 +1124,11 @@ pub fn exercise_maintenance_writes(data: &[u8]) {
     let profile_id = created["id"].as_str().expect("profile id").to_owned();
     seed_fuzz_learning_item(&env, &profile_id);
 
-    let bootstrap = rich_lesson_result(&profile_id, "maintenance-bootstrap".to_owned(), None, 0);
+    let bootstrap = rich_lesson_result(&profile_id, "auxiliary-bootstrap".to_owned(), None, 0);
     crate::operations::complete_lesson::complete_lesson(&env, &bootstrap)
-        .expect("maintenance fuzz bootstrap must complete");
+        .expect("auxiliary fuzz bootstrap must complete");
 
-    let db = env.connection().expect("maintenance lookup connection");
+    let db = env.connection().expect("auxiliary lookup connection");
     let lesson_id: String = db
         .query_row(
             "SELECT id FROM lessons WHERE learner_language_profile_id=?1 AND status='completed'
@@ -1190,74 +1137,25 @@ pub fn exercise_maintenance_writes(data: &[u8]) {
             |row| row.get(0),
         )
         .expect("completed lesson id");
+    let target_id: String = db
+        .query_row(
+            "SELECT id FROM error_targets WHERE learner_language_profile_id=?1
+             ORDER BY created_at,id LIMIT 1",
+            [&profile_id],
+            |row| row.get(0),
+        )
+        .expect("bootstrap error target");
     drop(db);
-    let card_id = first_card_id(&env, &profile_id).expect("maintenance bootstrap card");
+    let card_id = first_card_id(&env, &profile_id).expect("auxiliary bootstrap card");
 
     let source = if data.is_empty() { &[0_u8][..] } else { data };
-    for (step, seed) in source.iter().copied().take(12).enumerate() {
-        let duration = if seed & 1 == 0 {
-            Some(i64::from(seed) * 120)
-        } else {
-            Some(100_000)
-        };
-        let _ = no_storage_error(crate::operations::lesson_correction::correct_lesson_record(
-            &env,
-            if seed & 0x80 == 0 {
-                &lesson_id
-            } else {
-                "missing-lesson"
-            },
-            Some("fuzz corrected summary"),
-            Some("fuzz corrected next goal"),
-            duration,
-        ));
-
-        let error_input = crate::operations::log_error::LogErrorOccurrenceInput {
-            language_profile_id: profile_id.clone(),
-            core_category: match seed % 4 {
-                0 => learning_core::CoreErrorCategory::Grammar,
-                1 => learning_core::CoreErrorCategory::Vocabulary,
-                2 => learning_core::CoreErrorCategory::Pronunciation,
-                _ => learning_core::CoreErrorCategory::Other,
-            },
-            original_production: format!("fuzz original {step}"),
-            corrected_production: format!("fuzz corrected {step}"),
-            error_code: None,
-            explanation: Some("standalone fuzz error".to_owned()),
-            error_target_id: None,
-            communicative_impact: match seed % 3 {
-                0 => learning_core::CommunicativeImpact::Low,
-                1 => learning_core::CommunicativeImpact::Medium,
-                _ => learning_core::CommunicativeImpact::High,
-            },
-        };
-        let target_id = crate::operations::log_error::log_error_occurrence(&env, error_input)
-            .expect("new standalone error target");
-
-        if seed & 2 != 0 {
-            for repeat in 0..3 {
-                let _ = no_storage_error(crate::operations::log_error::log_error_occurrence(
-                    &env,
-                    crate::operations::log_error::LogErrorOccurrenceInput {
-                        language_profile_id: profile_id.clone(),
-                        core_category: learning_core::CoreErrorCategory::Grammar,
-                        original_production: format!("repeat {step}-{repeat}"),
-                        corrected_production: "corrected repeat".to_owned(),
-                        error_code: None,
-                        explanation: None,
-                        error_target_id: Some(target_id.clone()),
-                        communicative_impact: learning_core::CommunicativeImpact::High,
-                    },
-                ));
-            }
-        }
-
+    for seed in source.iter().copied().take(12) {
         let rechecks: Vec<String> = {
             let db = env.connection().expect("recheck lookup");
             let mut statement = db
                 .prepare(
                     "SELECT id FROM error_rechecks WHERE error_target_id=?1
-                     ORDER BY offset_days,id LIMIT 2",
+                     AND completed_at IS NULL ORDER BY offset_days,id LIMIT 2",
                 )
                 .expect("prepare recheck lookup");
             statement
@@ -1267,57 +1165,18 @@ pub fn exercise_maintenance_writes(data: &[u8]) {
                 .expect("collect rechecks")
         };
         for (index, recheck_id) in rechecks.iter().enumerate() {
-            let _ = no_storage_error(crate::operations::records_write::complete_error_recheck(
+            let _ = no_storage_error(crate::operations::error::complete_error_recheck(
                 &env,
                 &target_id,
                 recheck_id,
                 index == 1 && seed & 4 != 0,
+                0,
+                "fuzz:scheduled-recheck",
+                true,
             ));
         }
 
-        let context = format!("maintenance-context-{}", seed % 5);
-        let _ = no_storage_error(crate::operations::records_write::create_listening_attempt(
-            &env,
-            crate::operations::records_write::ListeningAttemptInput {
-                language_profile_id: &profile_id,
-                learning_item_id: Some("li-fuzz"),
-                lesson_id: Some(&lesson_id),
-                source_reference: Some("maintenance-audio"),
-                source_variant_id: Some("variant-a"),
-                talker_key: Some("talker-a"),
-                context_tag: &context,
-                transcript: Some("quiero agua"),
-                success: seed & 8 == 0,
-                assistance_level: seed % 4,
-                response_millis: 100 + u32::from(seed) * 100,
-                probe_phase: if seed & 16 == 0 {
-                    tutor_contract::ProbePhase::Practice
-                } else {
-                    tutor_contract::ProbePhase::Transfer
-                },
-            },
-        ));
-        if seed & 32 != 0 {
-            let _ = no_storage_error(crate::operations::records_write::create_listening_attempt(
-                &env,
-                crate::operations::records_write::ListeningAttemptInput {
-                    language_profile_id: &profile_id,
-                    learning_item_id: None,
-                    lesson_id: None,
-                    source_reference: None,
-                    source_variant_id: None,
-                    talker_key: None,
-                    context_tag: "",
-                    transcript: None,
-                    success: false,
-                    assistance_level: 4,
-                    response_millis: 600_001,
-                    probe_phase: tutor_contract::ProbePhase::Practice,
-                },
-            ));
-        }
-
-        let at = crate::repositories::to_rfc3339(crate::api::now());
+        let at = crate::sqlite::to_rfc3339(crate::api::now());
         {
             let db = env.connection().expect("recommendation insert");
             crate::operations::recommendation_write::insert_recommendation(
@@ -1326,7 +1185,7 @@ pub fn exercise_maintenance_writes(data: &[u8]) {
                 "card",
                 Some(&card_id),
                 "redesign_card",
-                &serde_json::json!({"reason":"maintenance fuzz"}).to_string(),
+                &serde_json::json!({"reason":"auxiliary fuzz"}).to_string(),
                 &at,
             )
             .expect("insert redesign recommendation");
@@ -1341,88 +1200,6 @@ pub fn exercise_maintenance_writes(data: &[u8]) {
             )
             .expect("dedupe redesign recommendation");
         }
-        let _ = crate::handlers::recommendations::list_for(&env, &profile_id)
-            .expect("list recommendations");
-        let _ = crate::handlers::recommendations::redesign_candidates_for(&env, &profile_id)
-            .expect("redesign candidates");
-
-        let recommendation_id: Option<String> = env
-            .connection()
-            .expect("recommendation lookup")
-            .query_row(
-                "SELECT id FROM recommendations
-                 WHERE learner_language_profile_id=?1 AND status='open'
-                 ORDER BY created_at,id LIMIT 1",
-                [&profile_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .expect("recommendation query");
-        if let Some(recommendation_id) = recommendation_id {
-            let status = if seed & 64 == 0 {
-                "accepted"
-            } else {
-                "dismissed"
-            };
-            let _ = no_storage_error(crate::operations::recommendation_ops::resolve(
-                &env,
-                &recommendation_id,
-                status,
-            ));
-        }
-
-        let standalone_payload = tutor_contract::CardPayload {
-            intent: learning_core::CardIntent::Production,
-            prompt: format!("standalone prompt {step}-{seed}"),
-            answer: format!("standalone answer {step}-{seed}"),
-            accepted_answers: vec![format!("standalone alt {step}")],
-            prompt_language: Some("ru".to_owned()),
-            explanation: Some("standalone mutation fuzz".to_owned()),
-            scenario_tags: vec!["maintenance".to_owned()],
-            skill_tags: vec!["production".to_owned()],
-            source_learning_item_id: Some("li-fuzz".to_owned()),
-            source_error_target_id: None,
-            creation_reason: "standalone maintenance fuzz".to_owned(),
-            priority_score: Some(f64::from(seed) / 255.0),
-        };
-        let mutations = [
-            tutor_contract::CardMutation {
-                operation: tutor_contract::MutationOperation::Create,
-                client_operation_id: format!("standalone-create-{step}-{seed}"),
-                card_id: None,
-                card: Some(standalone_payload.clone()),
-                accepted_answer: None,
-                reason: Some("standalone create".to_owned()),
-            },
-            tutor_contract::CardMutation {
-                operation: tutor_contract::MutationOperation::Update,
-                client_operation_id: format!("standalone-update-{step}-{seed}"),
-                card_id: Some(card_id.clone()),
-                card: Some(tutor_contract::CardPayload {
-                    prompt: format!("updated bootstrap {step}"),
-                    answer: format!("updated answer {step}"),
-                    ..standalone_payload
-                }),
-                accepted_answer: None,
-                reason: Some("standalone update".to_owned()),
-            },
-        ];
-        let _ = no_storage_error(crate::operations::upsert_cards::upsert_cards(
-            &env,
-            &profile_id,
-            &mutations,
-        ));
-
-        let ids = if seed & 1 == 0 {
-            serde_json::json!([card_id.clone()])
-        } else {
-            serde_json::json!([])
-        };
-        let _ = no_storage_error(crate::operations::suspend_cards::suspend_cards_json(
-            &env,
-            &ids,
-            Some("maintenance fuzz pause"),
-        ));
 
         assert_database_integrity(&env);
     }

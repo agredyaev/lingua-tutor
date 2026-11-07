@@ -1,8 +1,21 @@
 //! Learner language-profile operations.
 
-use crate::repositories::profiles;
 use crate::{Env, Result};
-use serde::Deserialize;
+
+const SELECT_LANGUAGE_PROFILES: &str = "SELECT p.id, p.learner_id,
+    p.source_language, p.target_locale, p.estimated_level,
+    MAX(
+        p.current_lesson_number,
+        COALESCE(
+            (SELECT MAX(l.lesson_number)
+             FROM lessons l
+             WHERE l.learner_language_profile_id = p.id
+               AND l.status = 'completed'),
+            0
+        )
+    ) AS current_lesson_number,
+    p.status, p.is_default, p.preferences_json
+ FROM learner_language_profiles p ORDER BY p.is_default DESC, p.created_at";
 
 // Streaming SQLite -> JSON without an intermediate row/domain graph.
 fn project_profile_wire(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<serde_json::Value>> {
@@ -29,7 +42,7 @@ fn project_profile_wire(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<serd
 
 pub(crate) fn list_profiles(env: &Env) -> Result<serde_json::Value> {
     let connection = env.connection()?;
-    let mut statement = connection.prepare(profiles::SELECT_LANGUAGE_PROFILES)?;
+    let mut statement = connection.prepare(SELECT_LANGUAGE_PROFILES)?;
     let mut rows = statement.query([])?;
     let mut output = Vec::new();
     while let Some(row) = rows.next()? {
@@ -39,15 +52,6 @@ pub(crate) fn list_profiles(env: &Env) -> Result<serde_json::Value> {
     }
     crate::json(&output)
 }
-
-#[derive(Deserialize)]
-pub(crate) struct PatchProfileParams {
-    pub estimated_level: Option<String>,
-    pub status: Option<String>,
-    pub is_default: Option<bool>,
-    pub preferences: Option<serde_json::Value>,
-}
-
 #[cfg(test)]
 // Test fixtures intentionally fail fast and use compact tuple snapshots.
 #[allow(clippy::unwrap_used, clippy::type_complexity)]

@@ -3,11 +3,16 @@
 //! request-local SQLite connection/transaction.
 
 use crate::api::{now, operation_error, operation_error_with};
-use crate::repositories::{lessons, to_rfc3339};
+use crate::sqlite::to_rfc3339;
 use crate::{Env, Result};
 use learning_core::Timestamp;
-use rusqlite::{OptionalExtension as _, params};
+use rusqlite::params;
 use tutor_contract::{LessonResult, parse_lesson_result, validate};
+
+const SELECT_LESSONS: &str = "SELECT id,learner_language_profile_id,lesson_number,status,scenario,
+    planned_goal,source,started_at,completed_at,duration_seconds,tutor_summary,next_goal,idempotency_key
+ FROM lessons WHERE learner_language_profile_id=?1
+ ORDER BY lesson_number DESC LIMIT ?2";
 
 // SQL row -> wire fields in a single pass; no owned Row -> Domain conversion.
 fn project_lesson_wire(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<serde_json::Value>> {
@@ -24,11 +29,11 @@ fn project_lesson_wire(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<serde
     let (Ok(started), Ok(completed)) = (
         started
             .as_deref()
-            .map(crate::repositories::from_rfc3339)
+            .map(crate::sqlite::from_rfc3339)
             .transpose(),
         completed
             .as_deref()
-            .map(crate::repositories::from_rfc3339)
+            .map(crate::sqlite::from_rfc3339)
             .transpose(),
     ) else {
         return Ok(None);
@@ -52,7 +57,7 @@ fn project_lesson_wire(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<serde
 
 pub(crate) fn list_lessons_for(env: &Env, profile_id: &str) -> Result<serde_json::Value> {
     let database = env.connection()?;
-    let mut statement = database.prepare(lessons::SELECT_LESSONS)?;
+    let mut statement = database.prepare(SELECT_LESSONS)?;
     let mut rows = statement.query(params![profile_id, 50_u32])?;
     let mut output = Vec::new();
     while let Some(row) = rows.next()? {
@@ -61,22 +66,6 @@ pub(crate) fn list_lessons_for(env: &Env, profile_id: &str) -> Result<serde_json
         }
     }
     crate::json(&output)
-}
-
-pub(crate) fn get_lesson(env: &Env, lesson_id: &str) -> Result<serde_json::Value> {
-    let database = env.connection()?;
-    let item = database
-        .query_row(
-            lessons::SELECT_LESSON,
-            params![lesson_id],
-            project_lesson_wire,
-        )
-        .optional()?
-        .flatten();
-    match item {
-        Some(wire) => crate::json(&wire),
-        None => operation_error(404, "not_found", "unknown lesson"),
-    }
 }
 
 pub(crate) fn validate_import_text(text: &str, env: &Env) -> Result<serde_json::Value> {
@@ -115,16 +104,6 @@ pub(crate) fn apply_import_text(text: &str, token: &str, env: &Env) -> Result<se
         return operation_error(409, "validation_expired", "token expired — re-validate");
     }
     let result = validate_lesson_result(parse_lesson_result_text(text)?)?;
-    crate::operations::complete_lesson::complete_lesson(env, &result)
-}
-
-pub(crate) fn complete_lesson_result(
-    env: &Env,
-    lesson_id: &str,
-    mut result: LessonResult,
-) -> Result<serde_json::Value> {
-    result = validate_lesson_result(result)?;
-    result.lesson.lesson_id = Some(lesson_id.to_owned());
     crate::operations::complete_lesson::complete_lesson(env, &result)
 }
 

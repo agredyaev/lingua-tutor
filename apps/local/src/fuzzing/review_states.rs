@@ -10,16 +10,15 @@ fn save_state(
 ) {
     let last = state
         .last_review_at
-        .map(|t| crate::repositories::to_rfc3339(learning_core::Timestamp(t.0)));
+        .map(|t| crate::sqlite::to_rfc3339(learning_core::Timestamp(t.0)));
     let due = state
         .due_at
-        .map(|t| crate::repositories::to_rfc3339(learning_core::Timestamp(t.0)));
+        .map(|t| crate::sqlite::to_rfc3339(learning_core::Timestamp(t.0)));
     crate::operations::card_write::upsert_schedule_state(
         db,
         card,
         &state.algorithm,
         &state.algorithm_version,
-        state.parameter_set_id.as_deref(),
         state.difficulty,
         state.stability,
         last.as_deref(),
@@ -51,13 +50,13 @@ pub fn exercise_review_states(data: &[u8]) {
     let card = first_card_id(&env, profile).expect("card");
     let db = env.connection().expect("db");
     let now = crate::api::now();
-    let at = crate::repositories::to_rfc3339(now);
-    let old = crate::repositories::to_rfc3339(learning_core::Timestamp(now.0 - 10 * 86400));
+    let at = crate::sqlite::to_rfc3339(now);
+    let old = crate::sqlite::to_rfc3339(learning_core::Timestamp(now.0 - 10 * 86400));
     // Replay historical completed sessions on distinct local days, including duplicate days.
     for n in 1..=4 {
         let s = crate::operations::review_ops::create_session(&env, profile, "offline")
             .expect("historical session");
-        let time = crate::repositories::to_rfc3339(learning_core::Timestamp(
+        let time = crate::sqlite::to_rfc3339(learning_core::Timestamp(
             now.0 - i64::from(n % 3 + 1) * 86400,
         ));
         db.execute(
@@ -100,16 +99,9 @@ pub fn exercise_review_states(data: &[u8]) {
         "INSERT INTO cards ({}) SELECT {select} FROM cards WHERE id=?1",
         columns.join(",")
     );
-    let scheduler = if seed & 4 == 0 {
-        review_engine::FSRS_ID
-    } else {
-        review_engine::FALLBACK_ID
-    };
-    let scratch = review_engine::new_scheduler_scratch(scheduler).expect("scratch");
-    let base = review_engine::initial_state(scheduler, review_engine::Timestamp(now.0 - 86400 * 7))
-        .expect("state");
+    let scratch = review_engine::new_scheduler_scratch().expect("scratch");
+    let base = review_engine::initial_state(review_engine::Timestamp(now.0 - 86400 * 7));
     let state = review_engine::apply_review(
-        scheduler,
         &scratch,
         &base,
         &review_engine::ReviewEventInput {
@@ -141,14 +133,11 @@ pub fn exercise_review_states(data: &[u8]) {
     assert_eq!(ids.len(), rows.len());
     // All answer evaluation paths use the real stored card.
     let answer = String::from_utf8_lossy(data);
-    let _ = crate::handlers::review::evaluate(&env, &card, &answer).expect("answer evaluation");
-    let _ = no_storage_error(crate::handlers::review::evaluate(&env, "missing", &answer));
     // A long effective event stream followed by undo drives replay and recommendation rules.
     for n in 0..12 {
         let prior = schedule_hash(&env, &card).expect("current hash");
         let operation = format!("review-state-{n}");
-        let answered =
-            crate::repositories::to_rfc3339(learning_core::Timestamp(now.0 + i64::from(n)));
+        let answered = crate::sqlite::to_rfc3339(learning_core::Timestamp(now.0 + i64::from(n)));
         crate::operations::review_ops::submit_event(
             &env,
             sid,
@@ -226,7 +215,6 @@ pub fn exercise_review_states(data: &[u8]) {
         [&card],
     )
     .expect("corrupt field");
-    let _ = crate::handlers::review::evaluate(&env, &card, &answer);
     let _ = crate::operations::review_queue::queue(&env, sid);
     db.execute(
         &format!("UPDATE cards SET {field}=?2 WHERE id=?1"),
@@ -302,32 +290,9 @@ pub fn exercise_review_states(data: &[u8]) {
         params![card, hash],
     )
     .expect("restore hash");
-    for (algorithm, version) in [
-        ("invalid", "x"),
-        ("fsrs", "unavailable"),
-        ("fallback", "unavailable"),
-    ] {
-        assert!(crate::operations::review_ops::select_scheduler(algorithm, version).is_err());
+    for (algorithm, version) in [("invalid", "x"), ("fsrs", "unavailable")] {
+        assert!(crate::operations::review_ops::validate_scheduler(algorithm, version).is_err());
     }
-    for ids in [
-        serde_json::json!(null),
-        serde_json::json!([42]),
-        serde_json::json!([card, "missing"]),
-    ] {
-        assert!(crate::operations::suspend_cards::suspend_cards_json(&env, &ids, None).is_err());
-    }
-    db.execute("UPDATE cards SET status='retired' WHERE id=?1", [&card])
-        .expect("retire");
-    assert!(
-        crate::operations::suspend_cards::suspend_cards_json(
-            &env,
-            &serde_json::json!([card]),
-            None
-        )
-        .is_err()
-    );
-    let _ = crate::repositories::cards::select_card_sql();
-    let _ = crate::repositories::cards::select_card_by_hash_sql();
     for t in [0, 1774742400, 1792886400, 1800000000] {
         for tz in ["UTC", "Europe/Madrid", "invalid"] {
             let _ = crate::operations::card_budget::local_day_start_utc(

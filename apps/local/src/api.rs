@@ -3,12 +3,12 @@
 use crate::{Error, Result};
 
 /// Return a structured application-operation failure.
-pub fn operation_error<T>(status: u16, code: &'static str, message: &str) -> Result<T> {
+pub(crate) fn operation_error<T>(status: u16, code: &'static str, message: &str) -> Result<T> {
     operation_error_with(status, code, message, serde_json::json!({}))
 }
 
 /// Return a structured application-operation failure with machine-readable details.
-pub fn operation_error_with<T>(
+pub(crate) fn operation_error_with<T>(
     status: u16,
     code: &'static str,
     message: &str,
@@ -19,7 +19,7 @@ pub fn operation_error_with<T>(
 
 /// Request instant, unix seconds.
 #[must_use]
-pub fn now() -> learning_core::Timestamp {
+pub(crate) fn now() -> learning_core::Timestamp {
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -29,6 +29,6 @@ pub fn now() -> learning_core::Timestamp {
 
 /// New opaque entity ID: UUID v4 with a short type prefix.
 #[must_use]
-pub fn new_id(prefix: &str) -> String {
+pub(crate) fn new_id(prefix: &str) -> String {
     format!("{prefix}_{}", uuid::Uuid::new_v4().simple())
 }
