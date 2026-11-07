@@ -143,13 +143,13 @@ fn native_llm_surface_preserves_authoritative_methodology_contract() {
 
     assert!(
         records.contains(
-            "Для calibration-eligible outcome нужен минимум 1 diagnostic baseline и минимум 2 measurement-eligible probes overall"
+            "A calibration-eligible outcome requires at least 1 diagnostic baseline and at least 2 measurement-eligible probes overall"
         ) && records.contains("calibration_valid=false")
             && validation.contains("pub fn measurement_coverage_counts"),
         "LLM lesson-result instructions drifted from calibration coverage semantics"
     );
     assert!(
-        !records.contains("минимум 2 полностью измеренных diagnostic probes"),
+        !records.contains("at least 2 fully measured diagnostic probes"),
         "stale duplicate-diagnostic rule returned to the live LLM contract"
     );
     assert!(
@@ -1162,13 +1162,13 @@ fn planner_reads_use_fixed_sql_bind_shapes_without_trait_objects() {
 
 #[test]
 fn methodology_distinguishes_stabilization_from_retention_and_transfer() {
-    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions.md");
 
     for required in [
-        "exact-repetition попытки только для первичной стабилизации/процедурализации",
-        "не трактуй его как доказательство retention или transfer",
-        "procedural/semantic variation",
-        "не считаются несколькими spaced-success stages",
+        "one or two short exact-repetition attempts only for initial stabilization and proceduralization",
+        "do not treat it as retention or transfer evidence",
+        "procedural or semantic variation",
+        "do not count as multiple spaced-success stages",
     ] {
         assert!(
             methodology.contains(required),
@@ -1179,13 +1179,13 @@ fn methodology_distinguishes_stabilization_from_retention_and_transfer() {
 
 #[test]
 fn methodology_decomposes_task_failure_before_intervention() {
-    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions.md");
 
     for required in [
-        "Провал communicative task — это outcome, а не диагноз",
-        "короткий discriminating probe",
-        "Focus-on-form применяй реактивно",
-        "Не лечи все причины одновременно",
+        "A communicative task failure is an outcome, not a diagnosis",
+        "short discriminating probe",
+        "Apply focus on form reactively",
+        "Do not treat all causes at once",
     ] {
         assert!(
             methodology.contains(required),
@@ -1196,18 +1196,18 @@ fn methodology_decomposes_task_failure_before_intervention() {
 
 #[test]
 fn methodology_optimizes_communicative_outcome_not_proxies() {
-    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions.md");
 
     for required in [
-        "минимизировать число учебных взаимодействий и время",
-        "Оптимизируй реальный communicative outcome, а не proxy",
-        "наблюдение → предполагаемый bottleneck → intervention → измеримый post/delayed outcome",
-        "Если evidence недостаточно, сначала уменьши неопределённость коротким probe",
-        "Вовлечённость, естественность разговора и чувство прогресса — важные constraints",
-        "Объяснение — это intervention, а не доказательство learning",
-        "Новый материал — это expansion после контроля текущих ограничений",
-        "Пока bottleneck остаётся нестабильным, optional expansion должен быть 0",
-        "какой latent state пытается оценить",
+        "Minimize the number of learning interactions and elapsed time",
+        "Do not optimize curriculum completion",
+        "observation -> bottleneck hypothesis -> intervention -> measurable immediate or delayed outcome",
+        "If evidence is insufficient, reduce uncertainty with a short discriminating probe",
+        "Engagement, conversational naturalness, and sustainable cognitive load are constraints",
+        "An explanation is an intervention, not learning evidence",
+        "New material is optional expansion",
+        "Optional expansion must be zero while the main bottleneck remains unstable",
+        "the latent state being estimated",
     ] {
         assert!(
             methodology.contains(required),
@@ -1218,21 +1218,21 @@ fn methodology_optimizes_communicative_outcome_not_proxies() {
 
 #[test]
 fn methodology_ab_changes_require_predeclared_acceptance_gate() {
-    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions.md");
     let tutor_spec = include_str!("../../../docs/spec/07-tutor-contract.md");
 
     for required in [
         "primary outcome",
-        "control/baseline",
+        "control or baseline",
         "unit of analysis",
-        "минимально важный effect size",
-        "выборки/power",
-        "правило остановки",
+        "minimally important effect size",
+        "sample and power plan",
+        "stopping rule",
         "uncertainty/CI",
         "statistical significance",
         "practical significance",
         "optional stopping",
-        "результат остаётся UNVERIFIED",
+        "result remains UNVERIFIED",
     ] {
         assert!(
             methodology.contains(required),
@@ -1259,18 +1259,18 @@ fn methodology_ab_changes_require_predeclared_acceptance_gate() {
 
 #[test]
 fn communicative_task_success_requires_target_language_solution() {
-    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions.md");
     let records = include_str!("../../../apps/local/src/handlers/records.rs");
     let tutor_spec = include_str!("../../../docs/spec/07-tutor-contract.md");
 
     assert!(
-        methodology.contains("Исходный язык, жест или другое non-linguistic действие")
-            && methodology.contains("не заменять тот target-language материал"),
+        methodology.contains("Source-language, gesture, or another non-linguistic action")
+            && methodology.contains("must not replace the target-language material"),
         "Tutor methodology must not count source-language/non-linguistic substitution as L2 task success"
     );
     assert!(
         records.contains(
-            "source-language или gesture-only workaround не является языковым task success"
+            "Source-language or gesture-only workaround does not count as task success when it replaces required target-language material"
         ),
         "LLM-facing lesson-result contract lost the strong v2 communicative-task rubric"
     );
@@ -1279,12 +1279,11 @@ fn communicative_task_success_requires_target_language_solution() {
         "Tutor spec lost the target-language requirement for communicative-task success"
     );
     assert!(
-        methodology
-            .contains("form-only упражнение — это practice/evidence, а не communicative task"),
+        methodology.contains("A form-only exercise is practice/evidence, not a communicative task"),
         "Tutor methodology must not count form-only drills as communicative tasks"
     );
     assert!(
-        records.contains("form-only drill (`скажи/повтори X`) не является communicative task"),
+        records.contains("A form-only drill such as say/repeat X is not a communicative task"),
         "LLM-facing contract must not count form-only drills as communicative tasks"
     );
     assert!(
@@ -1297,12 +1296,12 @@ fn communicative_task_success_requires_target_language_solution() {
 
 #[test]
 fn methodology_treats_intervention_effects_as_observational() {
-    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions.md");
     let tutor_spec = include_str!("../../../docs/spec/07-tutor-contract.md");
 
     for required in [
-        "один delayed sample — только preliminary signal",
-        "не менее 2 независимых delayed samples",
+        "One delayed sample is preliminary observational evidence only",
+        "at least two independent delayed samples",
     ] {
         assert!(
             methodology.contains(required),
@@ -1327,7 +1326,7 @@ fn tutor_owns_curriculum_direction_and_engine_persists_observed_context() {
     let mcp_tools = include_str!("../../../apps/local/src/mcp_tools.rs");
     let complete_lesson = include_str!("../../../apps/local/src/operations/complete_lesson.rs");
     let planner = include_str!("../../../crates/adaptation/src/planner.rs");
-    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions.md");
     let tutor_spec = include_str!("../../../docs/spec/07-tutor-contract.md");
     let init = include_str!("../../../apps/local/migrations/0001_init.sql");
     let planner_history_migration =
@@ -1407,7 +1406,7 @@ fn error_recheck_lifecycle_is_closed_through_canonical_lesson_completion() {
     let contract = include_str!("../../../crates/tutor-contract/src/lib.rs");
     let complete = include_str!("../../../apps/local/src/operations/complete_lesson.rs");
     let errors = include_str!("../../../apps/local/src/operations/error.rs");
-    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions.md");
     let tutor_spec = include_str!("../../../docs/spec/07-tutor-contract.md");
     let records = include_str!("../../../apps/local/src/handlers/records.rs");
     let mcp = include_str!("../../../apps/local/src/mcp_tools.rs");
@@ -1439,18 +1438,18 @@ fn error_recheck_lifecycle_is_closed_through_canonical_lesson_completion() {
     }
     assert!(
         methodology.contains(
-            "Если recheck failed, target логически возвращается в active practice на время corrective repair"
+            "If a recheck fails, the target returns logically to active practice for corrective repair"
         ) && methodology
-            .contains("Только полностью успешная spaced-серия закрывает target как resolved"),
+            .contains("Only a fully successful spaced series resolves the target"),
         "Tutor methodology drifted from deterministic error-recheck lifecycle"
     );
     assert!(
         methodology.contains(
-            "достаточно подтверждённый провал независимой коммуникативной задачи → method-change → due error recheck"
+            "sufficiently sampled independent communicative-task failure -> required method change -> due error rechecks"
         ) && methodology.contains(
-            "recurring errors → evidence-based recommendations → sparse spontaneous-production diagnostic"
+            "recurring errors -> evidence-based recommendations -> sparse spontaneous-production diagnostic"
         ) && methodology.contains(
-            "FSRS card backlog не является самостоятельной целью Tutor-урока"
+            "FSRS card backlog is not a standalone Tutor-lesson objective"
         ) && tutor_spec.contains(
             "sufficiently sampled independent communicative-task failure → required method change → due error rechecks"
         ) && tutor_spec.contains(
@@ -1459,7 +1458,7 @@ fn error_recheck_lifecycle_is_closed_through_canonical_lesson_completion() {
         "Tutor/spec profile-level priority order drifted from deterministic planner"
     );
     assert!(
-        records.contains("\"error_rechecks\"") && records.contains("outcome в error_rechecks"),
+        records.contains("\"error_rechecks\"") && records.contains("outcome in error_rechecks"),
         "LLM-facing lesson-result contract stopped exposing recheck persistence"
     );
     assert!(
@@ -1472,7 +1471,7 @@ fn error_recheck_lifecycle_is_closed_through_canonical_lesson_completion() {
 fn recommendation_lifecycle_is_closed_through_canonical_lesson_completion() {
     let contract = include_str!("../../../crates/tutor-contract/src/lib.rs");
     let complete = include_str!("../../../apps/local/src/operations/complete_lesson.rs");
-    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions.md");
     let records = include_str!("../../../apps/local/src/handlers/records.rs");
     let mcp = include_str!("../../../apps/local/src/mcp_tools.rs");
     let server = include_str!("../../../apps/local/src/server.rs");
@@ -1488,7 +1487,7 @@ fn recommendation_lifecycle_is_closed_through_canonical_lesson_completion() {
         "canonical completion no longer owns recommendation state transition"
     );
     assert!(
-        methodology.contains("Open recommendation — это незавершённое решение")
+        methodology.contains("An open recommendation is an unresolved decision")
             && methodology.contains("status=`accepted`")
             && methodology.contains("status=`dismissed`"),
         "Tutor methodology lost recommendation lifecycle rules"
@@ -1509,7 +1508,7 @@ fn recommendation_lifecycle_is_closed_through_canonical_lesson_completion() {
 fn sticky_method_change_is_active_repair_pressure_not_recheck_interference() {
     let planner_read = include_str!("../../../apps/local/src/operations/planner_read.rs");
     let records = include_str!("../../../apps/local/src/handlers/records.rs");
-    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions.md");
     let tutor_spec = include_str!("../../../docs/spec/07-tutor-contract.md");
 
     assert!(
@@ -1526,7 +1525,7 @@ fn sticky_method_change_is_active_repair_pressure_not_recheck_interference() {
         "tutor-context method-change pressure must use the same active-repair state"
     );
     assert!(
-        methodology.contains("method_change_required — это constraint на следующий repair"),
+        methodology.contains("`method_change_required` is a constraint on the next repair"),
         "Tutor methodology must distinguish sticky repair constraint from repeated method switching"
     );
     assert!(
@@ -1539,42 +1538,42 @@ fn sticky_method_change_is_active_repair_pressure_not_recheck_interference() {
 
 #[test]
 fn methodology_requires_distributed_evidence_and_fresh_mastery() {
-    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions.md");
 
     for required in [
-        "Сила evidence и decision-rate для capability растут по независимым learning episodes",
-        "decision-rates усредняй по урокам, а не по числу попыток",
-        "старше 28 дней не используй как authority",
-        "Переход в provisionally_mastered требует, чтобы последняя mastery-eligible non-practice productive exit-observation",
-        "как минимум 2 временно разнесённых предыдущих lesson episodes",
-        "непустым `context_family`",
-        "Свежий unresolved spontaneous-production failure блокирует full mastery",
-        "84-дневном окне revalidation",
-        "diagnostic baseline для того же learning item и той же target_capability",
-        "`probe_phase=practice` фиксирует acquisition/repair performance",
-        "не используй его для повышения operational capability state, profile-level unaided recall или mastery",
-        "Успех по другой capability не закрывает этот failure",
-        "assisted/unqualified success той же capability тоже не закрывает independent failure",
-        "legacy-записи без этого флага fail closed",
-        "использует exit-observation каждого prior episode",
-        "Item-level weighted_success_rate и unaided_success_rate должны быть recency/episode-weighted",
-        "Evidence с неизвестным assistance_level не создаёт independent episode",
-        "до минимум 3 независимых episodes предпочитай discriminating diagnostic probe",
-        "successful_contexts/successful_context_families — не пожизненные достижения",
-        "учитывай последний независимый outcome",
-        "самой давно не подтверждённой из listening/spontaneous_production/transfer",
-        "Recognition/prompted-only failure не должен занимать дефицитный focus-revalidation reserve",
-        "Bounded top-K не должен менять смысл решения",
-        "сохраняй только лучшую action для каждой пары item+capability",
-        "baseline расположен строго раньше explicit immediate outcome",
-        "Numeric effectiveness delta считай между pre-lesson capability snapshot и delayed future snapshot",
-        "Если один следующий независимый success/failure способен перевести решение через operational threshold",
-        "оба исхода ведут к одному и тому же action, не трать отдельный diagnostic slot",
-        "Prompt dependence считай установленной только item-level для одного и того же learning item",
-        "устойчиво подтверждённый gap (`listening_repair`)",
-        "latency измерена как минимум в 2 независимых qualified episodes",
-        "минимум 1 diagnostic baseline и минимум 2 measurement-eligible probes overall",
-        "не увеличивай допустимый порог автоматически из-за числа слов в target_text",
+        "Evidence strength and decision rates increase across independent learning episodes",
+        "Average profile decision rates by lesson episode, not by raw attempt count",
+        "Recent profile signals older than 28 days must not be treated as current authority",
+        "Promotion to `provisionally_mastered` requires the latest mastery-eligible non-practice productive exit observation",
+        "at least two distinct successful transfer `context_family` values from at least two temporally separated previous lesson episodes",
+        "non-empty `context_family`",
+        "A fresh unresolved spontaneous-production failure blocks full mastery",
+        "inside the current 84-day revalidation window",
+        "a qualified diagnostic baseline for the same learning item and `target_capability`",
+        "`probe_phase=practice` records acquisition or repair performance",
+        "Do not use practice evidence to raise operational capability state, profile-level unaided recall, or mastery",
+        "Success in another capability does not close that failure",
+        "Assisted or otherwise unqualified success in the same capability also does not close an independent failure",
+        "Legacy records without `calibration_eligible=true` fail closed",
+        "uses the exit observation from each prior episode",
+        "Item-level `weighted_success_rate` and `unaided_success_rate` must be recency- and episode-weighted",
+        "Evidence with unknown `assistance_level` does not create an independent episode",
+        "Before at least three independent episodes, prefer a discriminating diagnostic probe",
+        "`successful_contexts` and `successful_context_families` are not lifetime achievements",
+        "Use the latest independent outcome for each context or family",
+        "oldest unconfirmed focus capability among listening, spontaneous production, and transfer",
+        "Recognition- or prompted-only failure must not occupy the scarce focus-revalidation reserve",
+        "Bounded top-K must not change task semantics",
+        "keep only the best action for each item-capability pair",
+        "baseline strictly before the explicit immediate outcome",
+        "Compute numeric effectiveness delta between the pre-lesson capability snapshot and the first genuinely delayed non-practice observation",
+        "If one next independent success or failure can cross an operational threshold and change the next action",
+        "If both outcomes lead to the same action, do not spend a diagnostic slot",
+        "Prompt dependence is established only at item level for the same learning item",
+        "established gap `listening_repair`",
+        "measured latency in at least two independent qualified episodes",
+        "at least one diagnostic baseline and at least two measurement-eligible probes overall",
+        "Do not increase a retrieval-latency threshold automatically because `target_text` contains more words",
     ] {
         assert!(
             methodology.contains(required),
@@ -1766,8 +1765,8 @@ fn adaptive_state_regressions_keep_episode_freshness_and_revalidation() {
         "lesson calibration coverage must stay explicit without turning sparse measurement into persistence failure"
     );
     assert!(
-        !include_str!("../../../apps/local/src/methodology_instructions_ru.md")
-            .contains("минимум 2 diagnostic probes"),
+        !include_str!("../../../apps/local/src/methodology_instructions.md")
+            .contains("at least 2 diagnostic probes"),
         "Tutor methodology reintroduced mandatory duplicate diagnostic probing"
     );
     assert!(
@@ -2180,5 +2179,74 @@ fn lean_runtime_surface_stays_minimal() {
         "evaluate_review_answer",
     ] {
         assert!(!server.contains(&format!("\"{removed}\" =>")));
+    }
+}
+
+#[test]
+fn repository_text_has_no_cyrillic() {
+    fn is_cyrillic(ch: char) -> bool {
+        matches!(
+            ch as u32,
+            0x0400..=0x052F | 0x1C80..=0x1C8F | 0x2DE0..=0x2DFF | 0xA640..=0xA69F
+        )
+    }
+
+    fn scan(path: &std::path::Path, violations: &mut Vec<String>) {
+        if path.is_dir() {
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("");
+            if matches!(
+                name,
+                ".git"
+                    | ".cargo-home"
+                    | ".rivet-cargo-home"
+                    | "target"
+                    | "node_modules"
+                    | "dist"
+                    | "artifacts"
+                    | "corpus"
+            ) || name.starts_with(".rivet-")
+            {
+                return;
+            }
+            let Ok(entries) = std::fs::read_dir(path) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                scan(&entry.path(), violations);
+            }
+            return;
+        }
+
+        let Ok(bytes) = std::fs::read(path) else {
+            return;
+        };
+        let Ok(text) = std::str::from_utf8(&bytes) else {
+            return;
+        };
+        if let Some((offset, ch)) = text.char_indices().find(|(_, ch)| is_cyrillic(*ch)) {
+            violations.push(format!("{}:{offset}: U+{:04X}", path.display(), ch as u32));
+        }
+    }
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut violations = Vec::new();
+    scan(&root, &mut violations);
+    assert!(
+        violations.is_empty(),
+        "Cyrillic text is not allowed in the repository: {}",
+        violations.join(", ")
+    );
+
+    for removed in [
+        "apps/local/src/methodology_instructions_ru.md",
+        "apps/local/src/methodology_corrections_ru.md",
+    ] {
+        assert!(
+            !root.join(removed).exists(),
+            "language-specific methodology file returned: {removed}"
+        );
     }
 }

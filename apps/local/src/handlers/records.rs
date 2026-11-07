@@ -584,13 +584,13 @@ pub(crate) fn tutor_context_for(env: &Env, profile_id: &str) -> Result<serde_jso
         effective_next_lesson_number(&database, profile_id, current_lesson_number)?;
     let errors = active_error_context(&database, profile_id)?;
 
-    let level = estimated_level.as_deref().unwrap_or("не определён");
+    let level = estimated_level.as_deref().unwrap_or("unknown");
     let instructions = serde_json::json!({
         "instructions": format!(
-            "{}\n\nТекущий профиль: target_locale={target_locale}; source_language={source_language}; estimated_level={level}.",
-            include_str!("../methodology_instructions_ru.md")
+            "{}\n\nCurrent profile: target_locale={target_locale}; source_language={source_language}; estimated_level={level}.",
+            include_str!("../methodology_instructions.md")
         ),
-        "correction_conventions": include_str!("../methodology_corrections_ru.md"),
+        "correction_conventions": include_str!("../methodology_corrections.md"),
     });
     let mut snapshot = adaptive_lesson_snapshot(&database, profile_id, &preferences)?;
 
@@ -1012,7 +1012,7 @@ fn lesson_result_contract(profile_id: &str, source_language: &str) -> serde_json
         "evidence": {
             "client_item_key": "new-1",
             "kind": "spontaneous_production", "success": false,
-            "context": "<конкретная реальная ситуация>",
+            "context": "<concrete real-world situation>",
             "assistance_level": 0,
             "probe_phase": "diagnostic",
             "pronunciation_intelligible": true,
@@ -1021,7 +1021,7 @@ fn lesson_result_contract(profile_id: &str, source_language: &str) -> serde_json
         "transfer_evidence": {
             "learning_item_id": "<existing-learning-item-id>",
             "kind": "transfer", "success": true,
-            "context": "<новая коммуникативная ситуация>",
+            "context": "<new communicative situation>",
             "context_family": "service.ask_help",
             "assistance_level": 0,
             "probe_phase": "transfer"
@@ -1033,7 +1033,7 @@ fn lesson_result_contract(profile_id: &str, source_language: &str) -> serde_json
         "listening_attempt": {
             "client_item_key": "new-1", "success": true,
             "assistance_level": 0, "probe_phase": "delayed_retrieval",
-            "context_tag": "<конкретная ситуация слушания>",
+            "context_tag": "<concrete listening situation>",
             "source_reference": "lesson-audio-1"
         },
         "error_occurrence": {
@@ -1042,14 +1042,14 @@ fn lesson_result_contract(profile_id: &str, source_language: &str) -> serde_json
             "corrected_production": "…"
         },
         "error_recheck": {
-            "error_target_id": "<из due_error_rechecks>",
-            "recheck_id": "<из due_error_rechecks>", "passed": true,
+            "error_target_id": "<from due_error_rechecks>",
+            "recheck_id": "<from due_error_rechecks>", "passed": true,
             "assistance_level": 0,
-            "context": "<конкретная ситуация перепроверки>",
+            "context": "<concrete recheck situation>",
             "repair_applied": false, "repair_action": null
         },
         "recommendation_resolution": {
-            "recommendation_id": "<из open_recommendations>",
+            "recommendation_id": "<from open_recommendations>",
             "status": "accepted", "repair_action": null
         },
         "mastery_change": {
@@ -1066,7 +1066,7 @@ fn lesson_result_contract(profile_id: &str, source_language: &str) -> serde_json
     });
     let template = serde_json::json!({
         "schema_version": tutor_contract::SCHEMA_VERSION,
-        "client_operation_id": "op-<уникальный-id-урока>",
+        "client_operation_id": "op-<unique-lesson-id>",
         "language_profile_id": profile_id,
         "lesson": { "scenario": "<scenario_id>", "duration_seconds": 0,
                      "tutor_summary": "…", "next_goal": "…" },
@@ -1089,7 +1089,7 @@ fn lesson_result_contract(profile_id: &str, source_language: &str) -> serde_json
             "mcp_lesson_id": "use start_lesson.id",
             "json_rpc_method": "complete_lesson"
         },
-        "instructions": "В конце урока верни ровно один JSON-блок schema_version=2 по template. template — безопасный submit skeleton: optional arrays в нём пустые по умолчанию. shape_examples — только справочник формы объектов; не копируй строки из него автоматически и добавляй в template только реально наблюдавшиеся/выполненные действия. При вызове MCP complete_lesson обязательно передай top-level lesson_id, равный id, полученному от start_lesson. Для calibration-eligible outcome нужен минимум 1 diagnostic baseline и минимум 2 measurement-eligible probes overall; diagnostic/delayed_retrieval/transfer считаются для lesson coverage, а practice — нет. Lesson с меньшей coverage всё равно сохраняй: runtime пометит его calibration_valid=false; не добавляй probe только ради порога. Для каждого выбранного evidence/listening probe обязательны assistance_level, probe_phase и конкретный context/context_tag. Для выполненного tutor_task сначала соблюдай его task-local measurement_requirements: они конкретизируют этот общий контракт и должны быть прочитаны до предъявления probe, а не восстановлены постфактум. Каждый listening_attempt должен ссылаться ровно на один learning item и иметь непустой source_reference на реально предъявленный audio/live source; text-only interaction не создаёт listening evidence. response_millis добавляй только если инструмент измерил время от готовности probe до начала ответа/first committed response; не используй полную длительность набора/реплики и не выдумывай миллисекунды. Для production/transfer pronunciation_intelligible и pronunciation_repeat_required указывай вместе только если речь реально была слышна; в text-only interaction оба поля опускай. Список due_error_rechecks уже bounded runtime: проведи каждую показанную перепроверку как maintenance obligation текущего урока и верни её outcome в error_rechecks с исходными error_target_id и recheck_id, assistance_level=0 и конкретным context; не пытайся вручную догонять непоказанный backlog. Если recheck failed, до завершения урока примени corrective repair, поставь repair_applied=true и укажи стабильный короткий repair_action, чтобы следующий Tutor не повторял тот же неработающий способ; только после этого начинается свежий spaced recheck cycle. Не подменяй recheck обычным error_occurrence. Если реально выполнил open recommendation, верни её id в recommendation_resolutions со status=accepted; для accepted error-target repair (activate_mini_target/require_method_change) обязательно укажи стабильный короткий repair_action реально применённого способа. Если явно проверил рекомендацию и признал её неприменимой — status=dismissed. Не закрывай recommendation только потому, что увидел её в context, и не выдумывай recommendation_id. В metrics обязательно отрази реально проведённые communicative tasks через task_attempt_count/task_success_count; form-only drill (`скажи/повтори X`) не является communicative task и не увеличивает task_attempt_count. При task_attempt_count>0 используй task_success_rubric=goal_completed_independently_v2. Для v2 success исходная цель должна быть достигнута через самостоятельно построенное решение на target language; source-language или gesture-only workaround не является языковым task success, если он заменяет необходимый L2 материал. Не выдумывай speaking_seconds/confidence/aggregate latency, если они не наблюдались. В interventions записывай только реально применённые методы, а не запланированные tutor_tasks. Для существующего материала используй learning_item_id; для материала этого урока — client_item_key. Для transfer используй стабильный semantic context_family. assistance_level=0 только при реально самостоятельном ответе; после подсказки используй prompted_production.",
+        "instructions": "Return exactly one schema_version=2 JSON object using template. Optional arrays are empty by default. shape_examples define object shapes only; do not copy example values unless the action or observation actually occurred. When calling MCP complete_lesson, pass the top-level lesson_id returned by start_lesson. A calibration-eligible outcome requires at least 1 diagnostic baseline and at least 2 measurement-eligible probes overall. diagnostic, delayed_retrieval, and transfer count toward lesson coverage; practice does not. Persist lower-coverage lessons; runtime will set calibration_valid=false. Do not add probes only to meet the threshold. Every selected evidence or listening probe requires assistance_level, probe_phase, and a concrete context or context_tag. For each executed tutor_task, read and satisfy its task-local measurement_requirements before presenting the probe. Each listening_attempt must reference exactly one learning item and a non-empty source_reference for audio or live input actually presented. Text-only interaction creates no listening evidence. Record response_millis only when an instrument measures prompt-ready to first committed response. Do not use full typing or utterance duration and do not invent milliseconds. For production or transfer, record pronunciation_intelligible and pronunciation_repeat_required together only when speech was actually heard; omit both in text-only interaction. Each displayed due_error_recheck is a maintenance obligation for the current lesson. Return its outcome in error_rechecks with the original error_target_id and recheck_id, assistance_level=0, and a concrete context. Do not process hidden backlog. If a recheck fails, apply corrective repair before lesson completion, set repair_applied=true, and record a short stable repair_action that describes the method actually used. Start a fresh spaced recheck cycle only after repair. Do not replace a scheduled recheck with an ordinary error_occurrence. Resolve an open recommendation as accepted only when the action was actually completed. For accepted error-target repair, include the stable repair_action actually used. Use dismissed only after explicitly evaluating the recommendation and finding it inapplicable. Do not close a recommendation because it appeared in context and do not invent recommendation_id. Record task_attempt_count and task_success_count only for actual communicative tasks. A form-only drill such as say/repeat X is not a communicative task and does not increment task_attempt_count. When task_attempt_count > 0, use task_success_rubric=goal_completed_independently_v2. V2 success requires an independently constructed target-language solution. Source-language or gesture-only workaround does not count as task success when it replaces required target-language material. Do not invent speaking_seconds, confidence, or aggregate latency. Record only interventions actually applied, not planned tutor_tasks. Use learning_item_id for existing material and client_item_key for material introduced in this lesson. Use a stable semantic context_family for transfer. Set assistance_level=0 only for a genuinely unaided response. After any hint, record successful production as prompted_production.",
         "enums": enums,
         "template": template,
         "shape_examples": shape_examples,

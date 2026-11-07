@@ -24,7 +24,7 @@ fn spec_fixture() -> String {
                    "aided_recall_count": 3, "listening_score": 0.7,
                    "avg_answer_millis": 2100, "long_pause_count": 2, "confidence": 0.6 },
       "new_learning_items": [ { "item_type": "phrase", "target_text": "¿Tiene algo para la tos?",
-                                "prompt_text": "Спросите что-нибудь от кашля", "prompt_language": "ru" } ],
+                                "prompt_text": "Ask for something for a cough", "prompt_language": "en" } ],
       "evidence": [
         { "learning_item_id": "phr_01J5", "kind": "spontaneous_production",
           "success": true, "context": "pharmacy:ask-remedy",
@@ -58,7 +58,7 @@ fn spec_fixture() -> String {
           "prompt": "You need to ask whether there is an appointment available this week.",
           "answer": "¿Hay alguna cita disponible para esta semana?",
           "accepted_answers": ["¿Hay alguna cita libre para esta semana?"],
-          "prompt_language": "ru",
+          "prompt_language": "en",
           "explanation": "Use hay alguna + noun + disponible/libre.",
           "scenario_tags": ["medical", "appointment"],
           "skill_tags": ["question", "availability"],
