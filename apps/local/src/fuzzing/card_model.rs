@@ -151,6 +151,7 @@ pub(super) fn lesson_model(seed: u8) {
             &format!("error-{index}"),
             index as u32,
             false,
+            false,
         )
         .is_err()
     });

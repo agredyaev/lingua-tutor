@@ -1165,14 +1165,18 @@ pub fn exercise_auxiliary_writes(data: &[u8]) {
                 .expect("collect rechecks")
         };
         for (index, recheck_id) in rechecks.iter().enumerate() {
+            let passed = index == 1 && seed & 4 != 0;
+            let repair_applied = !passed;
+            let repair_action = repair_applied.then_some("fuzz_repair");
             let _ = no_storage_error(crate::operations::error::complete_error_recheck(
                 &env,
                 &target_id,
                 recheck_id,
-                index == 1 && seed & 4 != 0,
+                passed,
                 0,
                 "fuzz:scheduled-recheck",
-                true,
+                repair_applied,
+                repair_action,
             ));
         }
 
