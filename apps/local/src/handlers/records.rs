@@ -1,9 +1,60 @@
 //! Learning state, next lesson, errors, listening, and tutor-context operations.
 
 use crate::api::{now, operation_error};
-use crate::repositories::{records, to_rfc3339};
+use crate::sqlite::to_rfc3339;
 use crate::{Env, Result};
 use rusqlite::{OptionalExtension as _, params};
+
+const CALIBRATION_HISTORY_DECISIONS: i64 = adaptation::MAX_CALIBRATION_SNAPSHOTS as i64;
+
+const SELECT_ERROR_TARGETS: &str =
+    "SELECT t.id,t.learner_language_profile_id,t.core_category,t.error_code,
+    t.original_production,t.corrected_production,t.explanation,t.occurrence_count,
+    t.method_change_required,t.status,
+    (
+        SELECT repair_action
+        FROM (
+            SELECT r.repair_action AS repair_action,r.completed_at AS repaired_at
+            FROM error_rechecks r
+            WHERE r.error_target_id=t.id
+              AND r.completed_at IS NOT NULL
+              AND r.repair_action IS NOT NULL
+            UNION ALL
+            SELECT json_extract(rec.detail_json,'$.repair_action') AS repair_action,
+                   rec.resolved_at AS repaired_at
+            FROM recommendations rec
+            WHERE rec.learner_language_profile_id=t.learner_language_profile_id
+              AND rec.subject_type='error_target'
+              AND rec.subject_id=t.id
+              AND rec.status='accepted'
+              AND json_valid(rec.detail_json)
+              AND json_type(rec.detail_json,'$.repair_action')='text'
+        )
+        WHERE repair_action IS NOT NULL AND TRIM(repair_action)!=''
+        ORDER BY repaired_at DESC
+        LIMIT 1
+    ) AS last_repair_action
+ FROM error_targets t
+ WHERE t.learner_language_profile_id=?1 AND (?2 IS NULL OR t.status=?2)
+ ORDER BY
+   CASE
+     WHEN t.status IN ('active','escalated') THEN 0
+     WHEN t.status='recheck' THEN 1
+     ELSE 2
+   END,
+   t.method_change_required DESC,
+   t.occurrence_count DESC,
+   t.updated_at ASC,
+   t.id ASC
+ LIMIT ?3";
+
+const SELECT_REDESIGN_CANDIDATES: &str = "SELECT r.id AS recommendation_id,
+    r.detail_json, c.id AS card_id, c.prompt, c.answer, c.status AS card_status
+ FROM recommendations r
+ JOIN cards c ON c.id = r.subject_id
+ WHERE r.learner_language_profile_id = ?1 AND r.status = 'open'
+   AND r.action = 'redesign_card'
+ ORDER BY r.created_at DESC LIMIT 50";
 
 fn effective_next_lesson_number(
     database: &rusqlite::Connection,
@@ -51,7 +102,14 @@ pub(crate) fn learning_state_for(env: &Env, profile_id: &str) -> Result<serde_js
         "SELECT COUNT(*) FROM error_rechecks r
          JOIN error_targets t ON t.id = r.error_target_id
          WHERE t.learner_language_profile_id = ?1
-           AND r.completed_at IS NULL AND r.due_at <= ?2",
+           AND r.completed_at IS NULL AND r.due_at <= ?2
+           AND r.offset_days = (
+               SELECT MIN(r2.offset_days)
+               FROM error_rechecks r2
+               WHERE r2.error_target_id=r.error_target_id
+                 AND r2.cycle=r.cycle
+                 AND r2.completed_at IS NULL
+           )",
         params![profile_id, to_rfc3339(now())],
         |row| row.get(0),
     )?;
@@ -196,6 +254,7 @@ fn adaptive_lesson_planning_at(
 struct AdaptiveLessonSnapshot {
     planner_input: serde_json::Value,
     plan: serde_json::Value,
+    primary_objective: &'static str,
     item_count: usize,
     tutor_tasks: Vec<adaptation::TutorTask>,
 }
@@ -206,7 +265,7 @@ fn adaptive_lesson_snapshot(
     preferences: &serde_json::Value,
 ) -> Result<AdaptiveLessonSnapshot> {
     let at = now();
-    let (planner_input, plan, primary_objective) =
+    let (planner_input, mut plan, primary_objective) =
         adaptive_lesson_planning_at(database, profile_id, preferences, at)?;
     let mut selection = crate::operations::adaptive_selection::new_selection(
         crate::operations::adaptive_selection::DEFAULT_CANDIDATE_LIMIT,
@@ -227,9 +286,21 @@ fn adaptive_lesson_snapshot(
         },
     )?;
     let tutor_tasks = crate::operations::adaptive_selection::selection_tutor_tasks(&selection, 16);
+    let base_max_new_items = plan
+        .get("max_new_items")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u8::try_from(value).ok())
+        .unwrap_or(0);
+    plan["max_new_items"] = serde_json::json!(
+        crate::operations::adaptive_selection::effective_new_item_cap(
+            base_max_new_items,
+            &tutor_tasks,
+        )
+    );
     Ok(AdaptiveLessonSnapshot {
         planner_input,
         plan,
+        primary_objective,
         item_count,
         tutor_tasks,
     })
@@ -289,6 +360,7 @@ fn project_error_wire(row: &rusqlite::Row<'_>) -> rusqlite::Result<Option<serde_
         "occurrence_count": row.get::<_, u32>("occurrence_count")?,
         "method_change_required": row.get::<_, u8>("method_change_required")? != 0,
         "status": status,
+        "last_repair_action": row.get::<_, Option<String>>("last_repair_action")?,
     })))
 }
 
@@ -299,7 +371,7 @@ pub(crate) fn list_error_targets_for(
     status: Option<&str>,
 ) -> Result<serde_json::Value> {
     let database = env.connection()?;
-    let mut statement = database.prepare(records::SELECT_ERROR_TARGETS)?;
+    let mut statement = database.prepare(SELECT_ERROR_TARGETS)?;
     let mut rows = statement.query(params![profile_id, status, 100])?;
     let mut output = Vec::new();
     while let Some(row) = rows.next()? {
@@ -308,44 +380,6 @@ pub(crate) fn list_error_targets_for(
         }
     }
     crate::json(&output)
-}
-
-pub(crate) fn get_error_target(env: &Env, target_id: &str) -> Result<serde_json::Value> {
-    let database = env.connection()?;
-    let item = database
-        .query_row(
-            records::SELECT_ERROR_TARGET,
-            params![target_id],
-            project_error_wire,
-        )
-        .optional()?
-        .flatten();
-    match item {
-        Some(wire) => crate::json(&wire),
-        None => operation_error(404, "not_found", "unknown error target"),
-    }
-}
-
-#[derive(serde::Deserialize)]
-pub(crate) struct ListeningAttemptParams {
-    pub language_profile_id: String,
-    #[serde(default)]
-    pub learning_item_id: Option<String>,
-    #[serde(default)]
-    pub lesson_id: Option<String>,
-    #[serde(default)]
-    pub source_reference: Option<String>,
-    #[serde(default)]
-    pub source_variant_id: Option<String>,
-    #[serde(default)]
-    pub talker_key: Option<String>,
-    pub context_tag: String,
-    #[serde(default)]
-    pub transcript: Option<String>,
-    pub success: bool,
-    pub assistance_level: u8,
-    pub response_millis: u32,
-    pub probe_phase: tutor_contract::ProbePhase,
 }
 
 fn project_active_error_wire(
@@ -369,6 +403,8 @@ fn project_active_error_wire(
         "corrected_production": row.get::<_, String>("corrected_production")?,
         "occurrence_count": row.get::<_, u32>("occurrence_count")?,
         "method_change_required": row.get::<_, u8>("method_change_required")? != 0,
+        "status": status,
+        "last_repair_action": row.get::<_, Option<String>>("last_repair_action")?,
     })))
 }
 
@@ -376,7 +412,7 @@ fn active_error_context(
     database: &rusqlite::Connection,
     profile_id: &str,
 ) -> Result<Vec<serde_json::Value>> {
-    let mut statement = database.prepare(records::SELECT_ERROR_TARGETS)?;
+    let mut statement = database.prepare(SELECT_ERROR_TARGETS)?;
     let mut rows = statement.query(params![profile_id, Option::<String>::None, 20])?;
     let mut output = Vec::new();
     while let Some(row) = rows.next()? {
@@ -398,13 +434,13 @@ fn planner_history_context(
                 capability_state_json, outcome_json, created_at
          FROM planner_decisions
          WHERE learner_language_profile_id = ?1
-         ORDER BY created_at DESC LIMIT 10",
+         ORDER BY created_at DESC LIMIT ?2",
     )?;
-    let mut rows = statement.query(params![profile_id])?;
+    let mut rows = statement.query(params![profile_id, CALIBRATION_HISTORY_DECISIONS])?;
     let mut summaries = Vec::with_capacity(5);
-    let mut timestamps = Vec::with_capacity(10);
-    let mut capability_json = Vec::with_capacity(10);
-    let mut outcome_json = Vec::with_capacity(10);
+    let mut timestamps = Vec::with_capacity(adaptation::MAX_CALIBRATION_SNAPSHOTS);
+    let mut capability_json = Vec::with_capacity(adaptation::MAX_CALIBRATION_SNAPSHOTS);
+    let mut outcome_json = Vec::with_capacity(adaptation::MAX_CALIBRATION_SNAPSHOTS);
 
     while let Some(row) = rows.next()? {
         let created_at: String = row.get("created_at")?;
@@ -417,6 +453,47 @@ fn planner_history_context(
             let outcome = persisted_outcome
                 .as_deref()
                 .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok());
+            let mut error_recheck_repairs = String::new();
+            let mut repair_count = 0_u8;
+            if let Some(entries) = outcome
+                .as_ref()
+                .and_then(|value| value.get("error_rechecks"))
+                .and_then(serde_json::Value::as_array)
+            {
+                for entry in entries {
+                    if repair_count == adaptation::DUE_RECHECK_PRIMARY_LIMIT {
+                        break;
+                    }
+                    if entry
+                        .get("repair_applied")
+                        .and_then(serde_json::Value::as_bool)
+                        != Some(true)
+                    {
+                        continue;
+                    }
+                    let Some(target_id) = entry
+                        .get("error_target_id")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|value| value.len() <= tutor_contract::bounds::MAX_ID)
+                    else {
+                        continue;
+                    };
+                    let Some(action) = entry
+                        .get("repair_action")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|value| value.len() <= tutor_contract::bounds::MAX_ID)
+                    else {
+                        continue;
+                    };
+                    if !error_recheck_repairs.is_empty() {
+                        error_recheck_repairs.push(';');
+                    }
+                    error_recheck_repairs.push_str(target_id);
+                    error_recheck_repairs.push('=');
+                    error_recheck_repairs.push_str(action);
+                    repair_count = repair_count.saturating_add(1);
+                }
+            }
             summaries.push(serde_json::json!({
                 "planner_version": row.get::<_, String>("planner_version")?,
                 "input_summary": {
@@ -462,13 +539,15 @@ fn planner_history_context(
                         .get("error_occurrences")
                         .and_then(serde_json::Value::as_array)
                         .map_or(0, Vec::len),
+                    "error_recheck_repairs": error_recheck_repairs,
+                    "error_recommendation_repairs": value.get("error_recommendation_repairs"),
                     "next_goal": value.get("next_goal"),
                 })),
                 "created_at": created_at,
             }));
         }
 
-        if let Ok(at) = crate::repositories::from_rfc3339(&created_at) {
+        if let Ok(at) = crate::sqlite::from_rfc3339(&created_at) {
             timestamps.push(at.0);
             capability_json.push(row.get::<_, String>("capability_state_json")?);
             outcome_json.push(persisted_outcome.unwrap_or_else(|| "{}".to_owned()));
@@ -481,7 +560,10 @@ fn planner_history_context(
         .zip(&capability_json)
         .zip(&outcome_json)
         .map(|((at, items), outcome)| (at, items.as_str(), outcome.as_str()));
-    let effects = adaptation::summarize_intervention_history(input, 6 * 60 * 60);
+    let effects = adaptation::summarize_intervention_history(
+        input,
+        adaptation::INTERVENTION_CALIBRATION_MIN_DELAY_SECONDS,
+    );
     Ok((summaries, effects))
 }
 
@@ -510,13 +592,13 @@ pub(crate) fn tutor_context_for(env: &Env, profile_id: &str) -> Result<serde_jso
         ),
         "correction_conventions": include_str!("../methodology_corrections_ru.md"),
     });
-    let snapshot = adaptive_lesson_snapshot(&database, profile_id, &preferences)?;
+    let mut snapshot = adaptive_lesson_snapshot(&database, profile_id, &preferences)?;
 
     let (planner_history, intervention_effectiveness) =
         planner_history_context(&database, profile_id)?;
 
     let open_recommendations = {
-        let mut statement = database.prepare(crate::repositories::recommendations::SELECT_OPEN)?;
+        let mut statement = database.prepare(crate::sqlite::SELECT_OPEN)?;
         statement
             .query_map(params![profile_id, 20], |row| {
                 Ok(serde_json::json!({
@@ -532,8 +614,7 @@ pub(crate) fn tutor_context_for(env: &Env, profile_id: &str) -> Result<serde_jso
     };
 
     let redesign = {
-        let mut statement =
-            database.prepare(crate::repositories::recommendations::SELECT_REDESIGN_CANDIDATES)?;
+        let mut statement = database.prepare(SELECT_REDESIGN_CANDIDATES)?;
         statement
             .query_map(params![profile_id], |row| {
                 Ok(serde_json::json!({
@@ -550,7 +631,7 @@ pub(crate) fn tutor_context_for(env: &Env, profile_id: &str) -> Result<serde_jso
 
     let week_ago = to_rfc3339(learning_core::Timestamp(now().0 - 7 * 86_400));
     let (week_review_count, again_count) = {
-        let mut statement = database.prepare(crate::repositories::review::SELECT_EVENTS_SINCE)?;
+        let mut statement = database.prepare(crate::sqlite::SELECT_EVENTS_SINCE)?;
         let mut rows = statement.query(params![profile_id, week_ago])?;
         let mut count = 0_usize;
         let mut again = 0_usize;
@@ -582,26 +663,94 @@ pub(crate) fn tutor_context_for(env: &Env, profile_id: &str) -> Result<serde_jso
         }
     }
 
+    let persisted_lesson_plan: Option<(String, Option<u32>)> = database
+        .query_row(
+            "SELECT COALESCE(json_extract(pd.plan_json,'$.primary_objective'),''),
+                    json_extract(pd.plan_json,'$.max_new_items')
+             FROM lessons l
+             JOIN planner_decisions pd ON pd.lesson_id=l.id
+             WHERE l.learner_language_profile_id=?1
+               AND l.status IN ('planned','active')
+             ORDER BY COALESCE(l.started_at,l.created_at) DESC,l.lesson_number DESC
+             LIMIT 1",
+            params![profile_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if let Some((_, Some(persisted_cap))) = persisted_lesson_plan.as_ref() {
+        let live_cap = snapshot
+            .plan
+            .get("max_new_items")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u32::try_from(value).ok())
+            .unwrap_or_default();
+        snapshot.plan["max_new_items"] = serde_json::json!(live_cap.min(*persisted_cap));
+    }
+    let recheck_objective = persisted_lesson_plan
+        .as_ref()
+        .map(|(objective, _)| objective.as_str())
+        .filter(|objective| !objective.is_empty())
+        .unwrap_or(snapshot.primary_objective);
+    let due_recheck_limit = if recheck_objective == "run_error_rechecks" {
+        adaptation::DUE_RECHECK_PRIMARY_LIMIT
+    } else {
+        adaptation::DUE_RECHECK_MAINTENANCE_LIMIT
+    };
     let due_rechecks = {
         let mut statement = database.prepare(
             "SELECT r.id AS recheck_id, r.offset_days, t.id AS error_target_id,
-                    t.original_production, t.corrected_production
+                    t.original_production, t.corrected_production,
+                    (
+                        SELECT repair_action
+                        FROM (
+                            SELECT prior.repair_action AS repair_action,
+                                   prior.completed_at AS repaired_at
+                            FROM error_rechecks prior
+                            WHERE prior.error_target_id=t.id
+                              AND prior.completed_at IS NOT NULL
+                              AND prior.repair_action IS NOT NULL
+                            UNION ALL
+                            SELECT json_extract(rec.detail_json,'$.repair_action') AS repair_action,
+                                   rec.resolved_at AS repaired_at
+                            FROM recommendations rec
+                            WHERE rec.learner_language_profile_id=t.learner_language_profile_id
+                              AND rec.subject_type='error_target'
+                              AND rec.subject_id=t.id
+                              AND rec.status='accepted'
+                              AND json_valid(rec.detail_json)
+                              AND json_type(rec.detail_json,'$.repair_action')='text'
+                        )
+                        WHERE repair_action IS NOT NULL AND TRIM(repair_action)!=''
+                        ORDER BY repaired_at DESC
+                        LIMIT 1
+                    ) AS last_repair_action
              FROM error_rechecks r
              JOIN error_targets t ON t.id = r.error_target_id
              WHERE t.learner_language_profile_id = ?1
                AND r.completed_at IS NULL AND r.due_at <= ?2
-             ORDER BY r.due_at LIMIT 20",
+               AND r.offset_days = (
+                   SELECT MIN(r2.offset_days)
+                   FROM error_rechecks r2
+                   WHERE r2.error_target_id=r.error_target_id
+                     AND r2.cycle=r.cycle
+                     AND r2.completed_at IS NULL
+               )
+             ORDER BY r.due_at, r.id LIMIT ?3",
         )?;
         statement
-            .query_map(params![profile_id, to_rfc3339(now())], |row| {
-                Ok(serde_json::json!({
-                    "recheck_id": row.get::<_, String>("recheck_id")?,
-                    "offset_days": row.get::<_, u32>("offset_days")?,
-                    "error_target_id": row.get::<_, String>("error_target_id")?,
-                    "original_production": row.get::<_, String>("original_production")?,
-                    "corrected_production": row.get::<_, String>("corrected_production")?,
-                }))
-            })?
+            .query_map(
+                params![profile_id, to_rfc3339(now()), due_recheck_limit],
+                |row| {
+                    Ok(serde_json::json!({
+                        "recheck_id": row.get::<_, String>("recheck_id")?,
+                        "offset_days": row.get::<_, u32>("offset_days")?,
+                        "error_target_id": row.get::<_, String>("error_target_id")?,
+                        "original_production": row.get::<_, String>("original_production")?,
+                        "corrected_production": row.get::<_, String>("corrected_production")?,
+                        "last_repair_action": row.get::<_, Option<String>>("last_repair_action")?,
+                    }))
+                },
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
 
@@ -709,7 +858,7 @@ pub(crate) fn dashboard_for(env: &Env, profile_id: &str) -> Result<serde_json::V
         &database,
         "SELECT COUNT(*) FROM error_targets
          WHERE learner_language_profile_id = ?1
-           AND method_change_required = 1 AND status != 'resolved'",
+           AND method_change_required = 1 AND status IN ('active','escalated')",
         params![profile_id],
     )?;
     let due_rechecks = count(
@@ -717,17 +866,24 @@ pub(crate) fn dashboard_for(env: &Env, profile_id: &str) -> Result<serde_json::V
         "SELECT COUNT(*) FROM error_rechecks r
          JOIN error_targets t ON t.id = r.error_target_id
          WHERE t.learner_language_profile_id = ?1
-           AND r.completed_at IS NULL AND r.due_at <= ?2",
+           AND r.completed_at IS NULL AND r.due_at <= ?2
+           AND r.offset_days = (
+               SELECT MIN(r2.offset_days)
+               FROM error_rechecks r2
+               WHERE r2.error_target_id=r.error_target_id
+                 AND r2.cycle=r.cycle
+                 AND r2.completed_at IS NULL
+           )",
         params![profile_id, now_text],
     )?;
     let overdue = count(
         &database,
-        crate::repositories::review::COUNT_OVERDUE,
+        crate::sqlite::COUNT_OVERDUE,
         params![profile_id, now_text],
     )?;
 
     let (reviews_today, review_seconds_today) = {
-        let mut statement = database.prepare(crate::repositories::review::SELECT_EVENTS_SINCE)?;
+        let mut statement = database.prepare(crate::sqlite::SELECT_EVENTS_SINCE)?;
         let mut rows = statement.query(params![profile_id, day_start])?;
         let mut count = 0_u64;
         let mut total_millis = 0_u64;
@@ -754,15 +910,11 @@ pub(crate) fn dashboard_for(env: &Env, profile_id: &str) -> Result<serde_json::V
         .optional()?
         .flatten();
 
-    let budget = crate::operations::card_budget::remaining_budget(
-        &database,
-        profile_id,
-        at,
-        crate::repositories::cards::COUNT_ACTIVATED_TODAY,
-    )?;
+    let budget =
+        crate::operations::card_budget::remaining_activation_budget(&database, profile_id, at)?;
 
     let recommendation_details = {
-        let mut statement = database.prepare(crate::repositories::recommendations::SELECT_OPEN)?;
+        let mut statement = database.prepare(crate::sqlite::SELECT_OPEN)?;
         statement
             .query_map(params![profile_id, 5], |row| {
                 row.get::<_, String>("detail_json")
@@ -780,7 +932,9 @@ pub(crate) fn dashboard_for(env: &Env, profile_id: &str) -> Result<serde_json::V
 
     let mut exceptions = Vec::new();
     if overdue > 0 {
-        exceptions.push(format!("{overdue} overdue reviews — clear backlog first"));
+        exceptions.push(format!(
+            "{overdue} significantly overdue review item(s) — review pressure increased"
+        ));
     }
     if method_change > 0 {
         exceptions.push(format!(
@@ -830,8 +984,7 @@ pub(crate) fn health(env: &Env) -> Result<serde_json::Value> {
         "schema_version": latest_migration,
         "scheduler": {
             "algorithm": "fsrs",
-            "algorithm_version": "fsrs-rs-6.6.1",
-            "parameter_set": "default"
+            "algorithm_version": "fsrs-rs-6.6.1"
         },
     }))
 }
@@ -849,6 +1002,67 @@ fn lesson_result_contract(profile_id: &str, source_language: &str) -> serde_json
                             "add_accepted_answer","remove_accepted_answer"],
         "card_intent": ["production","listening","contrast","transfer"],
         "probe_phase": ["diagnostic","practice","delayed_retrieval","transfer"],
+        "recommendation_resolution_status": ["accepted","dismissed"],
+    });
+    let shape_examples = serde_json::json!({
+        "new_learning_item": {
+            "client_item_key": "new-1", "item_type": "phrase",
+            "target_text": "…", "prompt_text": "…", "prompt_language": source_language
+        },
+        "evidence": {
+            "client_item_key": "new-1",
+            "kind": "spontaneous_production", "success": false,
+            "context": "<конкретная реальная ситуация>",
+            "assistance_level": 0,
+            "probe_phase": "diagnostic",
+            "pronunciation_intelligible": true,
+            "pronunciation_repeat_required": false
+        },
+        "transfer_evidence": {
+            "learning_item_id": "<existing-learning-item-id>",
+            "kind": "transfer", "success": true,
+            "context": "<новая коммуникативная ситуация>",
+            "context_family": "service.ask_help",
+            "assistance_level": 0,
+            "probe_phase": "transfer"
+        },
+        "intervention": {
+            "action": "spontaneous_retrieval", "client_item_key": "new-1",
+            "target_capability": "spontaneous_production", "evidence_index": 0
+        },
+        "listening_attempt": {
+            "client_item_key": "new-1", "success": true,
+            "assistance_level": 0, "probe_phase": "delayed_retrieval",
+            "context_tag": "<конкретная ситуация слушания>",
+            "source_reference": "lesson-audio-1"
+        },
+        "error_occurrence": {
+            "error_target_id": null, "core_category": "grammar",
+            "error_code": "<stable-error-code>", "original_production": "…",
+            "corrected_production": "…"
+        },
+        "error_recheck": {
+            "error_target_id": "<из due_error_rechecks>",
+            "recheck_id": "<из due_error_rechecks>", "passed": true,
+            "assistance_level": 0,
+            "context": "<конкретная ситуация перепроверки>",
+            "repair_applied": false, "repair_action": null
+        },
+        "recommendation_resolution": {
+            "recommendation_id": "<из open_recommendations>",
+            "status": "accepted", "repair_action": null
+        },
+        "mastery_change": {
+            "learning_item_id": "<existing-learning-item-id>",
+            "new_status": "provisionally_mastered"
+        },
+        "card_mutation": {
+            "operation": "create", "client_operation_id": "op-…-c1",
+            "card": {
+                "intent": "production", "prompt": "…", "answer": "…",
+                "prompt_language": source_language, "creation_reason": "…"
+            }
+        }
     });
     let template = serde_json::json!({
         "schema_version": tutor_contract::SCHEMA_VERSION,
@@ -856,56 +1070,29 @@ fn lesson_result_contract(profile_id: &str, source_language: &str) -> serde_json
         "language_profile_id": profile_id,
         "lesson": { "scenario": "<scenario_id>", "duration_seconds": 0,
                      "tutor_summary": "…", "next_goal": "…" },
-        "metrics": { "speaking_seconds": 0, "unaided_recall_count": 0,
-                      "aided_recall_count": 0, "long_pause_count": 0 },
-        "new_learning_items": [ { "client_item_key": "new-1", "item_type": "phrase",
-                                   "target_text": "…", "prompt_text": "…",
-                                   "prompt_language": source_language } ],
-        "evidence": [
-            { "client_item_key": "new-1",
-              "kind": "spontaneous_production", "success": false,
-              "context": "<конкретная реальная ситуация>",
-              "context_family": "<stable-tutor-defined-semantic-id>",
-              "assistance_level": 0,
-              "response_millis": 1800,
-              "probe_phase": "diagnostic",
-              "pronunciation_intelligible": true,
-              "pronunciation_repeat_required": false },
-            { "client_item_key": "new-1",
-              "kind": "spontaneous_production", "success": true,
-              "context": "<та же ситуация после intervention>",
-              "context_family": "<stable-tutor-defined-semantic-id>",
-              "assistance_level": 0,
-              "response_millis": 1600,
-              "probe_phase": "practice",
-              "pronunciation_intelligible": true,
-              "pronunciation_repeat_required": false }
-        ],
-        "interventions": [ { "action": "spontaneous_retrieval", "client_item_key": "new-1",
-                              "target_capability": "spontaneous_production",
-                              "evidence_index": 1 } ],
-        "listening_attempts": [ { "client_item_key": "new-1", "success": true,
-                                  "assistance_level": 0, "response_millis": 1400,
-                                  "probe_phase": "delayed_retrieval",
-                                  "context_tag": "<конкретная ситуация слушания>",
-                                  "source_reference": "lesson-audio-1" } ],
-        "error_occurrences": [ { "error_target_id": null, "core_category": "grammar",
-                                  "error_code": "<stable-error-code>", "original_production": "…",
-                                  "corrected_production": "…" } ],
-        "card_mutations": [ { "operation": "create", "client_operation_id": "op-…-c1",
-                               "card": { "intent": "production", "prompt": "…",
-                                          "answer": "…", "prompt_language": source_language,
-                                          "creation_reason": "…" } } ],
+        "metrics": { "task_attempt_count": 0, "task_success_count": 0,
+                      "task_success_rubric": null },
+        "new_learning_items": [],
+        "evidence": [],
+        "interventions": [],
+        "listening_attempts": [],
+        "error_occurrences": [],
+        "error_rechecks": [],
+        "recommendation_resolutions": [],
+        "mastery_changes": [],
+        "card_mutations": [],
     });
     serde_json::json!({
         "schema_version": tutor_contract::SCHEMA_VERSION,
         "submit": {
             "mcp_tool": "complete_lesson",
+            "mcp_lesson_id": "use start_lesson.id",
             "json_rpc_method": "complete_lesson"
         },
-        "instructions": "В конце урока верни ровно один JSON-блок schema_version=2 по template. Завершение требует минимум 1 diagnostic baseline и минимум 2 независимых measured probes overall; вторым независимым измерением может быть delayed_retrieval или transfer, а practice не считается independent measurement. Для каждого выбранного evidence/listening probe обязательны assistance_level, response_millis, probe_phase и конкретный context/context_tag; если измерение ненадёжно, проведи другой probe, не выдумывай значение. Для production/transfer обязательны pronunciation_intelligible и pronunciation_repeat_required. В interventions записывай только реально применённые методы, а не запланированные tutor_tasks. Для существующего материала используй learning_item_id; для материала этого урока — client_item_key. Для transfer используй стабильный semantic context_family. assistance_level=0 только при реально самостоятельном ответе; после подсказки используй prompted_production.",
+        "instructions": "В конце урока верни ровно один JSON-блок schema_version=2 по template. template — безопасный submit skeleton: optional arrays в нём пустые по умолчанию. shape_examples — только справочник формы объектов; не копируй строки из него автоматически и добавляй в template только реально наблюдавшиеся/выполненные действия. При вызове MCP complete_lesson обязательно передай top-level lesson_id, равный id, полученному от start_lesson. Для calibration-eligible outcome нужен минимум 1 diagnostic baseline и минимум 2 measurement-eligible probes overall; diagnostic/delayed_retrieval/transfer считаются для lesson coverage, а practice — нет. Lesson с меньшей coverage всё равно сохраняй: runtime пометит его calibration_valid=false; не добавляй probe только ради порога. Для каждого выбранного evidence/listening probe обязательны assistance_level, probe_phase и конкретный context/context_tag. Каждый listening_attempt должен ссылаться ровно на один learning item и иметь непустой source_reference на реально предъявленный audio/live source; text-only interaction не создаёт listening evidence. response_millis добавляй только если инструмент измерил время от готовности probe до начала ответа/first committed response; не используй полную длительность набора/реплики и не выдумывай миллисекунды. Для production/transfer pronunciation_intelligible и pronunciation_repeat_required указывай вместе только если речь реально была слышна; в text-only interaction оба поля опускай. Список due_error_rechecks уже bounded runtime: проведи каждую показанную перепроверку как maintenance obligation текущего урока и верни её outcome в error_rechecks с исходными error_target_id и recheck_id, assistance_level=0 и конкретным context; не пытайся вручную догонять непоказанный backlog. Если recheck failed, до завершения урока примени corrective repair, поставь repair_applied=true и укажи стабильный короткий repair_action, чтобы следующий Tutor не повторял тот же неработающий способ; только после этого начинается свежий spaced recheck cycle. Не подменяй recheck обычным error_occurrence. Если реально выполнил open recommendation, верни её id в recommendation_resolutions со status=accepted; для accepted error-target repair (activate_mini_target/require_method_change) обязательно укажи стабильный короткий repair_action реально применённого способа. Если явно проверил рекомендацию и признал её неприменимой — status=dismissed. Не закрывай recommendation только потому, что увидел её в context, и не выдумывай recommendation_id. В metrics обязательно отрази реально проведённые communicative tasks через task_attempt_count/task_success_count; form-only drill (`скажи/повтори X`) не является communicative task и не увеличивает task_attempt_count. При task_attempt_count>0 используй task_success_rubric=goal_completed_independently_v2. Для v2 success исходная цель должна быть достигнута через самостоятельно построенное решение на target language; source-language или gesture-only workaround не является языковым task success, если он заменяет необходимый L2 материал. Не выдумывай speaking_seconds/confidence/aggregate latency, если они не наблюдались. В interventions записывай только реально применённые методы, а не запланированные tutor_tasks. Для существующего материала используй learning_item_id; для материала этого урока — client_item_key. Для transfer используй стабильный semantic context_family. assistance_level=0 только при реально самостоятельном ответе; после подсказки используй prompted_production.",
         "enums": enums,
         "template": template,
+        "shape_examples": shape_examples,
     })
 }
 
@@ -919,7 +1106,8 @@ mod error_projection_tests {
         'grammar' AS core_category, 'CODE' AS error_code,
         'estoy médico' AS original_production, 'soy médico' AS corrected_production,
         'explain' AS explanation, 5 AS occurrence_count,
-        1 AS method_change_required, 'recheck' AS status";
+        1 AS method_change_required, 'recheck' AS status,
+        NULL AS last_repair_action";
 
     #[test]
     fn error_target_sql_projection_matches_wire_fixture() {
@@ -935,7 +1123,7 @@ mod error_projection_tests {
                 "core_category":"grammar","error_code":"CODE",
                 "original_production":"estoy médico","corrected_production":"soy médico",
                 "explanation":"explain","occurrence_count":5,"method_change_required":true,
-                "status":"recheck"
+                "status":"recheck","last_repair_action":null
             })
         );
     }
@@ -946,7 +1134,8 @@ mod error_projection_tests {
         let expected = serde_json::json!({
             "error_target_id":"err-1","core_category":"grammar","error_code":"CODE",
             "original_production":"estoy médico","corrected_production":"soy médico",
-            "occurrence_count":5,"method_change_required":true
+            "occurrence_count":5,"method_change_required":true,"status":"recheck",
+            "last_repair_action":null
         });
         assert_eq!(
             db.query_row(ERROR_ROW, [], project_active_error_wire)

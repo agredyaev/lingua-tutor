@@ -1,36 +1,65 @@
 //! Review write operations with transaction-local authority and streaming replay.
 
-use crate::repositories::{from_rfc3339, review, to_rfc3339};
+use crate::sqlite::{from_rfc3339, to_rfc3339};
 use crate::{Env, Result};
-use review_engine::{Grade, ReviewEventInput, ScheduledState, SchedulerSettings, Timestamp};
+use review_engine::{Grade, ReviewEventInput, ScheduledState, SchedulerSettings};
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 
 use super::card_write::{update_card_status, upsert_schedule_state};
 use super::recommendation_write::insert_recommendation;
 
-pub(crate) fn select_scheduler(algorithm: &str, version: &str) -> Result<u32> {
-    let id = review_engine::algorithm_id(algorithm).ok_or_else(|| {
-        crate::Error::operation(
+const INSERT_SESSION: &str = "INSERT INTO review_sessions
+    (id,learner_language_profile_id,started_at,source,card_count,created_at)
+ VALUES (?1,?2,?3,?4,0,?3)";
+const COMPLETE_SESSION: &str = "UPDATE review_sessions SET
+    completed_at=?2,card_count=?3,review_seconds=?4
+ WHERE id=?1 AND completed_at IS NULL";
+const SELECT_SCHEDULE_STATE: &str = "SELECT card_id,algorithm,algorithm_version,difficulty,
+    stability,last_review_at,due_at,scheduled_interval_seconds,lapse_count,
+    review_count,state_version,state_hash
+ FROM card_schedule_state WHERE card_id=?1";
+const INSERT_EVENT: &str = "INSERT INTO review_events
+    (id,card_id,review_session_id,client_operation_id,presented_at,answered_at,grade,
+     response_millis,answer_revealed,learner_note,prior_state_hash,result_state_hash,
+     algorithm_version,source,compensates_event_id,created_at)
+ VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)";
+const SELECT_EVENT_BY_OP: &str = "SELECT id,card_id,review_session_id,client_operation_id,
+    grade,result_state_hash,compensates_event_id,created_at
+ FROM review_events WHERE client_operation_id=?1";
+const SELECT_EFFECTIVE_EVENTS_FOR_CARD: &str = "SELECT e.answered_at,e.grade
+ FROM review_events e
+ WHERE e.card_id=?1 AND e.id!=?2 AND e.compensates_event_id IS NULL
+   AND NOT EXISTS (SELECT 1 FROM review_events x WHERE x.compensates_event_id=e.id)
+ ORDER BY e.rowid";
+const SELECT_LAST_SESSION_EVENT: &str = "SELECT id,card_id,review_session_id,
+    client_operation_id,presented_at,answered_at,grade,response_millis,answer_revealed,
+    prior_state_hash,result_state_hash,algorithm_version,source,compensates_event_id,created_at
+ FROM review_events WHERE review_session_id=?1 ORDER BY rowid DESC LIMIT 1";
+const SELECT_SESSION_CARD_EVIDENCE: &str = "SELECT c.id AS card_id,c.source_learning_item_id
+ FROM cards c
+ WHERE c.id IN (SELECT DISTINCT card_id FROM review_events WHERE review_session_id=?1)";
+
+pub(crate) fn validate_scheduler(algorithm: &str, version: &str) -> Result<()> {
+    if algorithm != review_engine::ALGORITHM {
+        return Err(crate::Error::operation(
             500,
             "corrupt_row",
             format!("unknown scheduler algorithm '{algorithm}'"),
             serde_json::Value::Null,
-        )
-    })?;
-    let current = review_engine::initial_state(id, Timestamp(0))
-        .map_err(|error| crate::Error::RustError(error.to_string()))?;
-    if current.algorithm_version != version {
+        ));
+    }
+    if version != review_engine::ALGORITHM_VERSION {
         return Err(crate::Error::operation(
             409,
             "scheduler_version_unavailable",
             format!(
                 "persisted scheduler version '{version}' is not available; current is '{}'",
-                current.algorithm_version
+                review_engine::ALGORITHM_VERSION
             ),
             serde_json::Value::Null,
         ));
     }
-    Ok(id)
+    Ok(())
 }
 
 pub(crate) fn scheduler_settings_for_profile(
@@ -96,7 +125,7 @@ pub(crate) fn create_session(
     let id = crate::api::new_id("rs");
     let at = to_rfc3339(crate::api::now());
     let database = env.connection()?;
-    database.execute(review::INSERT_SESSION, params![id, profile_id, at, source])?;
+    database.execute(INSERT_SESSION, params![id, profile_id, at, source])?;
     crate::json(&serde_json::json!({ "id": id }))
 }
 
@@ -127,7 +156,7 @@ pub(crate) fn submit_event(
     let mut database = env.connection()?;
     let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let profile_id: String = transaction
-        .query_row(review::SELECT_SESSION, params![session_id], |row| {
+        .query_row(crate::sqlite::SELECT_SESSION, params![session_id], |row| {
             row.get("learner_language_profile_id")
         })
         .optional()?
@@ -138,7 +167,7 @@ pub(crate) fn submit_event(
 
     if let Some((event_id, card_id, result_state_hash)) = transaction
         .query_row(
-            review::SELECT_EVENT_BY_OP,
+            SELECT_EVENT_BY_OP,
             params![input.client_operation_id],
             |row| {
                 Ok((
@@ -170,7 +199,7 @@ pub(crate) fn submit_event(
         .ok_or_else(|| {
             crate::Error::operation(404, "not_found", "unknown card", serde_json::Value::Null)
         })?;
-    let status = crate::repositories::card_status_from_db(&status_text).ok_or_else(|| {
+    let status = crate::sqlite::card_status_from_db(&status_text).ok_or_else(|| {
         crate::Error::operation(
             500,
             "corrupt_row",
@@ -213,10 +242,9 @@ pub(crate) fn submit_event(
         ));
     }
 
-    let scheduler = select_scheduler(&state.algorithm, &state.algorithm_version)?;
+    validate_scheduler(&state.algorithm, &state.algorithm_version)?;
     let result = review_engine::apply_review(
-        scheduler,
-        &review_engine::new_scheduler_scratch(scheduler)
+        &review_engine::new_scheduler_scratch()
             .map_err(|error| crate::Error::RustError(error.to_string()))?,
         &state,
         &ReviewEventInput { grade, answered_at },
@@ -236,7 +264,7 @@ pub(crate) fn submit_event(
     let event_id = crate::api::new_id("ev");
 
     transaction.execute(
-        review::INSERT_EVENT,
+        INSERT_EVENT,
         params![
             event_id,
             input.card_id,
@@ -262,7 +290,7 @@ pub(crate) fn submit_event(
     update_card_status(
         &transaction,
         input.card_id,
-        crate::repositories::card_status_db(&new_status),
+        crate::sqlite::card_status_db(&new_status),
         None,
         &at,
     )?;
@@ -288,7 +316,7 @@ pub(crate) fn undo_last(env: &Env, session_id: &str) -> Result<serde_json::Value
     let mut database = env.connection()?;
     let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let profile_id: String = transaction
-        .query_row(review::SELECT_SESSION, params![session_id], |row| {
+        .query_row(crate::sqlite::SELECT_SESSION, params![session_id], |row| {
             row.get("learner_language_profile_id")
         })
         .optional()?
@@ -298,19 +326,15 @@ pub(crate) fn undo_last(env: &Env, session_id: &str) -> Result<serde_json::Value
     let settings = scheduler_settings_for_profile(&transaction, &profile_id)?;
 
     let last = transaction
-        .query_row(
-            review::SELECT_LAST_SESSION_EVENT,
-            params![session_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>("id")?,
-                    row.get::<_, String>("card_id")?,
-                    row.get::<_, String>("client_operation_id")?,
-                    row.get::<_, u8>("grade")?,
-                    row.get::<_, Option<String>>("compensates_event_id")?,
-                ))
-            },
-        )
+        .query_row(SELECT_LAST_SESSION_EVENT, params![session_id], |row| {
+            Ok((
+                row.get::<_, String>("id")?,
+                row.get::<_, String>("card_id")?,
+                row.get::<_, String>("client_operation_id")?,
+                row.get::<_, u8>("grade")?,
+                row.get::<_, Option<String>>("compensates_event_id")?,
+            ))
+        })
         .optional()?;
     let Some((last_id, card_id, client_operation_id, grade, compensates)) = last else {
         return crate::api::operation_error(404, "not_found", "no events in session");
@@ -325,7 +349,7 @@ pub(crate) fn undo_last(env: &Env, session_id: &str) -> Result<serde_json::Value
 
     let (current_state, _) = load_state(&transaction, &card_id)?
         .ok_or_else(|| crate::Error::RustError("card schedule missing for undo".to_owned()))?;
-    let scheduler = select_scheduler(&current_state.algorithm, &current_state.algorithm_version)?;
+    validate_scheduler(&current_state.algorithm, &current_state.algorithm_version)?;
 
     let created_at: String = transaction
         .query_row(
@@ -339,13 +363,12 @@ pub(crate) fn undo_last(env: &Env, session_id: &str) -> Result<serde_json::Value
         .map(|timestamp| review_engine::Timestamp(timestamp.0))
         .map_err(|error| crate::Error::RustError(error.to_string()))?;
 
-    let scratch = review_engine::new_scheduler_scratch(scheduler)
+    let scratch = review_engine::new_scheduler_scratch()
         .map_err(|error| crate::Error::RustError(error.to_string()))?;
-    let mut replayed = review_engine::initial_state(scheduler, activated_at)
-        .map_err(|error| crate::Error::RustError(error.to_string()))?;
+    let mut replayed = review_engine::initial_state(activated_at);
     let mut replayed_status = learning_core::CardStatus::New;
     {
-        let mut statement = transaction.prepare(review::SELECT_EFFECTIVE_EVENTS_FOR_CARD)?;
+        let mut statement = transaction.prepare(SELECT_EFFECTIVE_EVENTS_FOR_CARD)?;
         let mut rows = statement.query(params![card_id, last_id])?;
         while let Some(row) = rows.next()? {
             let grade = Grade::try_from(row.get::<_, u8>("grade")?).map_err(|_| {
@@ -371,7 +394,6 @@ pub(crate) fn undo_last(env: &Env, session_id: &str) -> Result<serde_json::Value
                 crate::Error::RustError("invalid replayed card transition".to_owned())
             })?;
             replayed = review_engine::apply_review(
-                scheduler,
                 &scratch,
                 &replayed,
                 &ReviewEventInput { grade, answered_at },
@@ -385,7 +407,7 @@ pub(crate) fn undo_last(env: &Env, session_id: &str) -> Result<serde_json::Value
     let event_id = crate::api::new_id("ev");
     let at = to_rfc3339(crate::api::now());
     transaction.execute(
-        review::INSERT_EVENT,
+        INSERT_EVENT,
         params![
             event_id,
             card_id,
@@ -417,7 +439,7 @@ pub(crate) fn undo_last(env: &Env, session_id: &str) -> Result<serde_json::Value
         update_card_status(
             &transaction,
             &card_id,
-            crate::repositories::card_status_db(&replayed_status),
+            crate::sqlite::card_status_db(&replayed_status),
             None,
             &at,
         )?;
@@ -440,7 +462,7 @@ pub(crate) fn complete_session(
     let mut database = env.connection()?;
     let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let profile_id: String = transaction
-        .query_row(review::SELECT_SESSION, params![session_id], |row| {
+        .query_row(crate::sqlite::SELECT_SESSION, params![session_id], |row| {
             row.get("learner_language_profile_id")
         })
         .optional()?
@@ -449,7 +471,7 @@ pub(crate) fn complete_session(
         })?;
     let at = to_rfc3339(crate::api::now());
     let changed = transaction.execute(
-        review::COMPLETE_SESSION,
+        COMPLETE_SESSION,
         params![session_id, at, card_count, review_seconds],
     )?;
     if changed == 0 {
@@ -462,17 +484,11 @@ pub(crate) fn complete_session(
     }
 
     let mut created = 0_u32;
-    let mut evidence = transaction.prepare(review::SELECT_SESSION_CARD_EVIDENCE)?;
+    let mut evidence = transaction.prepare(SELECT_SESSION_CARD_EVIDENCE)?;
     let mut rows = evidence.query(params![session_id])?;
     while let Some(row) = rows.next()? {
         let card_id: String = row.get("card_id")?;
         let learning_item_id: Option<String> = row.get("source_learning_item_id")?;
-        let spont_fail: u32 = row.get("spont_fail")?;
-        let spont_ok: u32 = row.get("spont_ok")?;
-        let prompted_ok: u32 = row.get("prompted_ok")?;
-        let listen_fail: u32 = row.get("listen_fail")?;
-        let review_count: u32 = row.get("review_count")?;
-
         let mut recent_grades = [0_u8; adaptation::GRADE_WINDOW];
         let mut recent_grade_len = 0usize;
         let mut latency_sum = 0_u64;
@@ -507,17 +523,21 @@ pub(crate) fn complete_session(
             recent_grades: &recent_grades[..recent_grade_len],
             avg_response_millis: (latency_count > 0)
                 .then(|| u32::try_from(latency_sum / u64::from(latency_count)).unwrap_or(u32::MAX)),
-            spontaneous_failures: spont_fail,
-            spontaneous_successes: spont_ok,
-            prompted_successes: prompted_ok,
-            listening_failures: listen_fail,
-            review_count,
         };
 
         let mut emit_error: Option<crate::Error> = None;
+        let mut emitted_practice = false;
+        let mut emitted_listening = false;
+        let mut emitted_redesign = false;
         adaptation::visit_card_rules(signals, |recommendation| {
             if emit_error.is_some() {
                 return;
+            }
+            match (recommendation.subject_type, recommendation.action) {
+                ("learning_item", "practice_in_lesson") => emitted_practice = true,
+                ("listening_item", "create_listening_card") => emitted_listening = true,
+                ("card", "redesign_card") => emitted_redesign = true,
+                _ => {}
             }
             let detail = serde_json::json!({ "detail": recommendation.detail }).to_string();
             match insert_recommendation(
@@ -536,6 +556,34 @@ pub(crate) fn complete_session(
         if let Some(error) = emit_error {
             return Err(error);
         }
+
+        if let Some(item_id) = learning_item_id.as_deref() {
+            for (subject_type, action, emitted) in [
+                ("learning_item", "practice_in_lesson", emitted_practice),
+                ("listening_item", "create_listening_card", emitted_listening),
+            ] {
+                if !emitted {
+                    transaction.execute(
+                        "UPDATE recommendations
+                         SET status='expired',resolved_at=?5
+                         WHERE learner_language_profile_id=?1
+                           AND subject_type=?2 AND subject_id=?3 AND action=?4
+                           AND status='open'",
+                        params![profile_id, subject_type, item_id, action, at],
+                    )?;
+                }
+            }
+        }
+        if !emitted_redesign {
+            transaction.execute(
+                "UPDATE recommendations
+                 SET status='expired',resolved_at=?4
+                 WHERE learner_language_profile_id=?1
+                   AND subject_type='card' AND subject_id=?2 AND action=?3
+                   AND status='open'",
+                params![profile_id, card_id, "redesign_card", at],
+            )?;
+        }
     }
     drop(rows);
     drop(evidence);
@@ -552,53 +600,67 @@ fn load_state(
     database: &rusqlite::Connection,
     card_id: &str,
 ) -> Result<Option<(ScheduledState, String)>> {
-    database
-        .query_row(review::SELECT_SCHEDULE_STATE, params![card_id], |row| {
-            let last_review_at: Option<String> = row.get("last_review_at")?;
-            let due_at: Option<String> = row.get("due_at")?;
-            let last_review_at = last_review_at
-                .as_deref()
-                .map(from_rfc3339)
-                .transpose()
-                .map_err(|error| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        0,
-                        rusqlite::types::Type::Text,
-                        Box::new(error),
-                    )
-                })?
-                .map(|value| review_engine::Timestamp(value.0));
-            let due_at = due_at
-                .as_deref()
-                .map(from_rfc3339)
-                .transpose()
-                .map_err(|error| {
-                    rusqlite::Error::FromSqlConversionFailure(
-                        0,
-                        rusqlite::types::Type::Text,
-                        Box::new(error),
-                    )
-                })?
-                .map(|value| review_engine::Timestamp(value.0));
+    let row = database
+        .query_row(SELECT_SCHEDULE_STATE, params![card_id], |row| {
             Ok((
-                ScheduledState {
-                    algorithm: row.get("algorithm")?,
-                    algorithm_version: row.get("algorithm_version")?,
-                    parameter_set_id: row.get("parameter_set_id")?,
-                    difficulty: row.get("difficulty")?,
-                    stability: row.get("stability")?,
-                    last_review_at,
-                    due_at,
-                    scheduled_interval_seconds: row.get("scheduled_interval_seconds")?,
-                    lapse_count: row.get("lapse_count")?,
-                    review_count: row.get("review_count")?,
-                    state_version: row.get("state_version")?,
-                },
-                row.get("state_hash")?,
+                row.get::<_, String>("algorithm")?,
+                row.get::<_, String>("algorithm_version")?,
+                row.get::<_, Option<f64>>("difficulty")?,
+                row.get::<_, Option<f64>>("stability")?,
+                row.get::<_, Option<String>>("last_review_at")?,
+                row.get::<_, Option<String>>("due_at")?,
+                row.get::<_, Option<i64>>("scheduled_interval_seconds")?,
+                row.get::<_, u32>("lapse_count")?,
+                row.get::<_, u32>("review_count")?,
+                row.get::<_, u32>("state_version")?,
+                row.get::<_, String>("state_hash")?,
             ))
         })
-        .optional()
-        .map_err(Into::into)
+        .optional()?;
+
+    let Some((
+        algorithm,
+        algorithm_version,
+        difficulty,
+        stability,
+        last_review_at,
+        due_at,
+        scheduled_interval_seconds,
+        lapse_count,
+        review_count,
+        state_version,
+        state_hash,
+    )) = row
+    else {
+        return Ok(None);
+    };
+
+    let parse_time = |value: Option<String>| -> Result<Option<review_engine::Timestamp>> {
+        value
+            .as_deref()
+            .map(from_rfc3339)
+            .transpose()
+            .map(|value| value.map(|value| review_engine::Timestamp(value.0)))
+            .map_err(|error| {
+                crate::Error::operation(500, "corrupt_row", error, serde_json::Value::Null)
+            })
+    };
+
+    Ok(Some((
+        ScheduledState {
+            algorithm,
+            algorithm_version,
+            difficulty,
+            stability,
+            last_review_at: parse_time(last_review_at)?,
+            due_at: parse_time(due_at)?,
+            scheduled_interval_seconds,
+            lapse_count,
+            review_count,
+            state_version,
+        },
+        state_hash,
+    )))
 }
 
 fn write_state(
@@ -620,7 +682,6 @@ fn write_state(
         card_id,
         &state.algorithm,
         &state.algorithm_version,
-        state.parameter_set_id.as_deref(),
         state.difficulty,
         state.stability,
         last_review_at.as_deref(),
@@ -696,32 +757,26 @@ mod tests {
                  '2026-10-16T00:00:00Z','2026-10-16T00:00:00Z');"#
         ).unwrap();
 
-        let state = review_engine::initial_state(
-            review_engine::FSRS_ID,
-            review_engine::Timestamp(1_760_572_800),
-        )
-        .unwrap();
+        let state = review_engine::initial_state(review_engine::Timestamp(1_760_572_800));
         let hash = review_engine::state_hash(&state);
-        db.execute(
-            review::UPSERT_SCHEDULE_STATE,
-            params![
-                "card-1",
-                state.algorithm,
-                state.algorithm_version,
-                Option::<String>::None,
-                state.difficulty,
-                state.stability,
-                Option::<String>::None,
-                state
-                    .due_at
-                    .map(|value| to_rfc3339(learning_core::Timestamp(value.0))),
-                state.scheduled_interval_seconds,
-                state.lapse_count,
-                state.review_count,
-                state.state_version,
-                hash,
-                "2026-10-16T00:00:00Z"
-            ],
+        let due_at = state
+            .due_at
+            .map(|value| to_rfc3339(learning_core::Timestamp(value.0)));
+        upsert_schedule_state(
+            &db,
+            "card-1",
+            &state.algorithm,
+            &state.algorithm_version,
+            state.difficulty,
+            state.stability,
+            None,
+            due_at.as_deref(),
+            state.scheduled_interval_seconds,
+            state.lapse_count,
+            state.review_count,
+            state.state_version,
+            &hash,
+            "2026-10-16T00:00:00Z",
         )
         .unwrap();
         drop(db);
@@ -885,77 +940,13 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
-    #[test]
-    fn undo_preserves_fallback_scheduler() {
-        let (path, env) = create_env("fallback");
-        let db = env.connection().unwrap();
-        let state = review_engine::initial_state(
-            review_engine::FALLBACK_ID,
-            review_engine::Timestamp(1_760_572_800),
-        )
-        .unwrap();
-        let hash = review_engine::state_hash(&state);
-        db.execute(
-            review::UPSERT_SCHEDULE_STATE,
-            params![
-                "card-1",
-                state.algorithm,
-                state.algorithm_version,
-                Option::<String>::None,
-                state.difficulty,
-                state.stability,
-                Option::<String>::None,
-                state
-                    .due_at
-                    .map(|value| to_rfc3339(learning_core::Timestamp(value.0))),
-                state.scheduled_interval_seconds,
-                state.lapse_count,
-                state.review_count,
-                state.state_version,
-                hash,
-                "2026-10-16T00:00:00Z"
-            ],
-        )
-        .unwrap();
-        drop(db);
-        submit_event(
-            &env,
-            "rs-1",
-            ReviewEventInputData {
-                client_operation_id: "op-f",
-                card_id: "card-1",
-                grade: 3,
-                presented_at: "2026-10-16T00:01:00Z",
-                answered_at: "2026-10-16T00:01:05Z",
-                response_millis: 5000,
-                answer_revealed: false,
-                learner_note: None,
-                prior_state_hash: &hash,
-                source: "online",
-            },
-        )
-        .unwrap();
-        undo_last(&env, "rs-1").unwrap();
-        let algorithm: String = env
-            .connection()
-            .unwrap()
-            .query_row(
-                "SELECT algorithm FROM card_schedule_state WHERE card_id='card-1'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(algorithm, "fallback");
-        let _ = std::fs::remove_file(path);
-    }
-
     fn seed_recommendation_case(env: &Env) {
         let db = env.connection().unwrap();
         db.execute_batch(
             r#"INSERT INTO learning_items
                 (id,learner_language_profile_id,item_type,target_text,
                  normalized_target_text,status,created_at,updated_at)
-               VALUES('li-1','llp-1', 'phrase','hola','hola','learning',
+               VALUES('li-1','llp-1','phrase','hola','hola','learning',
                       '2026-10-16T00:00:00Z','2026-10-16T00:00:00Z');
                UPDATE cards SET source_learning_item_id='li-1' WHERE id='card-1';"#,
         )
@@ -973,23 +964,6 @@ mod tests {
         .unwrap()
         .collect::<rusqlite::Result<Vec<_>>>()
         .unwrap()
-    }
-
-    #[test]
-    fn evaluate_review_answer_uses_stored_card_contract() {
-        let (path, env) = create_env("evaluation");
-        let actual = crate::handlers::review::evaluate(&env, "card-1", "a").unwrap();
-        assert_eq!(actual["verdict"], "correct");
-        assert_eq!(actual["matched_answer"], "a");
-        let db = env.connection().unwrap();
-        db.execute(
-            "UPDATE cards SET accepted_answers_json='invalid-json' WHERE id='card-1'",
-            [],
-        )
-        .unwrap();
-        assert!(crate::handlers::review::evaluate(&env, "card-1", "a").is_err());
-        drop(db);
-        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -1091,6 +1065,66 @@ mod tests {
         assert!(recs.iter().all(|row| row.3 == "open"));
         let _ = std::fs::remove_file(path);
     }
+    #[test]
+    fn review_rule_recomputation_expires_stale_open_recommendation() {
+        let (path, env) = create_env("expire-stale-recommendation");
+        {
+            let db = env.connection().unwrap();
+            db.execute(
+                "INSERT INTO recommendations
+                 (id,learner_language_profile_id,subject_type,subject_id,action,detail_json,status,created_at)
+                 VALUES('rec-stale','llp-1','card','card-1','redesign_card','{}','open',
+                        '2026-10-15T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+        let prior: String = env
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT state_hash FROM card_schedule_state WHERE card_id='card-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        submit_event(
+            &env,
+            "rs-1",
+            ReviewEventInputData {
+                client_operation_id: "op-stable",
+                card_id: "card-1",
+                grade: 3,
+                presented_at: "2026-10-16T00:01:00Z",
+                answered_at: "2026-10-16T00:01:05Z",
+                response_millis: 2000,
+                answer_revealed: false,
+                learner_note: None,
+                prior_state_hash: &prior,
+                source: "online",
+            },
+        )
+        .unwrap();
+        complete_session(&env, "rs-1", 1, 5).unwrap();
+
+        let db = env.connection().unwrap();
+        let state: (String, bool) = db
+            .query_row(
+                "SELECT status,resolved_at IS NOT NULL
+                 FROM recommendations WHERE id='rec-stale'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            state,
+            ("expired".to_owned(), true),
+            "deterministic review recommendation must expire when recomputed rule no longer emits it"
+        );
+        drop(db);
+        let _ = std::fs::remove_file(path);
+    }
+
     #[test]
     fn scheduler_settings_reject_pathological_retention() {
         let (path, env) = create_env("profile-retention-bound");

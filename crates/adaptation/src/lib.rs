@@ -10,29 +10,47 @@ mod queue;
 mod rules;
 mod tasks;
 
-pub use calibration::{InterventionEffect, summarize_intervention_history};
+/// Minimum elapsed time for two successful retrievals to count as separate
+/// spacing-stage confirmations. This is an explicit v1 anti-massing policy.
+pub const MIN_DISTRIBUTED_SUCCESS_GAP_SECONDS: i64 = 12 * 60 * 60;
+
+/// Minimum delay before a later learner-state snapshot can be used as
+/// observational intervention-effectiveness evidence. Explicit v1 policy.
+pub const INTERVENTION_CALIBRATION_MIN_DELAY_SECONDS: i64 = 6 * 60 * 60;
+
+/// Maximum due rechecks exposed as a maintenance slot when another lesson
+/// objective is primary. Explicit v1 workload policy.
+pub const DUE_RECHECK_MAINTENANCE_LIMIT: u8 = 1;
+/// Maximum due rechecks exposed when rechecking is the primary lesson objective.
+pub const DUE_RECHECK_PRIMARY_LIMIT: u8 = 3;
+
+pub use calibration::{
+    InterventionEffect, MAX_CALIBRATION_SNAPSHOTS, summarize_intervention_history,
+};
 pub use capability::{
     CapabilityEstimateFixed, CapabilityEstimateView, CapabilityKind, ContextSetView,
     ItemCapabilityStateFixed, ItemCapabilityView, MAX_CAPABILITY_OBSERVATIONS, TextSetRef,
-    capability_estimate_view, context_set_slice, item_capability_view,
-    project_item_capabilities_columns,
+    item_capability_view, project_item_capabilities_columns,
 };
+#[cfg(fuzzing)]
+pub use focus::fuzz_support as fuzz_focus_support;
 pub use focus::{
-    TutorFocusDecisionView, TutorFocusThreadView, format_focus_policy, format_focus_rationale,
-    visit_tutor_focus_decisions, visit_tutor_focus_threads,
+    TutorFocusDecisionView, format_focus_policy, format_focus_rationale,
+    visit_tutor_focus_decisions,
 };
 pub use planner::{
-    AdaptiveLessonPlanFixed, LessonPlannerInputView, PlanPriorityFixed, PlannerPreferencesView,
-    RecentLearningSignals, plan_diagnostic_probe, plan_diagnostic_probe_count,
-    plan_next_lesson_fixed, plan_priorities, plan_success_criteria,
+    AdaptiveLessonPlanFixed, ESTABLISHED_SPONTANEOUS_WEAKNESS_PRIORITY,
+    ESTABLISHED_TASK_FAILURE_PRIORITY, LessonPlannerInputView, PlanPriorityFixed,
+    PlannerPreferencesView, RecentLearningSignals, plan_diagnostic_probe,
+    plan_diagnostic_probe_count, plan_next_lesson_fixed, plan_priorities, plan_success_criteria,
 };
 pub use queue::{
     TutorTask, criterion, criterion_for_action, default_action, default_focus_score,
     evidence_capability,
 };
-pub use rules::{
-    CardSignalView, GRADE_WINDOW, RecommendationView, recheck_failed_fields, visit_card_rules,
-};
+pub use rules::{CardSignalView, GRADE_WINDOW, RecommendationView, visit_card_rules};
+#[cfg(fuzzing)]
+pub use tasks::fuzz_support as fuzz_tasks_support;
 pub use tasks::{TaskCandidateView, visit_task_candidates};
 
 /// One study day's signals, most recent first.
@@ -45,13 +63,13 @@ pub struct DailySignal {
 }
 
 /// Overdue-card count above which new cards pause (05 §9). Design decision.
-pub const OVERDUE_PAUSE_THRESHOLD: u32 = 50;
+const OVERDUE_PAUSE_THRESHOLD: u32 = 50;
 /// Recall rate below which budget halves.
-pub const RECALL_RATE_FLOOR: f64 = 0.70;
+const RECALL_RATE_FLOOR: f64 = 0.70;
 
 /// Today's effective new-card budget (05-review-engine.md §9):
 /// - overdue backlog above threshold → 0 (pause);
-/// - review time > 12 min on 2 consecutive study days → halve;
+/// - review time > the profile review-minutes limit on 2 consecutive study days → halve;
 /// - recall < 70% on 2 consecutive study days → halve;
 /// - backlog cleared → restore gradually: at most `yesterday_budget + 1`,
 ///   never an instant jump back to base.

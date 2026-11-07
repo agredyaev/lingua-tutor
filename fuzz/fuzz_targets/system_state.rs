@@ -5,7 +5,7 @@ use libfuzzer_sys::fuzz_target;
 use lingua_tutor_local::fuzzing::*;
 fuzz_target!(|data: &[u8]| {
     let (mode, rest) = data.split_first().unwrap_or((&0, &[]));
-    match mode % 15 {
+    match mode % 14 {
         0 => pure::exercise(rest),
         1 => exercise_contract(rest),
         2 => exercise_card_model(rest),
@@ -14,12 +14,11 @@ fuzz_target!(|data: &[u8]| {
         5 => exercise_lesson_result_stateful(rest),
         6 => exercise_card_lifecycle(rest),
         7 => exercise_review_lifecycle(rest),
-        8 => exercise_maintenance_writes(rest),
+        8 => exercise_auxiliary_writes(rest),
         9 => exercise_boundaries(rest),
         10 => exercise_storage(rest),
         11 => exercise_tunnel_wire(rest),
-        12 => exercise_error_writes(rest),
-        13 => exercise_tunnel_transport(rest),
+        12 => exercise_tunnel_transport(rest),
         _ => exercise_review_states(rest),
     }
 });

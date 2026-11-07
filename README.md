@@ -10,13 +10,16 @@ Local-first adaptive language tutor with one SQLite source of truth.
 
 ## Install
 
-From source:
+From source, build the generated web bundle first:
 
 ```sh
+rustup target add wasm32-unknown-unknown
+cargo install trunk --version 0.21.14 --locked
+(cd apps/web && trunk build --release --cargo-profile wasm-release)
 cargo install --path apps/local --bin lingua-tutor --locked
 ```
 
-Cargo installs `lingua-tutor` into its normal binary directory (typically `~/.cargo/bin`).
+Release-profile native builds fail closed when the generated web bundle is missing or incomplete. Cargo installs `lingua-tutor` into its normal binary directory (typically `~/.cargo/bin`).
 
 Prebuilt release archives are published for Linux x64, Linux arm64, macOS arm64, and Windows x64.
 
@@ -24,10 +27,11 @@ Prebuilt release archives are published for Linux x64, Linux arm64, macOS arm64,
 
 Project data is stored separately under `<project>/.lingua-tutor/`, so replacing the executable does not replace or reset the learner database.
 
-If installed from source, update the checkout and reinstall:
+If installed from source, update the checkout, rebuild the generated web bundle, and reinstall:
 
 ```sh
 git pull
+(cd apps/web && trunk build --release --cargo-profile wasm-release)
 cargo install --path apps/local --bin lingua-tutor --locked --force
 ```
 

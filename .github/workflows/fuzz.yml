@@ -8,7 +8,6 @@ on:
     paths:
       - 'apps/local/**'
       - 'crates/**'
-      - 'language-packs/**'
       - 'fuzz/**'
       - 'scripts/fuzz_coverage.py'
       - '.github/workflows/fuzz.yml'
@@ -18,15 +17,21 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2
         with:
           tool: cargo-deny@0.20.2
       - name: supply-chain policy
         run: cargo deny --locked --manifest-path fuzz/Cargo.toml --config deny.toml check
-      - run: cargo install cargo-fuzz --locked
+      - name: Locked fuzz compile preflight
+        env:
+          RUSTFLAGS: --cfg fuzzing
+        run: cargo +nightly check --locked --manifest-path fuzz/Cargo.toml --bins
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: fuzz lesson result parser (60s)
         run: cargo +nightly fuzz run lesson_result_parse -- -max_total_time=60 -max_len=4096
       - name: fuzz pure/core components (60s)
@@ -41,12 +46,8 @@ jobs:
         run: cargo +nightly fuzz run card_lifecycle -- -max_total_time=120 -max_len=96
       - name: fuzz review lifecycle (120s)
         run: cargo +nightly fuzz run review_lifecycle -- -max_total_time=120 -max_len=96
-      - name: fuzz standalone maintenance writes (120s)
-        run: cargo +nightly fuzz run maintenance_writes -- -max_total_time=120 -max_len=96
       - name: fuzz tunnel wire and retry policy (60s)
         run: cargo +nightly fuzz run tunnel_wire -- -max_total_time=60 -max_len=2048
-      - name: fuzz error persistence (60s)
-        run: cargo +nightly fuzz run error_writes -- -max_total_time=60 -max_len=512
       - name: fuzz structured contract validation (60s)
         run: cargo +nightly fuzz run contract -- -max_total_time=60 -max_len=512
       - name: fuzz mutation planner (60s)
@@ -62,15 +63,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
+          toolchain: nightly
           components: llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-fuzz --locked
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Fuzz executable-line coverage, minimum 86 percent per file
         run: python3 scripts/fuzz_coverage.py --minimum 86
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: fuzz-coverage

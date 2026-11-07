@@ -1,7 +1,7 @@
 //! Shared bounded card mutation passes used by lesson completion and standalone upsert.
 
 use crate::Result;
-use crate::repositories::to_rfc3339;
+use crate::sqlite::to_rfc3339;
 use rusqlite::{Connection, params};
 
 use super::card_plan::{
@@ -43,12 +43,8 @@ pub(crate) fn prepare_card_mutations(
     mutations: &[tutor_contract::CardMutation],
     now: learning_core::Timestamp,
 ) -> Result<(CardPlanState, CardPlan)> {
-    let remaining_activation_budget = super::card_budget::remaining_budget(
-        database,
-        profile_id,
-        now,
-        crate::repositories::cards::COUNT_ACTIVATED_TODAY,
-    )?;
+    let remaining_activation_budget =
+        super::card_budget::remaining_activation_budget(database, profile_id, now)?;
 
     let mut state = new_card_plan_state(remaining_activation_budget);
     for (index, mutation) in mutations.iter().enumerate() {
@@ -160,7 +156,7 @@ pub(crate) fn apply_card_mutations(
                     database,
                     &card_id,
                     profile_id,
-                    crate::repositories::card_intent_db(&payload.intent),
+                    crate::sqlite::card_intent_db(&payload.intent),
                     card_plan_status(plan, i),
                     &payload.prompt,
                     payload
@@ -195,11 +191,7 @@ pub(crate) fn apply_card_mutations(
                 }
 
                 if card_plan_status(plan, i) == "new" {
-                    let schedule = review_engine::initial_state(
-                        review_engine::FSRS_ID,
-                        review_engine::Timestamp(now.0),
-                    )
-                    .map_err(|error| crate::Error::RustError(error.to_string()))?;
+                    let schedule = review_engine::initial_state(review_engine::Timestamp(now.0));
                     let last_review_at = schedule
                         .last_review_at
                         .map(|value| to_rfc3339(learning_core::Timestamp(value.0)));
@@ -213,7 +205,6 @@ pub(crate) fn apply_card_mutations(
                         &card_id,
                         &schedule.algorithm,
                         &schedule.algorithm_version,
-                        schedule.parameter_set_id.as_deref(),
                         schedule.difficulty,
                         schedule.stability,
                         last_review_at.as_deref(),
@@ -254,13 +245,19 @@ pub(crate) fn apply_card_mutations(
                 )?;
             }
             CardEffectKind::SetStatus => {
-                update_card_status(
-                    database,
-                    source.card_id.as_deref().unwrap_or_default(),
-                    card_plan_status(plan, i),
-                    source.reason.as_deref(),
-                    at,
-                )?;
+                let card_id = source.card_id.as_deref().unwrap_or_default();
+                let status = card_plan_status(plan, i);
+                update_card_status(database, card_id, status, source.reason.as_deref(), at)?;
+                if matches!(status, "suspended" | "retired") {
+                    database.execute(
+                        "UPDATE recommendations
+                         SET status='expired',resolved_at=?3
+                         WHERE learner_language_profile_id=?1
+                           AND subject_type='card' AND subject_id=?2
+                           AND action='redesign_card' AND status='open'",
+                        params![profile_id, card_id, at],
+                    )?;
+                }
             }
             CardEffectKind::AddAcceptedAnswer | CardEffectKind::RemoveAcceptedAnswer => {
                 let Some(card_index) =
@@ -336,7 +333,7 @@ pub(crate) fn apply_card_mutations(
             database,
             &crate::api::new_id("cm"),
             audit_card_id,
-            crate::repositories::mutation_operation_db(&source.operation),
+            crate::sqlite::mutation_operation_db(&source.operation),
             &source.client_operation_id,
             None,
             after_json.as_deref(),
@@ -506,6 +503,81 @@ mod tests {
         assert_eq!(card_accepted_at(&loaded, index, 0), "niño");
         assert_eq!(card_accepted_at(&loaded, index, 1), "line\nbreak");
         assert_eq!(card_accepted_at(&loaded, index, 2), "🚀");
+        drop(db);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn terminal_card_status_expires_open_card_recommendations() {
+        let path = std::env::temp_dir().join(format!(
+            "lingua-card-terminal-recommendation-{}.sqlite3",
+            uuid::Uuid::new_v4(),
+        ));
+        let db = crate::storage::open(&path).unwrap();
+        db.execute_batch(
+            "
+            INSERT INTO learner_profile(id,created_at,updated_at)
+            VALUES('learner-a','2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
+            INSERT INTO learner_language_profiles
+             (id,learner_id,source_language,target_locale,
+              estimated_level,current_lesson_number,status,is_default,preferences_json,
+              created_at,updated_at)
+            VALUES('profile-a','learner-a','ru','es-ES','A1',0,'active',1,'{}',
+             '2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
+            INSERT INTO cards
+             (id,learner_language_profile_id,intent,status,prompt,prompt_language,
+              answer,answer_language,accepted_answers_json,creation_reason,content_hash,
+              content_version,created_by,created_at,updated_at)
+            VALUES('card-a','profile-a','production','review','p','ru','a','es-ES',
+                   '[]','seed','hash-a',1,'tutor',
+                   '2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
+            INSERT INTO recommendations
+             (id,learner_language_profile_id,subject_type,subject_id,action,
+              detail_json,status,created_at)
+            VALUES('rec-a','profile-a','card','card-a','redesign_card','{}','open',
+                   '2026-10-10T00:00:00Z');
+            ",
+        )
+        .unwrap();
+
+        let mutations = [tutor_contract::CardMutation {
+            operation: tutor_contract::MutationOperation::Suspend,
+            client_operation_id: "suspend-a".to_owned(),
+            card_id: Some("card-a".to_owned()),
+            card: None,
+            accepted_answer: None,
+            reason: Some("not useful now".to_owned()),
+        }];
+        let now = learning_core::Timestamp(1_760_000_000);
+        let (state, plan) = prepare_card_mutations(&db, "profile-a", &mutations, now).unwrap();
+        apply_card_mutations(
+            &db,
+            &state,
+            &plan,
+            &mutations,
+            "profile-a",
+            "ru",
+            "es-ES",
+            None,
+            "test",
+            now,
+            "2026-10-10T01:00:00Z",
+        )
+        .unwrap();
+
+        let recommendation: (String, bool) = db
+            .query_row(
+                "SELECT status,resolved_at IS NOT NULL FROM recommendations WHERE id='rec-a'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            recommendation,
+            ("expired".to_owned(), true),
+            "terminal card state must not leave stale redesign pressure in the planner"
+        );
+
         drop(db);
         let _ = std::fs::remove_file(path);
     }

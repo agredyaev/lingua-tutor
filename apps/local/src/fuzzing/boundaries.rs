@@ -51,7 +51,7 @@ pub fn exercise_boundaries(data: &[u8]) {
         .expect("error");
     let session =
         crate::operations::review_ops::create_session(&env, id, "online").expect("session");
-    let at = crate::repositories::to_rfc3339(crate::api::now());
+    let at = crate::sqlite::to_rfc3339(crate::api::now());
     let mut args = json!({"language_profile_id":id,"source_language":"ru","target_locale":"es-ES","scenario":"fuzz",
     "lesson_id":lesson,"lesson_result":result,"text":text,"validation_token":token,
     "card_id":card,"card_ids":[card],"card_mutations":result.card_mutations,
@@ -109,8 +109,6 @@ pub fn exercise_boundaries(data: &[u8]) {
     let _ = crate::mcp::dispatch_jsonrpc(&env, data);
     let _ = crate::handlers::records::health(&env).expect("health");
     let _ = crate::handlers::records::learning_state_for(&env, id).expect("state");
-    let _ = crate::handlers::records::get_error_target(&env, &error).expect("error details");
-    let _ = crate::handlers::lessons::get_lesson(&env, &lesson).expect("lesson details");
     let _ = crate::handlers::cards::get(&env, &card).expect("card details");
     let full = crate::handlers::export::full_for(&env, id).expect("full export");
     let exported: Value = serde_json::from_slice(&full.body).expect("JSON export");
@@ -119,72 +117,7 @@ pub fn exercise_boundaries(data: &[u8]) {
     assert!(!csv.body.is_empty());
     let _ = completion;
     crate::server::fuzz_boundary(&env, &dir, &args, data);
-    negative_writes(&env, id, &error, &card);
-    let db_error = crate::repositories::RepoError::from(rusqlite::Error::InvalidQuery);
-    assert!(db_error.to_string().contains("database"));
-    let app_error = crate::repositories::RepoError::from(crate::Error::RustError("fixture".into()));
-    assert!(app_error.to_string().contains("fixture"));
     assert_database_integrity(&env);
     drop(env);
     std::fs::remove_dir_all(dir).expect("cleanup boundaries");
-}
-
-fn negative_writes(env: &Env, profile: &str, error: &str, card: &str) {
-    let make = |target: &str| crate::operations::log_error::LogErrorOccurrenceInput {
-        language_profile_id: profile.into(),
-        core_category: learning_core::CoreErrorCategory::Grammar,
-        original_production: "wrong".into(),
-        corrected_production: "right".into(),
-        error_code: None,
-        explanation: None,
-        error_target_id: Some(target.into()),
-        communicative_impact: learning_core::CommunicativeImpact::High,
-    };
-    assert!(matches!(
-        crate::operations::log_error::log_error_occurrence(env, make("missing")),
-        Err(Error::Operation {
-            code: "not_found",
-            ..
-        })
-    ));
-    let db = env.connection().expect("db");
-    db.execute(
-        "INSERT INTO learner_language_profiles
-         (id,learner_id,source_language,target_locale,status,is_default,created_at,updated_at)
-         SELECT 'foreign-profile',learner_id,'en','es-ES','archived',0,created_at,updated_at
-         FROM learner_language_profiles WHERE id=?1",
-        [profile],
-    )
-    .expect("foreign archived profile fixture");
-    let other = "foreign-profile";
-    db.execute(
-        "UPDATE error_targets SET learner_language_profile_id=?2 WHERE id=?1",
-        rusqlite::params![error, other],
-    )
-    .expect("foreign target fixture");
-    assert!(matches!(
-        crate::operations::log_error::log_error_occurrence(env, make(error)),
-        Err(Error::Operation {
-            code: "profile_mismatch",
-            ..
-        })
-    ));
-    db.execute(
-        "UPDATE error_targets SET learner_language_profile_id=?2 WHERE id=?1",
-        rusqlite::params![error, profile],
-    )
-    .expect("restore target");
-
-    let mut result = rich_lesson_result(profile, "cosmetic-fixture".into(), None, 0);
-    let mut mutation = result.card_mutations.remove(0);
-    mutation.operation = tutor_contract::MutationOperation::Update;
-    mutation.client_operation_id = "standalone-cosmetic-unique".into();
-    mutation.card_id = Some(card.into());
-    let payload = mutation.card.as_mut().expect("payload");
-    payload.prompt = "cosmetic standalone update".into();
-    payload.answer = db
-        .query_row("SELECT answer FROM cards WHERE id=?1", [card], |r| r.get(0))
-        .expect("answer");
-    crate::operations::upsert_cards::upsert_cards(env, profile, &[mutation])
-        .expect("cosmetic update");
 }

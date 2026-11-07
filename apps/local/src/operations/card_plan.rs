@@ -336,29 +336,6 @@ mod tests {
         assert_eq!(plan.effect[2], CardEffectKind::RemoveAcceptedAnswer);
         assert_eq!(plan.verdict[3], CardVerdict::Rejected);
     }
-
-    #[test]
-    fn unsupported_mutations_are_audited_as_rejected() {
-        let state = state();
-        for operation in [
-            tutor_contract::MutationOperation::Split,
-            tutor_contract::MutationOperation::Merge,
-            tutor_contract::MutationOperation::Link,
-            tutor_contract::MutationOperation::AddListeningVariant,
-        ] {
-            let mutation = tutor_contract::CardMutation {
-                operation,
-                client_operation_id: format!("{operation:?}"),
-                card_id: None,
-                card: None,
-                accepted_answer: None,
-                reason: None,
-            };
-            let plan = plan_card_mutations(&[mutation], &state).unwrap();
-            assert_eq!(plan.verdict[0], CardVerdict::Rejected);
-            assert_eq!(plan.effect[0], CardEffectKind::None);
-        }
-    }
 }
 
 const MAX_MUTATIONS: usize = tutor_contract::bounds::MAX_CARD_MUTATIONS;
@@ -514,7 +491,7 @@ fn push_existing_card_fields(
     let i = state.card_len;
     state.card_id[i] = push_text(&mut state.text, id);
     state.card_status[i] = push_text(&mut state.text, status);
-    state.card_intent[i] = crate::repositories::card_intent_from_db(intent);
+    state.card_intent[i] = crate::sqlite::card_intent_from_db(intent);
     state.card_prompt[i] = push_text(&mut state.text, prompt);
     state.card_answer[i] = push_text(&mut state.text, answer);
     state.card_len += 1;
@@ -872,27 +849,6 @@ pub(crate) fn plan_card_mutations(
                         "accepted answer already in requested state",
                     )?,
                 }
-            }
-            MutationOperation::Split
-            | MutationOperation::Merge
-            | MutationOperation::Link
-            | MutationOperation::AddListeningVariant => {
-                let note = match mutation.operation {
-                    MutationOperation::Split => {
-                        "Split not supported in M2; proposed via redesign loop"
-                    }
-                    MutationOperation::Merge => {
-                        "Merge not supported in M2; proposed via redesign loop"
-                    }
-                    MutationOperation::Link => {
-                        "Link not supported in M2; proposed via redesign loop"
-                    }
-                    MutationOperation::AddListeningVariant => {
-                        "AddListeningVariant not supported in M2; proposed via redesign loop"
-                    }
-                    _ => unreachable!(),
-                };
-                reject(&mut plan, source_index, note)?;
             }
         }
     }

@@ -4,6 +4,8 @@ use std::{env, fs, path::PathBuf};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
+    let profile = env::var("PROFILE")?;
+    let fuzzing = env::var_os("CARGO_CFG_FUZZING").is_some();
     let dist = manifest.join("../web/dist");
     println!("cargo:rerun-if-changed={}", dist.display());
 
@@ -19,6 +21,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     files.sort_by(|left, right| left.0.cmp(&right.0));
+
+    if fuzzing && !files.iter().any(|(name, _)| name == "index.html") {
+        let fuzz_index = PathBuf::from(env::var("OUT_DIR")?).join("fuzz-index.html");
+        fs::write(&fuzz_index, b"<!doctype html><title>fuzz</title>")?;
+        files.push(("index.html".to_owned(), fuzz_index));
+    }
+
+    if profile == "release" && !fuzzing {
+        let has_index = files.iter().any(|(name, _)| name == "index.html");
+        let has_wasm = files
+            .iter()
+            .any(|(_, path)| path.extension().and_then(|value| value.to_str()) == Some("wasm"));
+        let has_js = files
+            .iter()
+            .any(|(_, path)| path.extension().and_then(|value| value.to_str()) == Some("js"));
+        let has_css = files
+            .iter()
+            .any(|(_, path)| path.extension().and_then(|value| value.to_str()) == Some("css"));
+        if !(has_index && has_wasm && has_js && has_css) {
+            return Err(format!(
+                "release web bundle is incomplete in {}; run Trunk before building the native release",
+                dist.display()
+            )
+            .into());
+        }
+    }
 
     const MAX_WASM_BYTES: u64 = 3 * 1024 * 1024;
     let mut generated = String::from("const EMBEDDED_ASSETS: &[(&str, &[u8])] = &[\n");

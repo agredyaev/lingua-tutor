@@ -9,13 +9,13 @@ The executable schema source of truth is `apps/local/migrations/`. `0001_init.sq
 
 Do not duplicate a full SQL schema in documentation: migrations plus integration tests are the canonical executable specification.
 
-Current schema version: **7**.
+Current schema version: **9**.
 
 ## 2. Current tables
 
 The current database contains:
 
-`learner_profile`, `learner_language_profiles`, `lessons`, `lesson_metrics`, `learning_items`, `learning_item_evidence`, `error_targets`, `error_occurrences`, `error_rechecks`, `listening_attempts`, `cards`, `card_tags`, `card_schedule_state`, `review_sessions`, `review_events`, `card_mutations`, `scheduler_parameter_sets`, `recommendations`, `planner_decisions`, and `review_daily_budget`.
+`learner_profile`, `learner_language_profiles`, `lessons`, `lesson_metrics`, `learning_items`, `learning_item_evidence`, `error_targets`, `error_occurrences`, `error_rechecks`, `listening_attempts`, `cards`, `card_tags`, `card_schedule_state`, `review_sessions`, `review_events`, `card_mutations`, `recommendations`, `planner_decisions`, and `review_daily_budget`. `error_rechecks.repair_action` retains the canonical named corrective method after a failed recheck so direct compatibility writes preserve the same audit signal as canonical lesson outcomes. `planner_decisions.tutor_tasks_json` retains the exact bounded tutor-facing queue chosen at lesson start so start retries are idempotent at the decision-snapshot level rather than only at the lesson-ID level.
 
 There is no table representing an executable language implementation.
 
@@ -40,6 +40,7 @@ The active-profile uniqueness index is `ux_llp_active_locale(learner_id, target_
 - Review events are immutable; corrections/undo use compensating rows.
 - Schedule update and review-event insertion occur in one transaction.
 - Lesson completion is atomic.
+- Error rechecks retain completed cycle history; `(error_target_id, cycle, offset_days)` is unique.
 - JSON fields are validated at operation boundaries before write.
 - No network call occurs inside a SQLite transaction.
 
@@ -49,6 +50,8 @@ The active-profile uniqueness index is `ux_llp_active_locale(learner_id, target_
 - `0002_planner_history.sql`–`0005_methodology_semantics.sql`: historical additive methodology changes.
 - `0006_language_neutral_storage.sql`: removes obsolete language-implementation identity from existing v5 databases.
 - `0007_semantic_metadata.sql`: renames retained semantic metadata and removes dead evaluator/item metadata columns.
+- `0008_remove_review_experiments.sql`: removes unused scheduler experiment metadata from existing v7 databases.
+- `0009_error_recheck_cycles.sql`: versions 1/3/7-day error-recheck series so failed cycles remain auditable and a fresh cycle can be scheduled.
 
 Legacy schema text exists only as a test fixture to verify upgrade safety; it is not a production schema source.
 

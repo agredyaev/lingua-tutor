@@ -10,12 +10,12 @@ const CONFLICTS_KEY: &str = "lt-conflict-events";
 const QUEUE_KEY: &str = "lt-prefetch-queue";
 
 /// Hard bound on queued events (mirrors `max_review_batch`).
-pub const MAX_PENDING_EVENTS: usize = 50;
+pub(crate) const MAX_PENDING_EVENTS: usize = 50;
 
 /// One grade recorded while offline; replayed verbatim (same
 /// `client_operation_id` + `prior_state_hash` → server-side idempotency).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PendingEvent {
+pub(crate) struct PendingEvent {
     /// Target session.
     pub session_id: String,
     /// Idempotency key.
@@ -36,12 +36,12 @@ pub struct PendingEvent {
 
 /// Pure queue ops — unit-tested on host; storage IO stays in the two
 /// thin wrappers below.
-pub mod pure {
+pub(crate) mod pure {
     use super::{MAX_PENDING_EVENTS, PendingEvent};
 
     /// Parses the stored queue; corrupt text = empty queue (never panic).
     #[must_use]
-    pub fn parse_queue(raw: Option<String>) -> Vec<PendingEvent> {
+    pub(crate) fn parse_queue(raw: Option<String>) -> Vec<PendingEvent> {
         raw.and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default()
     }
@@ -52,7 +52,7 @@ pub mod pure {
     /// # Errors
     ///
     /// `Err(())` when the queue is at [`MAX_PENDING_EVENTS`].
-    pub fn append(
+    pub(crate) fn append(
         mut queue: Vec<PendingEvent>,
         event: PendingEvent,
     ) -> Result<Vec<PendingEvent>, ()> {
@@ -65,7 +65,7 @@ pub mod pure {
 
     /// Serializes for storage.
     #[must_use]
-    pub fn serialize(queue: &[PendingEvent]) -> String {
+    pub(crate) fn serialize(queue: &[PendingEvent]) -> String {
         serde_json::to_string(queue).unwrap_or_else(|_| "[]".to_owned())
     }
 }
@@ -84,13 +84,13 @@ fn write(key: &str, value: &str) -> bool {
 
 /// Currently queued offline events, oldest first.
 #[must_use]
-pub fn pending_events() -> Vec<PendingEvent> {
+pub(crate) fn pending_events() -> Vec<PendingEvent> {
     pure::parse_queue(read(EVENTS_KEY))
 }
 
 /// Queues one event. `false` = queue full; caller must stop the session.
 #[must_use]
-pub fn queue_event(event: PendingEvent) -> bool {
+pub(crate) fn queue_event(event: PendingEvent) -> bool {
     match pure::append(pending_events(), event) {
         Ok(queue) => write(EVENTS_KEY, &pure::serialize(&queue)),
         Err(()) => false,
@@ -98,7 +98,7 @@ pub fn queue_event(event: PendingEvent) -> bool {
 }
 
 /// Stores the prefetched due batch for offline review.
-pub fn cache_queue(queue: &QueueDto) {
+pub(crate) fn cache_queue(queue: &QueueDto) {
     if let Ok(text) = serde_json::to_string(queue) {
         write(QUEUE_KEY, &text);
     }
@@ -106,13 +106,13 @@ pub fn cache_queue(queue: &QueueDto) {
 
 /// Last prefetched due batch, if any.
 #[must_use]
-pub fn cached_queue() -> Option<QueueDto> {
+pub(crate) fn cached_queue() -> Option<QueueDto> {
     read(QUEUE_KEY).and_then(|text| serde_json::from_str(&text).ok())
 }
 
 /// Replay outcome for the caller's UI.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct ReplayReport {
+pub(crate) struct ReplayReport {
     /// Events accepted (or already known) by the server.
     pub synced: u32,
     /// Events rejected with `conflict_stale_state`, kept for audit.
@@ -124,7 +124,7 @@ pub struct ReplayReport {
 /// Replays pending events in order (09 §7): success/duplicate → drop from
 /// queue; 409 stale → move to the conflict audit list (local schedule copy
 /// is already server-side truth after refetch); network error → stop.
-pub async fn replay() -> ReplayReport {
+pub(crate) async fn replay() -> ReplayReport {
     let mut report = ReplayReport::default();
     let mut queue = pending_events();
     while let Some(event) = queue.first().cloned() {

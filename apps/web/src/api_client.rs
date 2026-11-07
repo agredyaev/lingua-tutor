@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use shared_schema::{ApiError, ApiErrorBody};
 
-pub async fn call<P: Serialize, T: DeserializeOwned>(
+pub(crate) async fn call<P: Serialize, T: DeserializeOwned>(
     method: &str,
     params: &P,
 ) -> Result<T, ApiError> {

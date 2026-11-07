@@ -40,7 +40,6 @@ fn all_tables_from_04_database_exist() {
         "review_daily_budget",
         "review_events",
         "review_sessions",
-        "scheduler_parameter_sets",
     ];
     assert_eq!(names(&conn, "table"), expected);
 }
@@ -73,6 +72,38 @@ fn all_named_indexes_exist() {
 }
 
 #[test]
+fn error_recheck_cycles_preserve_history_and_reuse_offsets() {
+    let conn = migrated_connection();
+    seed_profile(&conn);
+    conn.execute_batch(
+        "INSERT INTO error_targets
+            (id,learner_language_profile_id,core_category,original_production,
+             corrected_production,occurrence_count,method_change_required,status,
+             created_at,updated_at)
+         VALUES
+            ('et-1','llp-1','grammar','wrong','right',3,0,'recheck',
+             '2026-07-12T00:00:00Z','2026-07-12T00:00:00Z');
+         INSERT INTO error_rechecks
+            (id,error_target_id,cycle,offset_days,due_at,completed_at,passed)
+         VALUES
+            ('rc-0','et-1',0,1,'2026-07-13T00:00:00Z','2026-07-13T00:00:00Z',0),
+            ('rc-1','et-1',1,1,'2026-07-14T00:00:00Z',NULL,NULL);",
+    )
+    .unwrap();
+
+    assert!(
+        conn.execute(
+            "INSERT INTO error_rechecks
+             (id,error_target_id,cycle,offset_days,due_at)
+             VALUES ('duplicate','et-1',1,1,'2026-07-14T00:00:00Z')",
+            [],
+        )
+        .is_err(),
+        "one offset may occur once per cycle, while later cycles remain valid history"
+    );
+}
+
+#[test]
 fn card_status_check_constraint_rejects_invalid_value() {
     let conn = migrated_connection();
     seed_profile(&conn);
@@ -98,7 +129,7 @@ fn review_event_client_operation_id_is_unique() {
               grade, response_millis, answer_revealed, prior_state_hash, result_state_hash,
               algorithm_version, source, created_at)
              VALUES (?1, 'card-1', 'rs-1', 'client-op-1', '2026-07-12T00:00:00Z',
-                     '2026-07-12T00:00:01Z', 3, 900, 1, 'h0', 'h1', 'fallback-1', 'online',
+                     '2026-07-12T00:00:01Z', 3, 900, 1, 'h0', 'h1', 'fsrs-rs-6.6.1', 'online',
                      '2026-07-12T00:00:01Z')",
             [id],
         )

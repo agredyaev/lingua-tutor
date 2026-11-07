@@ -549,9 +549,9 @@ pub(crate) fn selection_tutor_tasks(
 
     entries[..len].sort_by(|left, right| {
         right
-            .due_now
-            .cmp(&left.due_now)
-            .then_with(|| right.priority.cmp(&left.priority))
+            .priority
+            .cmp(&left.priority)
+            .then_with(|| right.due_now.cmp(&left.due_now))
             .then_with(|| left.item_key.cmp(&right.item_key))
             .then_with(|| left.capability.cmp(&right.capability))
             .then_with(|| {
@@ -644,6 +644,14 @@ pub(crate) fn selection_tutor_tasks(
     output
 }
 
+pub(crate) fn effective_new_item_cap(base: u8, tasks: &[adaptation::TutorTask]) -> u8 {
+    if tasks.iter().any(|task| task.action == "fade_prompts") {
+        0
+    } else {
+        base
+    }
+}
+
 #[cfg(test)]
 // Test fixtures intentionally fail fast and use compact tuple snapshots.
 #[allow(clippy::unwrap_used, clippy::type_complexity)]
@@ -722,13 +730,13 @@ mod tests {
         observe_selection(
             &mut selection,
             adaptation::item_capability_view(&prompt_gap),
-            "reduce_prompt_dependence",
+            "probe_prompt_independence",
             now,
         );
         observe_selection(
             &mut selection,
             adaptation::item_capability_view(&automaticity),
-            "reduce_prompt_dependence",
+            "probe_prompt_independence",
             now,
         );
 
@@ -769,13 +777,13 @@ mod tests {
         observe_selection(
             &mut selection,
             adaptation::item_capability_view(&intervention),
-            "reduce_prompt_dependence",
+            "probe_prompt_independence",
             now,
         );
         observe_selection(
             &mut selection,
             adaptation::item_capability_view(&uncertain),
-            "reduce_prompt_dependence",
+            "probe_prompt_independence",
             now,
         );
 
@@ -801,6 +809,53 @@ mod tests {
     }
 
     #[test]
+    fn due_focus_does_not_starve_higher_priority_bottleneck_repair() {
+        let now = 2 * 86_400;
+
+        let mut prompt_gap = item("li-prompt-gap", 0.8);
+        prompt_gap.listening.qualified_success_streak = 2;
+        prompt_gap.prompted_production.attempts = 4;
+        prompt_gap.prompted_production.weighted_success_rate = Some(0.95);
+        prompt_gap.prompted_production.effective_evidence_weight = 5.0;
+        prompt_gap.prompted_production.independent_evidence_episodes = 3;
+        prompt_gap.spontaneous_production.attempts = 4;
+        prompt_gap.spontaneous_production.weighted_success_rate = Some(0.20);
+        prompt_gap.spontaneous_production.unaided_success_rate = Some(0.20);
+        prompt_gap.spontaneous_production.evidence_strength = 0.8;
+        prompt_gap.spontaneous_production.effective_evidence_weight = 5.0;
+        prompt_gap.spontaneous_production.unaided_evidence_weight = 5.0;
+        prompt_gap
+            .spontaneous_production
+            .independent_evidence_episodes = 3;
+        prompt_gap.spontaneous_production.last_observed_at_unix = Some(now);
+
+        let due_review = item("li-due-review", 0.8);
+
+        let mut selection = new_selection(24, 32);
+        observe_selection(
+            &mut selection,
+            adaptation::item_capability_view(&prompt_gap),
+            "probe_prompt_independence",
+            now,
+        );
+        observe_selection(
+            &mut selection,
+            adaptation::item_capability_view(&due_review),
+            "probe_prompt_independence",
+            now,
+        );
+
+        let tasks = selection_tutor_tasks(&selection, 1);
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            tasks[0].learning_item_id, "li-prompt-gap",
+            "a lower-priority due maintenance task must not starve a stronger diagnosed bottleneck"
+        );
+        assert_eq!(tasks[0].action, "fade_prompts");
+        assert!(!tasks[0].due_now);
+    }
+
+    #[test]
     fn bounded_selection_is_deterministic_and_ranked() {
         let items = [item("li-z", 0.30), item("li-a", 0.70), item("li-b", 0.55)];
         let now = 2 * 86_400;
@@ -809,7 +864,7 @@ mod tests {
             observe_selection(
                 &mut selection,
                 adaptation::item_capability_view(item),
-                "reduce_prompt_dependence",
+                "probe_prompt_independence",
                 now,
             );
         }
@@ -824,8 +879,8 @@ mod tests {
         assert!(focuses.as_array().is_some_and(|rows| !rows.is_empty()));
         assert!(!tasks.is_empty());
         assert!(tasks.windows(2).all(|pair| {
-            (pair[0].due_now && !pair[1].due_now)
-                || (pair[0].due_now == pair[1].due_now && pair[0].priority >= pair[1].priority)
+            pair[0].priority > pair[1].priority
+                || (pair[0].priority == pair[1].priority && (pair[0].due_now || !pair[1].due_now))
         }));
 
         let mut repeated = new_selection(24, 32);
@@ -833,7 +888,7 @@ mod tests {
             observe_selection(
                 &mut repeated,
                 adaptation::item_capability_view(item),
-                "reduce_prompt_dependence",
+                "probe_prompt_independence",
                 now,
             );
         }

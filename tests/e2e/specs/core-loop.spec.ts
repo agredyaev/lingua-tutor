@@ -126,7 +126,7 @@ test("create profile, import lesson, review the card", async ({ page }) => {
 });
 
 
-test("real lesson lifecycle creates a review card and advances the next lesson", async ({ page }) => {
+test("browser lesson import creates a review card and advances the next lesson", async ({ page }) => {
   const profiles = await rpc<Array<{ id: string }>>(
     page,
     "e2e-cycle-profiles",
@@ -143,90 +143,72 @@ test("real lesson lifecycle creates a review card and advances the next lesson",
     { language_profile_id: profileId },
   );
 
-  const started = await rpc<{ id: string; lesson_number: number }>(
-    page,
-    "e2e-cycle-start",
-    "start_lesson",
-    {
-      language_profile_id: profileId,
-      scenario: "restaurant",
-      planned_goal: "order a simple meal",
-    },
-  );
-  expect(started.lesson_number).toBe(nextBefore.lesson_number);
-
   const op = Date.now();
+  const text = JSON.stringify({
+    schema_version: "2",
+    client_operation_id: `op-e2e-cycle-${op}`,
+    language_profile_id: profileId,
+    lesson: {
+      scenario: "restaurant",
+      duration_seconds: 720,
+      tutor_summary: "Practised ordering a meal.",
+      next_goal: "ask for the bill",
+    },
+    new_learning_items: [
+      {
+        client_item_key: "bill",
+        item_type: "phrase",
+        target_text: "La cuenta, por favor.",
+      },
+    ],
+    evidence: [
+      {
+        client_item_key: "bill",
+        kind: "recognition",
+        success: true,
+        assistance_level: 0,
+        response_millis: 900,
+        probe_phase: "diagnostic",
+        context: "restaurant:bill-recognition-1",
+      },
+      {
+        client_item_key: "bill",
+        kind: "recognition",
+        success: true,
+        assistance_level: 0,
+        response_millis: 1100,
+        probe_phase: "diagnostic",
+        context: "restaurant:bill-recognition-2",
+      },
+    ],
+    card_mutations: [
+      {
+        operation: "create",
+        client_operation_id: `op-e2e-cycle-card-${op}`,
+        card: {
+          intent: "production",
+          prompt: "Попросите счёт",
+          answer: "La cuenta, por favor.",
+          prompt_language: "ru",
+          creation_reason: "e2e browser lesson import",
+        },
+      },
+    ],
+  });
+
+  const validation = await rpc<{ validation_token: string }>(
+    page,
+    "e2e-cycle-validate",
+    "validate_lesson_result",
+    { text },
+  );
   const completed = await rpc<{ lesson_id: string }>(
     page,
-    "e2e-cycle-complete",
-    "complete_lesson",
-    {
-      lesson_id: started.id,
-      lesson_result: {
-        schema_version: "2",
-        client_operation_id: `op-e2e-cycle-${op}`,
-        language_profile_id: profileId,
-                        lesson: {
-          scenario: "restaurant",
-          duration_seconds: 720,
-          tutor_summary: "Practised ordering a meal.",
-          next_goal: "ask for the bill",
-        },
-        metrics: {
-          speaking_seconds: 300,
-          unaided_recall_count: 4,
-          aided_recall_count: 1,
-          listening_score: 0.8,
-          avg_answer_millis: 1800,
-          long_pause_count: 1,
-          confidence: 0.75,
-        },
-        new_learning_items: [
-          {
-            client_item_key: "bill",
-            item_type: "phrase",
-            target_text: "La cuenta, por favor.",
-          },
-        ],
-        evidence: [
-          {
-            client_item_key: "bill",
-            kind: "prompted_production",
-            success: true,
-            assistance_level: 1,
-            response_millis: 1600,
-            probe_phase: "diagnostic",
-            context: "restaurant:bill",
-            pronunciation_intelligible: true,
-            pronunciation_repeat_required: false,
-          },
-          {
-            client_item_key: "bill",
-            kind: "recognition",
-            success: true,
-            assistance_level: 0,
-            response_millis: 900,
-            probe_phase: "diagnostic",
-            context: "restaurant:bill-recognition",
-          },
-        ],
-        card_mutations: [
-          {
-            operation: "create",
-            client_operation_id: `op-e2e-cycle-card-${op}`,
-            card: {
-              intent: "production",
-              prompt: "Попросите счёт",
-              answer: "La cuenta, por favor.",
-              prompt_language: "ru",
-              creation_reason: "e2e lesson lifecycle",
-            },
-          },
-        ],
-      },
-    },
+    "e2e-cycle-apply",
+    "apply_lesson_result",
+    { text, validation_token: validation.validation_token },
   );
-  expect(completed.lesson_id).toBe(started.id);
+  expect(completed.lesson_id).toBeTruthy();
 
   const cards = await rpc<Array<{ answer: string; status: string }>>(
     page,
@@ -236,7 +218,6 @@ test("real lesson lifecycle creates a review card and advances the next lesson",
   );
   expect(cards.some((card) => card.answer === "La cuenta, por favor.")).toBeTruthy();
 
-  // Real browser review UI consumes the card produced by complete_lesson.
   await page.goto("/review");
   await expect(page.getByText("1 / 1")).toBeVisible();
   await expect(page.getByText("Попросите счёт")).toBeVisible();
@@ -251,10 +232,9 @@ test("real lesson lifecycle creates a review card and advances the next lesson",
     "get_next_lesson",
     { language_profile_id: profileId },
   );
-  expect(nextAfter.lesson_number).toBe(started.lesson_number + 1);
+  expect(nextAfter.lesson_number).toBe(nextBefore.lesson_number + 1);
   expect(nextAfter.previous_scenario).toBe("restaurant");
 
-  // User-facing Learn page must expose the same next lesson.
   await page.goto("/learn");
   await expect(
     page.getByText(`Lesson #${nextAfter.lesson_number}`),
@@ -283,77 +263,70 @@ test("offline review grade is queued and replayed after reconnect", async ({ pag
   );
   const profileId = profiles[0].id;
 
-  const started = await rpc<{ id: string; lesson_number: number }>(
-    page,
-    "e2e-offline-start",
-    "start_lesson",
-    {
-      language_profile_id: profileId,
-      scenario: "cafe",
-      planned_goal: "order water",
-    },
-  );
   const op = Date.now();
+  const text = JSON.stringify({
+    schema_version: "2",
+    client_operation_id: `op-e2e-offline-${op}`,
+    language_profile_id: profileId,
+    lesson: {
+      scenario: "cafe",
+      duration_seconds: 480,
+      tutor_summary: "Practised ordering water.",
+      next_goal: "ask for sparkling water",
+    },
+    new_learning_items: [
+      {
+        client_item_key: "water",
+        item_type: "phrase",
+        target_text: "Agua, por favor.",
+      },
+    ],
+    evidence: [
+      {
+        client_item_key: "water",
+        kind: "recognition",
+        success: true,
+        assistance_level: 0,
+        response_millis: 800,
+        probe_phase: "diagnostic",
+        context: "cafe:water-recognition-1",
+      },
+      {
+        client_item_key: "water",
+        kind: "recognition",
+        success: true,
+        assistance_level: 0,
+        response_millis: 1000,
+        probe_phase: "diagnostic",
+        context: "cafe:water-recognition-2",
+      },
+    ],
+    card_mutations: [
+      {
+        operation: "create",
+        client_operation_id: `op-e2e-offline-card-${op}`,
+        card: {
+          intent: "production",
+          prompt: "Попросите воды",
+          answer: "Agua, por favor.",
+          prompt_language: "ru",
+          creation_reason: "offline replay e2e",
+        },
+      },
+    ],
+  });
+
+  const validation = await rpc<{ validation_token: string }>(
+    page,
+    "e2e-offline-validate",
+    "validate_lesson_result",
+    { text },
+  );
   await rpc<{ lesson_id: string }>(
     page,
-    "e2e-offline-complete",
-    "complete_lesson",
-    {
-      lesson_id: started.id,
-      lesson_result: {
-        schema_version: "2",
-        client_operation_id: `op-e2e-offline-${op}`,
-        language_profile_id: profileId,
-                        lesson: {
-          scenario: "cafe",
-          duration_seconds: 480,
-          tutor_summary: "Practised ordering water.",
-          next_goal: "ask for sparkling water",
-        },
-        new_learning_items: [
-          {
-            client_item_key: "water",
-            item_type: "phrase",
-            target_text: "Agua, por favor.",
-          },
-        ],
-        evidence: [
-          {
-            client_item_key: "water",
-            kind: "prompted_production",
-            success: true,
-            assistance_level: 1,
-            response_millis: 1400,
-            probe_phase: "diagnostic",
-            context: "cafe:water",
-            pronunciation_intelligible: true,
-            pronunciation_repeat_required: false,
-          },
-          {
-            client_item_key: "water",
-            kind: "recognition",
-            success: true,
-            assistance_level: 0,
-            response_millis: 800,
-            probe_phase: "diagnostic",
-            context: "cafe:water-recognition",
-          },
-        ],
-        card_mutations: [
-          {
-            operation: "create",
-            client_operation_id: `op-e2e-offline-card-${op}`,
-            card: {
-              intent: "production",
-              prompt: "Попросите воды",
-              answer: "Agua, por favor.",
-              prompt_language: "ru",
-              creation_reason: "offline replay e2e",
-            },
-          },
-        ],
-      },
-    },
+    "e2e-offline-apply",
+    "apply_lesson_result",
+    { text, validation_token: validation.validation_token },
   );
 
   // Online visit creates a real session and caches its prefetched queue.

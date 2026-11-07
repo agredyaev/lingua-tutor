@@ -12,7 +12,7 @@ use shared_schema::{ApiError, LanguageProfileDto};
 /// Explicit user choice wins; otherwise the server default — a derived
 /// signal, never an effect writing state (09 §2 effects rule).
 #[derive(Clone, Copy)]
-pub struct ActiveProfile {
+pub(crate) struct ActiveProfile {
     /// User selection from /languages.
     pub chosen: RwSignal<Option<LanguageProfileDto>>,
     default_from_server: Signal<Option<LanguageProfileDto>>,
@@ -21,26 +21,26 @@ pub struct ActiveProfile {
 
 impl ActiveProfile {
     /// Effective profile: user choice, else server default/first.
-    pub fn current(&self) -> Option<LanguageProfileDto> {
+    pub(crate) fn current(&self) -> Option<LanguageProfileDto> {
         self.chosen.get().or_else(|| self.default_from_server.get())
     }
 
     /// Effective profile ID.
-    pub fn id(&self) -> Option<String> {
+    pub(crate) fn id(&self) -> Option<String> {
         self.current().map(|p| p.id)
     }
 
     /// Whether resolving the server-default profile failed because the local
     /// runtime is unreachable. Review uses this to distinguish an offline
     /// reload from "no profile selected" without issuing a duplicate RPC.
-    pub fn default_lookup_network_failed(&self) -> bool {
+    pub(crate) fn default_lookup_network_failed(&self) -> bool {
         self.default_lookup_network_failed.get()
     }
 }
 
 /// Root component: context + navigation + routes.
 #[component]
-pub fn App() -> impl IntoView {
+pub(crate) fn App() -> impl IntoView {
     let profiles = LocalResource::new(move || async move {
         crate::api_client::call::<_, Vec<LanguageProfileDto>>(
             "list_language_profiles",
@@ -116,24 +116,17 @@ pub fn App() -> impl IntoView {
                     <Route path=path!("/") view=pages::dashboard::DashboardPage />
                     <Route path=path!("/dashboard") view=pages::dashboard::DashboardPage />
                     <Route path=path!("/languages") view=pages::languages::LanguagesPage />
-                    <Route path=path!("/languages/:profile_id") view=pages::languages::LanguagesPage />
                     <Route path=path!("/learn") view=pages::misc::LearnPage />
                     <Route path=path!("/review") view=pages::review::ReviewPage />
                     <Route path=path!("/review/summary") view=pages::review::SummaryPage />
                     <Route path=path!("/stats") view=pages::review::StatsPage />
                     <Route path=path!("/cards") view=pages::cards::CardsPage />
-                    <Route path=path!("/cards/redesign") view=pages::cards::CardsPage />
                     <Route path=path!("/cards/:id") view=pages::cards::CardDetailPage />
                     <Route path=path!("/lessons") view=pages::lessons::LessonsPage />
-                    <Route path=path!("/lessons/:id") view=pages::lessons::LessonsPage />
                     <Route path=path!("/learning-items") view=pages::records::ItemsPage />
-                    <Route path=path!("/learning-items/:id") view=pages::records::ItemsPage />
                     <Route path=path!("/errors") view=pages::records::ErrorsPage />
-                    <Route path=path!("/errors/:id") view=pages::records::ErrorsPage />
-                    <Route path=path!("/listening") view=pages::records::ItemsPage />
                     <Route path=path!("/import") view=pages::import_export::ImportPage />
                     <Route path=path!("/export") view=pages::import_export::ExportPage />
-                    <Route path=path!("/settings") view=pages::misc::SettingsPage />
                     <Route path=path!("/system") view=pages::misc::SystemPage />
                 </Routes>
             </main>
@@ -217,7 +210,7 @@ fn NavIcon(kind: &'static str) -> impl IntoView {
 /// Per-page error boundary: render error + retry hint, never a blank screen
 /// (09 §2).
 #[component]
-pub fn Page(children: Children) -> impl IntoView {
+pub(crate) fn Page(children: Children) -> impl IntoView {
     view! {
         <ErrorBoundary fallback=|errors| {
             view! {
@@ -246,7 +239,7 @@ pub fn Page(children: Children) -> impl IntoView {
 /// # Panics
 ///
 /// Never in practice: `App` provides the context before any page renders.
-pub fn use_active_profile() -> ActiveProfile {
+pub(crate) fn use_active_profile() -> ActiveProfile {
     #[allow(clippy::expect_used)] // invariant: App() provides before routing
     use_context::<ActiveProfile>().expect("ActiveProfile context provided by App")
 }

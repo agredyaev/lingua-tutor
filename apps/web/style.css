@@ -1300,13 +1300,7 @@ ul.errors li p {
   font-variant-numeric: tabular-nums;
 }
 
-.settings-panel {
-  max-width: var(--reading-width);
-  padding: 0;
-  overflow: hidden;
-}
-
-.settings-row,
+.system-detail-row,
 .system-status-line {
   display: flex;
   min-height: 2.8rem;
@@ -1317,27 +1311,18 @@ ul.errors li p {
   font-size: var(--font-size-sm);
 }
 
-.settings-row + .settings-row,
-.system-status-line + .settings-row {
+.system-status-line + .system-detail-row {
   border-top: 1px solid var(--color-border);
 }
 
-.settings-row span,
+.system-detail-row span,
 .system-status-line span {
   color: var(--color-text-muted);
 }
 
-.settings-row strong,
+.system-detail-row strong,
 .system-status-line strong {
   font-weight: 600;
-}
-
-.panel-note {
-  padding: var(--space-3) var(--space-4);
-  border-top: 1px solid var(--color-border);
-  background: var(--color-surface-subtle);
-  color: var(--color-text-muted);
-  font-size: var(--font-size-xs);
 }
 
 .system-status {

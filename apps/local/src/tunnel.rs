@@ -1,7 +1,7 @@
 //! Native OpenAI Secure MCP Tunnel protocol adapted from Rivet.
 //!
 //! Wire parsing/backoff/terminal-response semantics come from Rivet. HTTPS is
-//! performed with the macOS system curl binary. Sensitive headers and response
+//! performed with the platform system curl binary. Sensitive headers and response
 //! payloads are provided through curl's stdin config, never argv or disk.
 
 use crate::{
@@ -17,6 +17,7 @@ use serde::Serialize;
 use serde_json::{Value, value::RawValue};
 use std::{
     io::Write,
+    path::PathBuf,
     process::{Command, Stdio},
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -30,7 +31,6 @@ const WIRE_VERSION: &str = "2026-08-25";
 const POLL_TIMEOUT_MS: u64 = 15_000;
 const MAX_POLL_BODY_BYTES: usize = 10 * 1024 * 1024;
 const MAX_IN_FLIGHT: usize = 16;
-const CURL_PATH: &str = "/usr/bin/curl";
 const CURL_META_MARKER: &str = "__LINGUA_TUNNEL_HTTP_META__:";
 
 /// Native tunnel connection settings.
@@ -94,10 +94,22 @@ struct HttpResponse {
     retry_after_ms: Option<u64>,
 }
 
+struct CurlRequestInput {
+    curl_path: PathBuf,
+    method: &'static str,
+    url: String,
+    api_key: String,
+    instance_id: String,
+    shard_token: Option<String>,
+    body: Option<Vec<u8>>,
+    timeout: Duration,
+}
+
 struct Client {
     config: TunnelConfig,
     endpoint: String,
     instance_id: String,
+    curl_path: PathBuf,
     // FUZZ SUPPORT BEGIN
     #[cfg(fuzzing)]
     fuzz_peer: Option<(u8, std::sync::atomic::AtomicUsize)>,
@@ -106,11 +118,7 @@ struct Client {
 
 impl Client {
     fn new(config: TunnelConfig) -> Result<Arc<Self>, String> {
-        if !std::path::Path::new(CURL_PATH).is_file() {
-            return Err(format!(
-                "required macOS system curl is missing: {CURL_PATH}"
-            ));
-        }
+        let curl_path = system_curl_path()?;
         let endpoint = format!(
             "{}/v1/tunnels/{}",
             config.base_url.trim_end_matches('/'),
@@ -120,6 +128,7 @@ impl Client {
             config,
             endpoint,
             instance_id: new_instance_id(),
+            curl_path,
             // FUZZ SUPPORT BEGIN
             #[cfg(fuzzing)]
             fuzz_peer: None,
@@ -356,21 +365,19 @@ impl Client {
             });
         }
         // FUZZ SUPPORT END
-        let api_key = self.config.api_key.clone();
-        let instance_id = self.instance_id.clone();
-        tokio::task::spawn_blocking(move || {
-            curl_request(
-                method,
-                &url,
-                &api_key,
-                &instance_id,
-                shard_token.as_deref(),
-                body.as_deref(),
-                timeout,
-            )
-        })
-        .await
-        .map_err(|error| format!("curl task failed: {error}"))?
+        let request = CurlRequestInput {
+            curl_path: self.curl_path.clone(),
+            method,
+            url,
+            api_key: self.config.api_key.clone(),
+            instance_id: self.instance_id.clone(),
+            shard_token,
+            body,
+            timeout,
+        };
+        tokio::task::spawn_blocking(move || curl_request(request))
+            .await
+            .map_err(|error| format!("curl task failed: {error}"))?
     }
 }
 
@@ -568,34 +575,67 @@ fn build_curl_config(
     Ok(config)
 }
 
-fn curl_request(
-    method: &str,
-    url: &str,
-    api_key: &str,
-    instance_id: &str,
-    shard_token: Option<&str>,
-    body: Option<&[u8]>,
-    timeout: Duration,
-) -> Result<HttpResponse, String> {
+#[cfg(any(windows, target_os = "macos"))]
+fn require_system_curl(path: PathBuf) -> Result<PathBuf, String> {
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(format!(
+            "required system curl is missing: {}",
+            path.display()
+        ))
+    }
+}
+
+fn system_curl_path() -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    {
+        let root = std::env::var_os("SystemRoot").ok_or_else(|| {
+            "SystemRoot is unavailable; cannot locate Windows system curl".to_owned()
+        })?;
+        return require_system_curl(PathBuf::from(root).join("System32").join("curl.exe"));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return require_system_curl(PathBuf::from("/usr/bin/curl"));
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        for candidate in ["/usr/bin/curl", "/bin/curl"] {
+            let path = PathBuf::from(candidate);
+            if path.is_file() {
+                return Ok(path);
+            }
+        }
+        return Err("required system curl is missing from /usr/bin/curl and /bin/curl".to_owned());
+    }
+
+    #[allow(unreachable_code)]
+    Err("system curl resolution is unsupported on this platform".to_owned())
+}
+
+fn curl_request(input: CurlRequestInput) -> Result<HttpResponse, String> {
     let config = build_curl_config(
-        method,
-        url,
-        api_key,
-        instance_id,
-        shard_token,
-        body,
-        timeout,
+        input.method,
+        &input.url,
+        &input.api_key,
+        &input.instance_id,
+        input.shard_token.as_deref(),
+        input.body.as_deref(),
+        input.timeout,
     )?;
 
     let request_started = Instant::now();
-    let mut child = Command::new(CURL_PATH)
+    let mut child = Command::new(&input.curl_path)
         .arg("--config")
         .arg("-")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("failed to start {CURL_PATH}: {error}"))?;
+        .map_err(|error| format!("failed to start {}: {error}", input.curl_path.display()))?;
     child
         .stdin
         .take()
@@ -808,6 +848,11 @@ mod tests {
     #[test]
     fn poll_envelope_limit_matches_tunnel_service_limit() {
         assert_eq!(MAX_POLL_BODY_BYTES, 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn system_curl_is_resolvable_on_supported_release_host() {
+        assert!(system_curl_path().is_ok());
     }
 }
 

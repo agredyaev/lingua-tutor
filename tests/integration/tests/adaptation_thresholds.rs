@@ -66,7 +66,7 @@ fn adversarial_states_choose_measurement_only_when_it_can_change_the_next_action
         spontaneous_production: strong_spontaneous,
         transfer: adaptation::CapabilityEstimateFixed::default(),
     };
-    let actions = candidate_actions(&listening_gap, "strengthen_listening");
+    let actions = candidate_actions(&listening_gap, "introduce_high_utility_material");
     assert!(actions.contains(&"listening_repair"));
     assert!(!actions.contains(&"listening_probe"));
 
@@ -91,7 +91,7 @@ fn adversarial_states_choose_measurement_only_when_it_can_change_the_next_action
     sparse_prompted
         .spontaneous_production
         .qualified_success_streak = 0;
-    let actions = candidate_actions(&sparse_prompted, "reduce_prompt_dependence");
+    let actions = candidate_actions(&sparse_prompted, "probe_prompt_independence");
     assert!(actions.contains(&"spontaneous_retrieval"));
     assert!(!actions.contains(&"fade_prompts"));
 
@@ -113,7 +113,7 @@ fn adversarial_states_choose_measurement_only_when_it_can_change_the_next_action
     fragile.spontaneous_production.unaided_evidence_episodes = 3;
     fragile.spontaneous_production.independent_evidence_episodes = 3;
     fragile.spontaneous_production.qualified_success_streak = 1;
-    let actions = candidate_actions(&fragile, "reduce_prompt_dependence");
+    let actions = candidate_actions(&fragile, "probe_prompt_independence");
     assert!(actions.contains(&"diagnostic_spontaneous"));
     assert!(!actions.contains(&"spontaneous_retrieval"));
 
@@ -131,12 +131,12 @@ fn adversarial_states_choose_measurement_only_when_it_can_change_the_next_action
     automaticity
         .spontaneous_production
         .latency_evidence_episodes = 1;
-    let actions = candidate_actions(&automaticity, "build_automaticity");
+    let actions = candidate_actions(&automaticity, "introduce_high_utility_material");
     assert!(!actions.contains(&"automaticity_drill"));
 
     automaticity
         .spontaneous_production
         .latency_evidence_episodes = 2;
-    let actions = candidate_actions(&automaticity, "build_automaticity");
+    let actions = candidate_actions(&automaticity, "introduce_high_utility_material");
     assert!(actions.contains(&"automaticity_drill"));
 }

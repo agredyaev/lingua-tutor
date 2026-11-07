@@ -342,8 +342,52 @@ mod tests {
 }
 
 use crate::Result;
-use crate::repositories::records;
 use rusqlite::{Connection, params};
+
+/// Insert one lesson row from admitted scalar fields.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn insert_lesson(
+    database: &Connection,
+    id: &str,
+    profile_id: &str,
+    lesson_number: u32,
+    status: &str,
+    scenario: &str,
+    planned_goal: &str,
+    source: &str,
+    started_at: Option<&str>,
+    completed_at: Option<&str>,
+    duration_seconds: Option<u32>,
+    tutor_summary: Option<&str>,
+    next_goal: Option<&str>,
+    idempotency_key: Option<&str>,
+    at: &str,
+) -> Result<()> {
+    let mut statement = database.prepare_cached(
+        "INSERT INTO lessons
+         (id,learner_language_profile_id,lesson_number,status,scenario,planned_goal,source,
+          started_at,completed_at,duration_seconds,tutor_summary,next_goal,idempotency_key,
+          created_at,updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?14)",
+    )?;
+    statement.execute(params![
+        id,
+        profile_id,
+        lesson_number,
+        status,
+        scenario,
+        planned_goal,
+        source,
+        started_at,
+        completed_at,
+        duration_seconds,
+        tutor_summary,
+        next_goal,
+        idempotency_key,
+        at,
+    ])?;
+    Ok(())
+}
 
 /// Bind admitted values directly to the SQLite statement (no staging allocation).
 #[allow(clippy::too_many_arguments)]
@@ -360,7 +404,12 @@ pub(crate) fn insert_learning_item(
     introduced_lesson_id: Option<&str>,
     at: &str,
 ) -> Result<()> {
-    let mut statement = database.prepare_cached(records::INSERT_ITEM)?;
+    let mut statement = database.prepare_cached(
+        "INSERT INTO learning_items
+         (id,learner_language_profile_id,item_type,target_text,normalized_target_text,
+          prompt_text,prompt_language,status,introduced_lesson_id,created_at,updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?10)",
+    )?;
     statement.execute(params![
         id,
         profile_id,
@@ -390,7 +439,11 @@ pub(crate) fn insert_evidence(
     recorded_at: &str,
     observation_order: u32,
 ) -> Result<()> {
-    let mut statement = database.prepare_cached(records::INSERT_EVIDENCE)?;
+    let mut statement = database.prepare_cached(
+        "INSERT INTO learning_item_evidence
+         (id,learning_item_id,lesson_id,kind,success,detail,metadata_json,recorded_at,observation_order)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+    )?;
     statement.execute(params![
         id,
         item_id,
@@ -421,7 +474,12 @@ pub(crate) fn insert_listening_attempt(
     success: bool,
     recorded_at: &str,
 ) -> Result<()> {
-    let mut statement = database.prepare_cached(records::INSERT_LISTENING_ATTEMPT)?;
+    let mut statement = database.prepare_cached(
+        "INSERT INTO listening_attempts
+         (id,learner_language_profile_id,learning_item_id,lesson_id,source_reference,
+          source_variant_id,talker_key,context_tag,transcript,success,recorded_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+    )?;
     statement.execute(params![
         id,
         profile_id,
@@ -446,7 +504,8 @@ pub(crate) fn update_item_status(
     status: &str,
     updated_at: &str,
 ) -> Result<()> {
-    let mut statement = database.prepare_cached(records::UPDATE_ITEM_STATUS)?;
+    let mut statement =
+        database.prepare_cached("UPDATE learning_items SET status=?2,updated_at=?3 WHERE id=?1")?;
     statement.execute(params![item_id, status, updated_at,])?;
     Ok(())
 }

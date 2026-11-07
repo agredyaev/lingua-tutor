@@ -22,12 +22,31 @@ jobs:
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy, rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: stable-linux
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2
         with:
           tool: cargo-deny@0.20.2
+
+      - name: Release version consistency
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          release_manifest_version="$(sed -n 's/^[[:space:]]*"\."[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' .release-please-manifest.json | head -n1)"
+          cargo_version="$(sed -n 's/^version = "\([^"]*\)".*/\1/p' apps/local/Cargo.toml | head -n1)"
+          lock_version="$(sed -n '/^name = "lingua-tutor-local"$/ { n; s/^version = "\([^"]*\)".*/\1/p; q; }' Cargo.lock)"
+          fuzz_lock_version="$(sed -n '/^name = "lingua-tutor-local"$/ { n; s/^version = "\([^"]*\)".*/\1/p; q; }' fuzz/Cargo.lock)"
+          printf 'VERSION=%s release-manifest=%s Cargo.toml=%s Cargo.lock=%s fuzz/Cargo.lock=%s\n' "$version" "$release_manifest_version" "$cargo_version" "$lock_version" "$fuzz_lock_version"
+          test -n "$version"
+          test -n "$release_manifest_version"
+          test "$version" = "$release_manifest_version"
+          test "$version" = "$cargo_version"
+          test "$version" = "$lock_version"
+          test "$version" = "$fuzz_lock_version"
+          grep -Fq "version = \"$version\" # x-release-please-version" apps/local/Cargo.toml
+          grep -Fq "version = \"$version\" # x-release-please-version" Cargo.lock
+          grep -Fq "version = \"$version\" # x-release-please-version" fuzz/Cargo.lock
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -41,16 +60,15 @@ jobs:
       - name: Cargo deny
         run: cargo deny --locked check
 
-      - name: Release version consistency
+      - name: Generated outputs are not tracked
         run: |
           set -euo pipefail
-          version="$(tr -d '[:space:]' < VERSION)"
-          cargo_version="$(sed -n 's/^version = "\([^"]*\)".*/\1/p' apps/local/Cargo.toml | head -n1)"
-          lock_version="$(sed -n '/^name = "lingua-tutor-local"$/ { n; s/^version = "\([^"]*\)".*/\1/p; q; }' Cargo.lock)"
-          printf 'VERSION=%s Cargo.toml=%s Cargo.lock=%s\n' "$version" "$cargo_version" "$lock_version"
-          test -n "$version"
-          test "$version" = "$cargo_version"
-          test "$version" = "$lock_version"
+          tracked="$(git ls-files apps/web/dist fuzz/corpus)"
+          if [[ -n "$tracked" ]]; then
+            echo "::error::Generated output is tracked by git:"
+            printf '%s\n' "$tracked"
+            exit 1
+          fi
 
   windows-check:
     runs-on: windows-latest
@@ -62,9 +80,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-      - uses: Swatinem/rust-cache@v2
+          components: clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: stable-windows
 
-      - name: Windows compile check
-        run: cargo check --locked -p lingua-tutor-local --bin lingua-tutor
+      - name: Windows Clippy
+        run: cargo clippy --locked -p lingua-tutor-local --lib --bin lingua-tutor -- -D warnings
+
+      - name: Windows system curl check
+        run: cargo test --locked -p lingua-tutor-local --lib tunnel::tests::system_curl_is_resolvable_on_supported_release_host
+
+      - name: Windows secure prompt backend check
+        run: cargo test --locked -p lingua-tutor-local --bin lingua-tutor tests::windows_secure_prompt_backend_is_available

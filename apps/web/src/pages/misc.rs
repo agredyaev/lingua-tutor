@@ -1,4 +1,4 @@
-//! Learn, settings, system pages.
+//! Learn and system pages.
 
 use crate::api_client;
 use crate::app::{Page, use_active_profile};
@@ -7,7 +7,7 @@ use shared_schema::{ApiError, HealthResponse};
 
 /// `/learn`: the no-MCP lesson loop, step by step (13-roadmap.md §2).
 #[component]
-pub fn LearnPage() -> impl IntoView {
+pub(crate) fn LearnPage() -> impl IntoView {
     let active = use_active_profile();
     let next = LocalResource::new(move || {
         let id = active.id();
@@ -111,47 +111,9 @@ pub fn LearnPage() -> impl IntoView {
     }
 }
 
-/// `/settings`: learner defaults are server-side; editing lands post-M2.
-#[component]
-pub fn SettingsPage() -> impl IntoView {
-    view! {
-        <Page>
-            <header class="page-header">
-                <div>
-                    <p class="eyebrow">"Preferences"</p>
-                    <h1>"Settings"</h1>
-                </div>
-            </header>
-            <section class="panel settings-panel">
-                <div class="settings-row">
-                    <span>"Sessions / day"</span>
-                    <strong>"2"</strong>
-                </div>
-                <div class="settings-row">
-                    <span>"Session target"</span>
-                    <strong>"20 min"</strong>
-                </div>
-                <div class="settings-row">
-                    <span>"New cards"</span>
-                    <strong>"8"</strong>
-                </div>
-                <div class="settings-row">
-                    <span>"Desired retention"</span>
-                    <strong>"0.90"</strong>
-                </div>
-                <div class="settings-row">
-                    <span>"Review target"</span>
-                    <strong>"12 min"</strong>
-                </div>
-                <p class="panel-note">"Higher desired retention increases review workload."</p>
-            </section>
-        </Page>
-    }
-}
-
 /// `/system`: health check.
 #[component]
-pub fn SystemPage() -> impl IntoView {
+pub(crate) fn SystemPage() -> impl IntoView {
     let health = LocalResource::new(move || async move {
         api_client::call::<_, HealthResponse>("health", &serde_json::json!({})).await
     });
@@ -177,7 +139,7 @@ pub fn SystemPage() -> impl IntoView {
                                             <span>"Local API"</span>
                                             <strong>{h.status}</strong>
                                         </div>
-                                        <div class="settings-row">
+                                        <div class="system-detail-row">
                                             <span>"Version"</span>
                                             <strong>{h.version}</strong>
                                         </div>

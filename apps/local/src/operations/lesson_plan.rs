@@ -51,7 +51,7 @@ mod tests {
         set_lesson_normalized_item(&mut state, 1, "buenos días").unwrap();
         add_lesson_existing_normalized(&mut state, "buenos días", "li-dup").unwrap();
         add_known_lesson_item(&mut state, "li-known").unwrap();
-        add_lesson_error_target(&mut state, "et-1", 2, false).unwrap();
+        add_lesson_error_target(&mut state, "et-1", 2, false, false).unwrap();
         add_lesson_mastery_signal(&mut state, "li-known", &[]).unwrap();
         state
     }
@@ -110,6 +110,16 @@ mod tests {
             result.mastery_changes[slot(plan.status_source[0])].new_status,
             learning_core::LearningItemStatus::ProvisionallyMastered
         );
+    }
+
+    #[test]
+    fn resolved_error_target_id_cannot_be_reopened() {
+        let result = base_result();
+        let mut state = state();
+        state.error_resolved[0] = true;
+
+        let error = plan_lesson_completion(&result, &state).unwrap_err();
+        assert!(matches!(error, LessonPlanError::InvalidContext(_)));
     }
 
     #[test]
@@ -188,6 +198,41 @@ mod tests {
         add_lesson_mastery_signal(&mut state, "li-known", &[]).unwrap();
 
         let plan = plan_lesson_completion(&result, &state).unwrap();
+        assert_eq!(plan.status_len, 0);
+        assert_eq!(plan.warning_len, 1);
+    }
+
+    #[test]
+    fn later_unaided_productive_success_can_recover_provisional_mastery() {
+        let mut result = base_result();
+        let mut failed = result.evidence[0].clone();
+        failed.success = false;
+        failed.probe_phase = Some(tutor_contract::ProbePhase::Diagnostic);
+        let mut recovered = failed.clone();
+        recovered.success = true;
+        recovered.probe_phase = Some(tutor_contract::ProbePhase::DelayedRetrieval);
+        result.evidence = vec![failed, recovered];
+
+        let plan = plan_lesson_completion(&result, &state()).unwrap();
+        assert_eq!(
+            plan.status_len, 1,
+            "latest qualifying productive exit-observation should supersede an earlier failure"
+        );
+        assert_eq!(plan.warning_len, 0);
+    }
+
+    #[test]
+    fn later_productive_failure_blocks_provisional_mastery() {
+        let mut result = base_result();
+        let mut success = result.evidence[0].clone();
+        success.success = true;
+        success.probe_phase = Some(tutor_contract::ProbePhase::Diagnostic);
+        let mut failed = success.clone();
+        failed.success = false;
+        failed.probe_phase = Some(tutor_contract::ProbePhase::DelayedRetrieval);
+        result.evidence = vec![success, failed];
+
+        let plan = plan_lesson_completion(&result, &state()).unwrap();
         assert_eq!(plan.status_len, 0);
         assert_eq!(plan.warning_len, 1);
     }
@@ -692,6 +737,33 @@ mod tests {
     }
 
     #[test]
+    fn noncanonical_historical_context_family_cannot_fake_mastery_diversity() {
+        let mut result = base_result();
+        result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
+        result.evidence = vec![tutor_contract::EvidenceEntry {
+            learning_item_id: Some("li-known".to_owned()),
+            client_item_key: None,
+            context: Some("new-setting".to_owned()),
+            context_family: Some("commerce.request_item".to_owned()),
+            kind: learning_core::EvidenceKind::Transfer,
+            success: true,
+            assistance_level: Some(0),
+            response_millis: None,
+            probe_phase: Some(tutor_contract::ProbePhase::Transfer),
+            pronunciation_intelligible: Some(true),
+            pronunciation_repeat_required: Some(false),
+            detail: None,
+        }];
+
+        let mut state = state();
+        add_distributed_mastery_history(&mut state, &["service.ask_help", "Service.Ask_Help"]);
+
+        let plan = plan_lesson_completion(&result, &state).unwrap();
+        assert_eq!(plan.status_len, 0);
+        assert_eq!(plan.warning_len, 1);
+    }
+
+    #[test]
     fn full_mastery_rejects_duplicate_context_family() {
         let mut result = base_result();
         result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Mastered;
@@ -770,6 +842,9 @@ pub(crate) struct LessonPlanState {
     error_id: [TextRef; MAX_ERRORS],
     error_count: [u32; MAX_ERRORS],
     error_resolved: [bool; MAX_ERRORS],
+    error_method_change_required: [bool; MAX_ERRORS],
+    error_source_target_present: [bool; MAX_ERRORS],
+    error_source_target_index: [u32; MAX_ERRORS],
 
     mastery_len: usize,
     mastery_item_id: [TextRef; MAX_MASTERY],
@@ -808,6 +883,9 @@ pub(crate) fn new_lesson_plan_state(
         error_id: [TextRef::default(); MAX_ERRORS],
         error_count: [0; MAX_ERRORS],
         error_resolved: [false; MAX_ERRORS],
+        error_method_change_required: [false; MAX_ERRORS],
+        error_source_target_present: [false; MAX_ERRORS],
+        error_source_target_index: [0; MAX_ERRORS],
         mastery_len: 0,
         mastery_item_id: [TextRef::default(); MAX_MASTERY],
         mastery_has_prior_transfer_success: [false; MAX_MASTERY],
@@ -879,7 +957,13 @@ pub(crate) fn add_lesson_error_target(
     id: &str,
     count: u32,
     resolved: bool,
-) -> Result<(), LessonPlanError> {
+    method_change_required: bool,
+) -> Result<u32, LessonPlanError> {
+    if let Some(i) =
+        (0..state.error_len).position(|i| text_at(&state.text, state.error_id[i]) == id)
+    {
+        return dense_index(i, "error_target");
+    }
     if state.error_len == MAX_ERRORS {
         return Err(LessonPlanError::CapacityExceeded("error_targets"));
     }
@@ -887,7 +971,21 @@ pub(crate) fn add_lesson_error_target(
     state.error_id[i] = push_text(&mut state.text, id);
     state.error_count[i] = count;
     state.error_resolved[i] = resolved;
+    state.error_method_change_required[i] = method_change_required;
     state.error_len += 1;
+    dense_index(i, "error_target")
+}
+
+pub(crate) fn bind_lesson_error_source(
+    state: &mut LessonPlanState,
+    source_index: usize,
+    target_index: u32,
+) -> Result<(), LessonPlanError> {
+    if source_index >= MAX_ERRORS {
+        return Err(LessonPlanError::CapacityExceeded("error_sources"));
+    }
+    state.error_source_target_present[source_index] = true;
+    state.error_source_target_index[source_index] = target_index;
     Ok(())
 }
 
@@ -1003,7 +1101,7 @@ fn lesson_known_item_id(state: &LessonPlanState, index: usize) -> &str {
     text_at(&state.text, state.known_item_id[index])
 }
 
-fn lesson_error_id(state: &LessonPlanState, index: usize) -> &str {
+pub(crate) fn lesson_error_id(state: &LessonPlanState, index: usize) -> &str {
     text_at(&state.text, state.error_id[index])
 }
 
@@ -1080,6 +1178,7 @@ pub(crate) struct LessonPlan {
 
     pub error_len: usize,
     pub error_target_present: [bool; MAX_ERRORS],
+    pub error_target_index: [u32; MAX_ERRORS],
     pub error_new_count: [u32; MAX_ERRORS],
     pub error_method_change: [bool; MAX_ERRORS],
 
@@ -1116,6 +1215,7 @@ fn empty_lesson_plan() -> LessonPlan {
         listening_item: [None; MAX_LISTENING],
         error_len: 0,
         error_target_present: [false; MAX_ERRORS],
+        error_target_index: [0; MAX_ERRORS],
         error_new_count: [0; MAX_ERRORS],
         error_method_change: [false; MAX_ERRORS],
         status_len: 0,
@@ -1315,24 +1415,39 @@ fn plan_errors(
     state: &LessonPlanState,
     plan: &mut LessonPlan,
 ) -> Result<(), LessonPlanError> {
-    for occurrence in &result.error_occurrences {
+    for (source_index, occurrence) in result.error_occurrences.iter().enumerate() {
         if plan.error_len == MAX_ERRORS {
             return Err(LessonPlanError::CapacityExceeded("errors"));
         }
         let i = plan.error_len;
-        if let Some(raw_id) = occurrence.error_target_id.as_deref() {
-            let target_index = (0..state.error_len)
-                .position(|index| lesson_error_id(state, index) == raw_id)
-                .ok_or_else(|| LessonPlanError::UnknownErrorTarget(raw_id.to_owned()))?;
+        let target_index = if state.error_source_target_present[source_index] {
+            Some(slot(state.error_source_target_index[source_index]))
+        } else if let Some(raw_id) = occurrence.error_target_id.as_deref() {
+            Some(
+                (0..state.error_len)
+                    .position(|index| lesson_error_id(state, index) == raw_id)
+                    .ok_or_else(|| LessonPlanError::UnknownErrorTarget(raw_id.to_owned()))?,
+            )
+        } else {
+            None
+        };
+
+        if let Some(target_index) = target_index {
+            if state.error_resolved[target_index] {
+                return Err(LessonPlanError::InvalidContext(
+                    "resolved error target cannot be reopened; omit error_target_id to create a new relapse target",
+                ));
+            }
             let new_count = state.error_count[target_index].saturating_add(1);
-            let active = !state.error_resolved[target_index];
             plan.error_target_present[i] = true;
+            plan.error_target_index[i] = dense_index(target_index, "error_target")?;
             plan.error_new_count[i] = new_count;
-            plan.error_method_change[i] = learning_core::error_method_change_due_for(
-                new_count,
-                !active,
-                occurrence.communicative_impact,
-            );
+            plan.error_method_change[i] = state.error_method_change_required[target_index]
+                || learning_core::error_method_change_due_for(
+                    new_count,
+                    false,
+                    occurrence.communicative_impact,
+                );
         }
         plan.error_len += 1;
     }
@@ -1376,8 +1491,7 @@ fn plan_mastery(
         }
 
         let prior_family_count = family_count;
-        let mut fresh_unaided_productive_success = false;
-        let mut fresh_productive_failure = false;
+        let mut latest_fresh_productive_qualified = None;
         let mut latest_fresh_spontaneous_qualified = None;
         let mut latest_fresh_transfer_qualified = None;
         for evidence in result
@@ -1392,8 +1506,9 @@ fn plan_mastery(
             );
             let mastery_eligible =
                 evidence.probe_phase != Some(tutor_contract::ProbePhase::Practice);
-            if productive && mastery_eligible && !evidence.success {
-                fresh_productive_failure = true;
+            if productive && mastery_eligible {
+                latest_fresh_productive_qualified =
+                    Some(evidence.success && evidence.assistance_level == Some(0));
             }
             if mastery_eligible
                 && evidence.kind == learning_core::EvidenceKind::SpontaneousProduction
@@ -1409,29 +1524,26 @@ fn plan_mastery(
                         && evidence
                             .context_family
                             .as_deref()
-                            .is_some_and(|family| !family.trim().is_empty()),
+                            .is_some_and(learning_core::stable_context_family_id),
                 );
             }
             if mastery_eligible
                 && evidence.success
                 && productive
                 && evidence.assistance_level == Some(0)
+                && evidence.kind == learning_core::EvidenceKind::Transfer
+                && let Some(family) = evidence
+                    .context_family
+                    .as_deref()
+                    .filter(|family| learning_core::stable_context_family_id(family))
             {
-                fresh_unaided_productive_success = true;
-                if evidence.kind == learning_core::EvidenceKind::Transfer
-                    && let Some(family) = evidence
-                        .context_family
-                        .as_deref()
-                        .filter(|family| !family.trim().is_empty())
-                {
-                    add_family_ref(&mut family_count, &mut families, family);
-                }
+                add_family_ref(&mut family_count, &mut families, family);
             }
         }
 
         let accepted = match proposal.new_status {
             learning_core::LearningItemStatus::ProvisionallyMastered => {
-                fresh_unaided_productive_success && !fresh_productive_failure
+                latest_fresh_productive_qualified == Some(true)
             }
             learning_core::LearningItemStatus::Mastered => {
                 has_prior_transfer_success
@@ -1463,7 +1575,9 @@ fn plan_mastery(
 }
 
 fn add_family_ref<'a>(count: &mut usize, families: &mut [&'a str; 3], family: &'a str) {
-    if family.trim().is_empty() || *count >= families.len() || families[..*count].contains(&family)
+    if !learning_core::stable_context_family_id(family)
+        || *count >= families.len()
+        || families[..*count].contains(&family)
     {
         return;
     }

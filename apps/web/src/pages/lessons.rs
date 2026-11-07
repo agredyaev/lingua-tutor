@@ -7,7 +7,7 @@ use shared_schema::{ApiError, LessonDto};
 
 /// `/lessons` (detail inline; lessons are read-mostly records).
 #[component]
-pub fn LessonsPage() -> impl IntoView {
+pub(crate) fn LessonsPage() -> impl IntoView {
     let active = use_active_profile();
     let lessons = LocalResource::new(move || {
         let id = active.id();

@@ -265,7 +265,7 @@ fn suggestion_matches(query: &str, value: &str, label: &str) -> bool {
 }
 /// `/languages`.
 #[component]
-pub fn LanguagesPage() -> impl IntoView {
+pub(crate) fn LanguagesPage() -> impl IntoView {
     let active = use_active_profile();
     let refresh = RwSignal::new(0_u32);
     let target_locale = RwSignal::new(String::new());

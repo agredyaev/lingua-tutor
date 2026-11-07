@@ -12,7 +12,7 @@ Help a learner start speaking quickly while preserving durable learner state, re
 - Leptos CSR PWA.
 - Native `lingua-tutor` CLI/runtime.
 - One SQLite database.
-- FSRS-compatible review scheduling through explicit integer-selected processing passes; no scheduler behavior interface.
+- FSRS review scheduling through explicit processing passes; no scheduler registry, fallback implementation, or scheduler behavior interface.
 - Language-neutral methodology with scalar target/source language profile metadata.
 - ChatGPT integration through bounded MCP tools and an in-process OpenAI Secure MCP Tunnel transport adapted from Rivet.
 

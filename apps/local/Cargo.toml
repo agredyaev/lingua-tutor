@@ -24,7 +24,6 @@ hmac = "0.12"
 rusqlite = { version = "0.37", features = ["bundled", "backup"] }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value"] }
-semver = "1"
 sha2 = "0.10"
 thiserror = { workspace = true }
 tokio = { version = "1", features = ["rt", "macros", "net", "io-std", "io-util", "sync", "time"] }

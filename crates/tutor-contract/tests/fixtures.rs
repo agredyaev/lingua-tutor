@@ -72,6 +72,28 @@ fn spec_fixture() -> String {
 }
 
 #[test]
+fn duplicate_mastery_change_for_same_item_is_rejected() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    let mut duplicate = result.mastery_changes[0].clone();
+    duplicate.new_status = learning_core::LearningItemStatus::Suspended;
+    result.mastery_changes.push(duplicate);
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.code == "duplicate_reference" && issue.path == "mastery_changes/1/learning_item_id"
+    }));
+}
+
+#[test]
+fn mastery_change_cannot_demote_existing_item_to_candidate() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    result.mastery_changes[0].new_status = learning_core::LearningItemStatus::Candidate;
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.code == "invalid_status_transition" && issue.path == "mastery_changes/0/new_status"
+    }));
+}
+
+#[test]
 fn spec_example_parses_and_validates_clean() {
     let result = parse_lesson_result(&spec_fixture()).unwrap();
     assert_eq!(
@@ -81,6 +103,192 @@ fn spec_example_parses_and_validates_clean() {
     assert_eq!(result.evidence.len(), 2);
     let issues = validate(&result);
     assert!(issues.is_empty(), "unexpected issues: {issues:?}");
+}
+
+#[test]
+fn lesson_result_accepts_bounded_recommendation_resolutions() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["recommendation_resolutions"] = serde_json::json!([
+        { "recommendation_id": "rec-1", "status": "accepted" },
+        { "recommendation_id": "rec-2", "status": "dismissed" }
+    ]);
+    let parsed = parse_lesson_result(&json.to_string());
+    assert!(
+        parsed.is_ok(),
+        "recommendation lifecycle must be part of canonical lesson completion: {parsed:?}"
+    );
+    assert!(validate(&parsed.unwrap()).is_empty());
+}
+
+#[test]
+fn duplicate_recommendation_resolution_is_rejected() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["recommendation_resolutions"] = serde_json::json!([
+        { "recommendation_id": "rec-1", "status": "accepted" },
+        { "recommendation_id": "rec-1", "status": "dismissed" }
+    ]);
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.path == "recommendation_resolutions/1/recommendation_id"
+            && issue.code == "duplicate_reference"
+    }));
+}
+
+#[test]
+fn lesson_result_accepts_measured_error_recheck_results() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["error_rechecks"] = serde_json::json!([
+        {
+            "error_target_id": "err-1",
+            "recheck_id": "rc-1",
+            "passed": true,
+            "assistance_level": 0,
+            "context": "pharmacy:recheck-ser-estar",
+            "repair_applied": false
+        }
+    ]);
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    assert_eq!(result.error_rechecks.len(), 1);
+    assert!(validate(&result).is_empty());
+}
+
+#[test]
+fn assisted_or_contextless_error_recheck_is_rejected() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["error_rechecks"] = serde_json::json!([
+        {
+            "error_target_id": "err-1",
+            "recheck_id": "rc-1",
+            "passed": true,
+            "assistance_level": 1,
+            "context": "",
+            "repair_applied": false
+        }
+    ]);
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.path == "error_rechecks/0/assistance_level" && issue.code == "inconsistent_evidence"
+    }));
+    assert!(issues.iter().any(|issue| {
+        issue.path == "error_rechecks/0/context" && issue.code == "missing_field"
+    }));
+}
+
+#[test]
+fn failed_error_recheck_requires_corrective_repair_before_new_cycle() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["error_rechecks"] = serde_json::json!([
+        {
+            "error_target_id": "err-1",
+            "recheck_id": "rc-1",
+            "passed": false,
+            "assistance_level": 0,
+            "context": "pharmacy:recheck-ser-estar",
+            "repair_applied": false
+        }
+    ]);
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.path == "error_rechecks/0/repair_applied" && issue.code == "missing_repair"
+    }));
+}
+
+#[test]
+fn failed_error_recheck_requires_named_repair_action() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["error_rechecks"] = serde_json::json!([
+        {
+            "error_target_id": "err-1",
+            "recheck_id": "rc-1",
+            "passed": false,
+            "assistance_level": 0,
+            "context": "pharmacy:recheck-ser-estar",
+            "repair_applied": true
+        }
+    ]);
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.path == "error_rechecks/0/repair_action" && issue.code == "missing_field"
+    }));
+}
+
+#[test]
+fn passed_error_recheck_cannot_claim_corrective_repair() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["error_rechecks"] = serde_json::json!([
+        {
+            "error_target_id": "err-1",
+            "recheck_id": "rc-1",
+            "passed": true,
+            "assistance_level": 0,
+            "context": "pharmacy:recheck-ser-estar",
+            "repair_applied": true,
+            "repair_action": "contrast"
+        }
+    ]);
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.path == "error_rechecks/0/repair_applied" && issue.code == "inconsistent_repair"
+    }));
+}
+
+#[test]
+fn failed_error_recheck_accepts_named_repair_action() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["error_rechecks"] = serde_json::json!([
+        {
+            "error_target_id": "err-1",
+            "recheck_id": "rc-1",
+            "passed": false,
+            "assistance_level": 0,
+            "context": "pharmacy:recheck-ser-estar",
+            "repair_applied": true,
+            "repair_action": "semantic_reframe"
+        }
+    ]);
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    let issues = validate(&result);
+    assert!(
+        issues.is_empty(),
+        "named failed-recheck repair should validate: {issues:?}"
+    );
+}
+
+#[test]
+fn repair_action_requires_canonical_stable_identifier() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["error_rechecks"] = serde_json::json!([
+        {
+            "error_target_id": "err-1",
+            "recheck_id": "rc-1",
+            "passed": false,
+            "assistance_level": 0,
+            "context": "pharmacy:recheck-ser-estar",
+            "repair_applied": true,
+            "repair_action": "Semantic Reframe!"
+        }
+    ]);
+    json["recommendation_resolutions"] = serde_json::json!([
+        {
+            "recommendation_id": "rec-1",
+            "status": "accepted",
+            "repair_action": "Cue Fade!"
+        }
+    ]);
+
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.path == "error_rechecks/0/repair_action" && issue.code == "invalid_field"
+    }));
+    assert!(issues.iter().any(|issue| {
+        issue.path == "recommendation_resolutions/0/repair_action" && issue.code == "invalid_field"
+    }));
 }
 
 #[test]
@@ -295,6 +503,20 @@ fn transfer_requires_context_family() {
 }
 
 #[test]
+fn transfer_context_family_requires_stable_identifier() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["evidence"][0]["kind"] = serde_json::json!("transfer");
+    json["evidence"][0]["assistance_level"] = serde_json::json!(0);
+    json["evidence"][0]["probe_phase"] = serde_json::json!("transfer");
+    json["evidence"][0]["context_family"] = serde_json::json!("Service.Ask_Help");
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.code == "invalid_field" && issue.path == "evidence/0/context_family"
+    }));
+}
+
+#[test]
 fn assisted_spontaneous_production_is_rejected() {
     let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
     json["evidence"][0]["assistance_level"] = serde_json::json!(2);
@@ -318,24 +540,73 @@ fn prompted_production_cannot_be_marked_unaided() {
 }
 
 #[test]
-fn selected_probe_measurements_are_mandatory() {
+fn listening_attempt_requires_item_reference_and_audio_source() {
     let mut result = parse_lesson_result(&spec_fixture()).unwrap();
-    result.evidence[0].response_millis = None;
+    result.listening_attempts[0].learning_item_id = None;
+    result.listening_attempts[0].client_item_key = None;
+    result.listening_attempts[0].source_reference = None;
+
     let issues = validate(&result);
     assert!(issues.iter().any(|issue| {
-        issue.code == "missing_metric" && issue.path == "evidence/0/response_millis"
+        issue.path == "listening_attempts/0" && issue.code == "invalid_reference"
+    }));
+    assert!(issues.iter().any(|issue| {
+        issue.path == "listening_attempts/0/source_reference" && issue.code == "missing_field"
     }));
 }
 
 #[test]
-fn lesson_requires_baseline_plus_second_independent_measurement() {
+fn listening_probe_requires_real_source_reference() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    result.listening_attempts[0].source_reference = None;
+    let issues = validate(&result);
+    assert!(issues.iter().any(|issue| {
+        issue.path == "listening_attempts/0/source_reference" && issue.code == "missing_field"
+    }));
+}
+
+#[test]
+fn response_latency_is_optional_when_not_instrumented() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    result.evidence[0].response_millis = None;
+    result.listening_attempts[0].response_millis = None;
+    let issues = validate(&result);
+    assert!(
+        issues
+            .iter()
+            .all(|issue| !issue.path.ends_with("/response_millis")),
+        "unobservable latency must not force the tutor to invent timing: {issues:?}"
+    );
+}
+
+#[test]
+fn correction_records_do_not_count_toward_measurement_coverage() {
+    let mut json: serde_json::Value = serde_json::from_str(&spec_fixture()).unwrap();
+    json["interventions"] = serde_json::json!([]);
+    json["evidence"][0]["kind"] = serde_json::json!("correction");
+    json["evidence"][0]["probe_phase"] = serde_json::json!("diagnostic");
+    json["evidence"][1]["kind"] = serde_json::json!("correction");
+    json["evidence"][1]["probe_phase"] = serde_json::json!("delayed_retrieval");
+    json["listening_attempts"][0]["probe_phase"] = serde_json::json!("practice");
+    let result = parse_lesson_result(&json.to_string()).unwrap();
+
+    assert_eq!(
+        tutor_contract::measurement_coverage_counts(&result),
+        (0, 0),
+        "correction audit records must not manufacture diagnostic or measurement coverage"
+    );
+}
+
+#[test]
+fn insufficient_measurement_coverage_does_not_invalidate_lesson() {
     let mut result = parse_lesson_result(&spec_fixture()).unwrap();
     result.listening_attempts[0].probe_phase = Some(tutor_contract::ProbePhase::Practice);
     let issues = validate(&result);
     assert!(
         issues
             .iter()
-            .any(|issue| { issue.code == "insufficient_measurement_coverage" })
+            .all(|issue| issue.code != "insufficient_measurement_coverage"),
+        "coverage controls calibration eligibility, not whether the lesson may be persisted: {issues:?}"
     );
 }
 
@@ -343,25 +614,31 @@ fn lesson_requires_baseline_plus_second_independent_measurement() {
 fn one_diagnostic_plus_delayed_measurement_is_sufficient_coverage() {
     let mut result = parse_lesson_result(&spec_fixture()).unwrap();
     result.listening_attempts[0].probe_phase = Some(tutor_contract::ProbePhase::DelayedRetrieval);
-    let issues = validate(&result);
-    assert!(
-        !issues
-            .iter()
-            .any(|issue| issue.code == "insufficient_measurement_coverage"),
-        "a baseline plus delayed independent check should be valid coverage: {issues:?}"
-    );
+    assert_eq!(tutor_contract::measurement_coverage_counts(&result), (1, 2));
 }
 
 #[test]
-fn production_probe_requires_pronunciation_signals() {
+fn pronunciation_signals_are_optional_without_audio_observation() {
     let mut result = parse_lesson_result(&spec_fixture()).unwrap();
     result.evidence[0].pronunciation_intelligible = None;
     result.evidence[0].pronunciation_repeat_required = None;
     let issues = validate(&result);
+    assert!(
+        issues
+            .iter()
+            .all(|issue| !issue.path.contains("pronunciation_")),
+        "text-only production must not force invented pronunciation evidence: {issues:?}"
+    );
+}
+
+#[test]
+fn pronunciation_signals_must_be_recorded_as_a_pair_when_observed() {
+    let mut result = parse_lesson_result(&spec_fixture()).unwrap();
+    result.evidence[0].pronunciation_intelligible = Some(true);
+    result.evidence[0].pronunciation_repeat_required = None;
+    let issues = validate(&result);
     assert!(issues.iter().any(|issue| {
-        issue.path == "evidence/0/pronunciation_intelligible" && issue.code == "missing_metric"
-    }));
-    assert!(issues.iter().any(|issue| {
-        issue.path == "evidence/0/pronunciation_repeat_required" && issue.code == "missing_metric"
+        issue.path == "evidence/0/pronunciation_repeat_required"
+            && issue.code == "incomplete_metric"
     }));
 }

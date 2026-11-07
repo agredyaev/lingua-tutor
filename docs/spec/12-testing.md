@@ -4,7 +4,7 @@ Scope: subsystem tests, architecture gates and acceptance commands.
 
 ## 1. Scheduler and review
 
-Review-engine uses deterministic golden vectors, replay/property tests, lapse/overdue cases, state hashing and fallback behavior. Review persistence tests cover idempotency, compensation/undo, atomic event + schedule updates and immutable history.
+Review-engine uses deterministic golden vectors, replay/property tests, lapse/overdue cases, state hashing and fail-closed persisted algorithm/version validation. Review persistence tests cover idempotency, compensation/undo, atomic event + schedule updates and immutable history.
 
 ## 2. Tutor/card flow
 
@@ -29,7 +29,7 @@ Ordinary profile and tutor-result fixtures are sufficient; no executable synthet
 
 ## 5. Migrations
 
-Scratch SQLite tests validate current table/index shape, foreign keys and constraints. Dedicated upgrade tests verify v5→v6 language-neutral storage and v6→v7 semantic metadata migration without loss of learning data.
+Scratch SQLite tests validate current table/index shape, foreign keys and constraints. Dedicated upgrade tests verify historical schemas through v8, including language-neutral storage, semantic metadata cleanup, and removal of unused review-experiment metadata without loss of learning data.
 
 ## 6. End-to-end
 

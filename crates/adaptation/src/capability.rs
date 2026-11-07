@@ -7,10 +7,28 @@
 use serde::{Deserialize, Serialize};
 
 const DAY_SECONDS: f64 = 86_400.0;
-const MIN_DISTRIBUTED_SUCCESS_GAP_SECONDS: i64 = 12 * 60 * 60;
+use crate::MIN_DISTRIBUTED_SUCCESS_GAP_SECONDS;
 // Context breadth is itself retention evidence. Keep a successful context only
 // while at least one quarter of its age-weight remains (two capability half-lives).
 const MIN_CONTEXT_EVIDENCE_WEIGHT: f64 = 0.25;
+
+fn stable_context_family_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let Some(first) = bytes.first().copied() else {
+        return false;
+    };
+    let Some(last) = bytes.last().copied() else {
+        return false;
+    };
+    let edge = |byte: u8| byte.is_ascii_lowercase() || byte.is_ascii_digit();
+    edge(first)
+        && edge(last)
+        && bytes.iter().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || matches!(*byte, b'.' | b'_' | b'-')
+        })
+}
 
 /// Evidence dimensions that matter for communicative ability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -65,9 +83,7 @@ fn context_set_insert<'a>(set: &mut ContextSetView<'a>, value: Option<&'a str>) 
 
 /// Borrow the populated sorted context values.
 #[must_use]
-pub fn context_set_slice<'store, 'text>(
-    set: &'store ContextSetView<'text>,
-) -> &'store [&'text str] {
+fn context_set_slice<'store, 'text>(set: &'store ContextSetView<'text>) -> &'store [&'text str] {
     &set.values[..set.len]
 }
 
@@ -297,9 +313,9 @@ fn estimate_columns<'a>(
     let mut observed_contexts = ContextSetView::default();
     let mut observed_families = ContextSetView::default();
 
-    // Spacing stages represent distributed evidence, not repeated attempts in one
-    // lesson. Known episode IDs are authoritative. The time gap is only a fallback
-    // for legacy evidence that has no lesson/episode identity.
+    // Spacing stages represent temporally distributed retrieval, not merely
+    // distinct lesson records. Episode IDs collapse massed attempts within one
+    // lesson; the anti-massing time gap is still required between counted stages.
     let mut streak = 0_u8;
     let mut newest_counted_at: Option<i64> = None;
     let mut newest_episode: Option<&'a str> = None;
@@ -307,13 +323,10 @@ fn estimate_columns<'a>(
         let observed_at = recorded_at_unix[source];
         let episode = non_empty(episode_key[source]);
         if let Some(newer_at) = newest_counted_at {
-            let both_known = newest_episode.is_some() && episode.is_some();
-            if both_known && newest_episode == episode {
+            if newest_episode.is_some() && newest_episode == episode {
                 continue;
             }
-            if !both_known
-                && newer_at.saturating_sub(observed_at) < MIN_DISTRIBUTED_SUCCESS_GAP_SECONDS
-            {
+            if newer_at.saturating_sub(observed_at) < MIN_DISTRIBUTED_SUCCESS_GAP_SECONDS {
                 continue;
             }
         }
@@ -379,7 +392,7 @@ fn estimate_columns<'a>(
             }
 
             let context = non_empty(context_key[source]);
-            let family = non_empty(context_family[source]);
+            let family = context_family[source].filter(|value| stable_context_family_id(value));
             let context_is_latest = context
                 .is_some_and(|value| !context_set_slice(&observed_contexts).contains(&value));
             let family_is_latest =
@@ -472,7 +485,9 @@ fn qualified_success(
         CapabilityKind::Recognition | CapabilityKind::Listening => assistance == Some(0),
         CapabilityKind::PromptedProduction => assistance.is_some_and(|level| level > 0),
         CapabilityKind::SpontaneousProduction => assistance == Some(0),
-        CapabilityKind::Transfer => assistance == Some(0) && non_empty(family).is_some(),
+        CapabilityKind::Transfer => {
+            assistance == Some(0) && family.is_some_and(stable_context_family_id)
+        }
     }
 }
 
@@ -522,9 +537,20 @@ pub struct CapabilityEstimateView<'a> {
     pub last_observed_qualified_success: Option<bool>,
 }
 
+pub(crate) fn spontaneous_ready_for_transfer(estimate: CapabilityEstimateView<'_>) -> bool {
+    estimate
+        .weighted_success_rate
+        .is_some_and(|rate| rate >= 0.80)
+        && estimate
+            .unaided_success_rate
+            .is_some_and(|rate| rate >= 0.75)
+        && estimate.evidence_strength >= 0.55
+        && estimate.qualified_success_streak >= 2
+}
+
 /// Project one fixed estimate into its borrowed downstream view.
 #[must_use]
-pub fn capability_estimate_view<'a>(
+fn capability_estimate_view<'a>(
     value: &'a CapabilityEstimateFixed<'a>,
 ) -> CapabilityEstimateView<'a> {
     CapabilityEstimateView {
@@ -747,7 +773,7 @@ mod tests {
     }
 
     #[test]
-    fn distinct_lessons_can_advance_spacing_even_within_twelve_hours() {
+    fn distinct_lessons_inside_anti_massing_gap_do_not_advance_two_spacing_stages() {
         let capability = [CapabilityKind::SpontaneousProduction; 2];
         let success = [true; 2];
         let assistance = [0; 2];
@@ -775,12 +801,48 @@ mod tests {
             86_800,
         );
 
-        assert_eq!(state.spontaneous_production.qualified_success_streak, 2);
+        assert_eq!(state.spontaneous_production.qualified_success_streak, 1);
         assert_eq!(
             state.spontaneous_production.independent_evidence_episodes,
             2
         );
         assert!(state.spontaneous_production.evidence_strength > 0.45);
+    }
+
+    #[test]
+    fn distinct_lessons_beyond_anti_massing_gap_advance_spacing() {
+        let capability = [CapabilityKind::SpontaneousProduction; 2];
+        let success = [true; 2];
+        let assistance = [0; 2];
+        let present = [true; 2];
+        let millis = [1_000; 2];
+        let contexts = [Some("c2"), Some("c1")];
+        let families = [None; 2];
+        let at = [86_500_i64, 40_000_i64];
+
+        let state = project_item_capabilities_columns(
+            "li",
+            "x",
+            "learning",
+            2,
+            &capability,
+            &success,
+            &assistance,
+            &present,
+            &millis,
+            &present,
+            &contexts,
+            &families,
+            &[Some("les-2"), Some("les-1")],
+            &at,
+            86_800,
+        );
+
+        assert_eq!(state.spontaneous_production.qualified_success_streak, 2);
+        assert_eq!(
+            state.spontaneous_production.independent_evidence_episodes,
+            2
+        );
     }
 
     #[test]
@@ -942,6 +1004,40 @@ mod tests {
             context_set_slice(&state.transfer.successful_context_families),
             ["family-a", "family-c"]
         );
+    }
+
+    #[test]
+    fn noncanonical_transfer_family_is_not_qualified_or_counted() {
+        let capability = [CapabilityKind::Transfer];
+        let success = [true];
+        let assistance = [0];
+        let present = [true];
+        let millis = [1_000];
+        let contexts = [None];
+        let families = [Some("Service.Ask_Help")];
+        let episodes = [Some("les-1")];
+        let at = [100_i64];
+
+        let state = project_item_capabilities_columns(
+            "li",
+            "x",
+            "learning",
+            1,
+            &capability,
+            &success,
+            &assistance,
+            &present,
+            &millis,
+            &present,
+            &contexts,
+            &families,
+            &episodes,
+            &at,
+            101,
+        );
+
+        assert_eq!(state.transfer.distinct_success_families, 0);
+        assert_eq!(state.transfer.last_observed_qualified_success, Some(false));
     }
 
     #[test]

@@ -22,7 +22,12 @@ pub(super) fn exercise(seed: u8) {
                     3 => json!(0.81),
                     _ => json!(0.4),
                 };
-                row[capability] = json!({"weighted_success_rate":rate,"unaided_success_rate":rate,"last_observed_at_unix":time*100+1,"distinct_success_families":time+item});
+                row[capability] = json!({
+                    "weighted_success_rate": rate,
+                    "unaided_success_rate": rate,
+                    "last_observed_at_unix": (time as i64) * 100_000,
+                    "distinct_success_families": time + item
+                });
                 let intervention = json!({
                     "action": if item % 2 == 0 { "repeat" } else { "change" },
                     "learning_item_id": id,
@@ -38,8 +43,12 @@ pub(super) fn exercise(seed: u8) {
             items.push(row);
         }
         interventions.push(json!({"action":"unknown","learning_item_id":"absent","target_capability":"correction"}));
-        let outcome =
-            json!({"calibration_valid":seed&16==0,"interventions":interventions}).to_string();
+        let outcome = json!({
+            "calibration_valid": seed & 16 == 0,
+            "completed_at_unix": (time as i64) * 100_000 + 10,
+            "interventions": interventions
+        })
+        .to_string();
         snapshots.push(((time as i64) * 100000, json!(items).to_string(), outcome));
     }
     let summarize = || {

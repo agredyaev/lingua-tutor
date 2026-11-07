@@ -1,11 +1,14 @@
 //! Self-contained Lingua Tutor CLI.
 
 use lingua_tutor_local::{assets, server, storage, tunnel};
+#[cfg(unix)]
 use std::{
     fs::OpenOptions,
     io::{Read, Write},
+};
+use std::{
     path::PathBuf,
-    process::{Command, ExitCode},
+    process::{Command, ExitCode, Stdio},
 };
 
 const STATE_DIR: &str = ".lingua-tutor";
@@ -151,10 +154,29 @@ fn prompt_secret(label: &str) -> Result<String, String> {
     {
         prompt_secret_unix(label)
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        prompt_secret_windows(label)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = label;
-        Err("secure terminal input is currently supported on Unix only".to_owned())
+        Err("secure terminal input is unsupported on this platform".to_owned())
+    }
+}
+
+#[cfg(unix)]
+fn set_terminal_echo(tty: &std::fs::File, enabled: bool) -> Result<(), String> {
+    let input = tty.try_clone().map_err(|error| error.to_string())?;
+    let status = Command::new("stty")
+        .arg(if enabled { "echo" } else { "-echo" })
+        .stdin(Stdio::from(input))
+        .status()
+        .map_err(|error| format!("failed to run stty: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("stty failed to update terminal echo".to_owned())
     }
 }
 
@@ -169,23 +191,15 @@ fn prompt_secret_unix(label: &str) -> Result<String, String> {
         .and_then(|_| tty.flush())
         .map_err(|error| error.to_string())?;
 
-    let status = Command::new("/bin/stty")
-        .args(["-f", "/dev/tty", "-echo"])
-        .status()
-        .map_err(|error| format!("failed to disable terminal echo: {error}"))?;
-    if !status.success() {
-        return Err("failed to disable terminal echo".to_owned());
-    }
+    set_terminal_echo(&tty, false)?;
 
-    struct RestoreEcho;
+    struct RestoreEcho(std::fs::File);
     impl Drop for RestoreEcho {
         fn drop(&mut self) {
-            let _ = Command::new("/bin/stty")
-                .args(["-f", "/dev/tty", "echo"])
-                .status();
+            let _ = set_terminal_echo(&self.0, true);
         }
     }
-    let _restore = RestoreEcho;
+    let _restore = RestoreEcho(tty.try_clone().map_err(|error| error.to_string())?);
 
     let mut bytes = Vec::new();
     loop {
@@ -202,6 +216,38 @@ fn prompt_secret_unix(label: &str) -> Result<String, String> {
     }
     tty.write_all(b"\n").map_err(|error| error.to_string())?;
     let value = String::from_utf8(bytes).map_err(|_| "input is not valid UTF-8".to_owned())?;
+    if value.trim().is_empty() {
+        return Err("value cannot be empty".to_owned());
+    }
+    Ok(value)
+}
+
+#[cfg(windows)]
+fn prompt_secret_windows(label: &str) -> Result<String, String> {
+    const SCRIPT: &str = r#"
+$secure = Read-Host -Prompt $env:LINGUA_TUTOR_PROMPT -AsSecureString
+$pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+try {
+    [Console]::Out.Write([Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer))
+}
+finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+}
+"#;
+
+    let output = Command::new("powershell.exe")
+        .args(["-NoLogo", "-NoProfile", "-Command", SCRIPT])
+        .env("LINGUA_TUTOR_PROMPT", label.trim_end())
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|error| format!("failed to start Windows secure prompt: {error}"))?;
+    if !output.status.success() {
+        return Err("Windows secure prompt failed".to_owned());
+    }
+    let value =
+        String::from_utf8(output.stdout).map_err(|_| "input is not valid UTF-8".to_owned())?;
     if value.trim().is_empty() {
         return Err("value cannot be empty".to_owned());
     }
@@ -248,5 +294,15 @@ mod tests {
             root.join(".lingua-tutor/lingua.sqlite3")
         );
         assert_eq!(state.join(WEB_DIR), root.join(".lingua-tutor/web"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_secure_prompt_backend_is_available() {
+        let status = Command::new("powershell.exe")
+            .args(["-NoLogo", "-NoProfile", "-Command", "exit 0"])
+            .status()
+            .unwrap();
+        assert!(status.success());
     }
 }

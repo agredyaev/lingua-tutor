@@ -1060,7 +1060,6 @@ dependencies = [
  "lingua-tutor-local",
  "review-engine",
  "rusqlite",
- "serde_json",
 ]
 
 [[package]]
@@ -1313,7 +1312,6 @@ dependencies = [
  "learning-core",
  "review-engine",
  "rusqlite",
- "semver",
  "serde",
  "serde_json",
  "sha2",

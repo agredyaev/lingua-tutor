@@ -57,10 +57,6 @@ pub fn exercise_card_model(data: &[u8]) {
         tutor_contract::MutationOperation::Retire,
         tutor_contract::MutationOperation::AddAcceptedAnswer,
         tutor_contract::MutationOperation::RemoveAcceptedAnswer,
-        tutor_contract::MutationOperation::Split,
-        tutor_contract::MutationOperation::Merge,
-        tutor_contract::MutationOperation::Link,
-        tutor_contract::MutationOperation::AddListeningVariant,
     ];
     let input = if data.is_empty() { &[0][..] } else { data };
     let mut mutations = Vec::new();
@@ -154,6 +150,7 @@ pub(super) fn lesson_model(seed: u8) {
             &mut capacity_state,
             &format!("error-{index}"),
             index as u32,
+            false,
             false,
         )
         .is_err()

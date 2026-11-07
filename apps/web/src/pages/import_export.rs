@@ -7,7 +7,7 @@ use shared_schema::{ApplyResponseDto, ValidateResponseDto};
 
 /// `/import`: paste → validate → preview → apply with validation token.
 #[component]
-pub fn ImportPage() -> impl IntoView {
+pub(crate) fn ImportPage() -> impl IntoView {
     let pasted = RwSignal::new(String::new());
     let validated = RwSignal::new(Option::<ValidateResponseDto>::None);
     let applied = RwSignal::new(Option::<ApplyResponseDto>::None);
@@ -203,7 +203,7 @@ pub fn ImportPage() -> impl IntoView {
 
 /// `/export`: tutor context (primary flow, copy button), full JSON, CSV.
 #[component]
-pub fn ExportPage() -> impl IntoView {
+pub(crate) fn ExportPage() -> impl IntoView {
     let active = use_active_profile();
     let context_text = RwSignal::new(Option::<String>::None);
     let copied = RwSignal::new(false);

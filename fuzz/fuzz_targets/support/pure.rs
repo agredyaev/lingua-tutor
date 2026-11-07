@@ -1,7 +1,7 @@
 use adaptation::{evidence_capability, new_card_budget, DailySignal};
 use review_engine::{
     apply_review, initial_state, new_scheduler_scratch, Grade, ReviewEventInput, SchedulerSettings,
-    Timestamp, FALLBACK_ID, FSRS_ID, MIN_INTERVAL_SECONDS,
+    Timestamp, MIN_INTERVAL_SECONDS,
 };
 
 fn text(data: &[u8]) -> String {
@@ -42,54 +42,37 @@ pub fn exercise(data: &[u8]) {
     let _ = evidence_capability(&a);
 
     let _ = Grade::try_from(data.first().copied().unwrap_or(0));
-    let _ = review_engine::new_scheduler_scratch(99);
-    let _ = review_engine::initial_state(99, Timestamp(0));
-    for scheduler in [FSRS_ID, FALLBACK_ID] {
-        let scratch = new_scheduler_scratch(scheduler).expect("scheduler scratch");
-        let settings = SchedulerSettings::default();
-        let mut state = initial_state(scheduler, Timestamp(1_800_000_000)).expect("initial state");
-        let _ =
-            review_engine::predicted_retrievability(scheduler, &state, Timestamp(1_800_000_000));
-        let _ = review_engine::predicted_retrievability(99, &state, Timestamp(0));
-        let _ = review_engine::apply_review(
-            99,
-            &scratch,
-            &state,
-            &ReviewEventInput {
-                grade: Grade::Good,
-                answered_at: Timestamp(0),
-            },
-            &settings,
-        );
-        let mut events = Vec::new();
-        let mut now = 1_800_000_000_i64;
-        for byte in data.iter().copied().take(32) {
-            now = now.saturating_add(600 + i64::from(byte) * 60);
-            let grade = Grade::try_from(byte % 4 + 1).expect("bounded grade");
-            let event = ReviewEventInput {
-                grade,
-                answered_at: Timestamp(now),
-            };
-            events.push(event);
-            let next = apply_review(scheduler, &scratch, &state, &event, &settings)
-                .expect("valid review sequence");
-            let repeat = apply_review(scheduler, &scratch, &state, &event, &settings)
-                .expect("deterministic repeat");
-            assert_eq!(next, repeat);
-            let interval = next.scheduled_interval_seconds.expect("interval");
-            assert!(interval >= MIN_INTERVAL_SECONDS);
-            assert_eq!(next.due_at.expect("due").0, now + interval);
-            assert!(next.state_version > state.state_version);
-            let recall =
-                review_engine::predicted_retrievability(scheduler, &next, Timestamp(now + 3600))
-                    .expect("recall");
-            assert!((0.0..=1.0).contains(&recall));
-            state = next;
-        }
-        assert_eq!(
-            state,
-            review_engine::replay(scheduler, Timestamp(1_800_000_000), &events, &settings)
-                .expect("replay")
-        );
+    let scratch = new_scheduler_scratch().expect("scheduler scratch");
+    let settings = SchedulerSettings::default();
+    let mut state = initial_state(Timestamp(1_800_000_000));
+    let _ = review_engine::predicted_retrievability(&state, Timestamp(1_800_000_000));
+
+    let mut events = Vec::new();
+    let mut now = 1_800_000_000_i64;
+    for byte in data.iter().copied().take(32) {
+        now = now.saturating_add(600 + i64::from(byte) * 60);
+        let grade = Grade::try_from(byte % 4 + 1).expect("bounded grade");
+        let event = ReviewEventInput {
+            grade,
+            answered_at: Timestamp(now),
+        };
+        events.push(event);
+        let next =
+            apply_review(&scratch, &state, &event, &settings).expect("valid review sequence");
+        let repeat =
+            apply_review(&scratch, &state, &event, &settings).expect("deterministic repeat");
+        assert_eq!(next, repeat);
+        let interval = next.scheduled_interval_seconds.expect("interval");
+        assert!(interval >= MIN_INTERVAL_SECONDS);
+        assert_eq!(next.due_at.expect("due").0, now + interval);
+        assert!(next.state_version > state.state_version);
+        let recall = review_engine::predicted_retrievability(&next, Timestamp(now + 3600))
+            .expect("recall");
+        assert!((0.0..=1.0).contains(&recall));
+        state = next;
     }
+    assert_eq!(
+        state,
+        review_engine::replay(Timestamp(1_800_000_000), &events, &settings).expect("replay")
+    );
 }

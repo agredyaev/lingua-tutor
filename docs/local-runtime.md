@@ -75,8 +75,13 @@ Backups are written next to the active project database under the project state 
 
 ## Install/update
 
+Prebuilt release archives are the simplest installation path. For a source install, prepare the web bundle before the native release build:
+
 ```sh
+rustup target add wasm32-unknown-unknown
+cargo install trunk --version 0.21.14 --locked
+(cd apps/web && trunk build --release --cargo-profile wasm-release)
 cargo install --path apps/local --bin lingua-tutor --locked
 ```
 
-The CLI is installed directly by Cargo. No installer script or service wrapper is required.
+The release-profile build rejects a missing or incomplete generated web bundle instead of producing a native binary with a broken UI. No installer script or service wrapper is required.
