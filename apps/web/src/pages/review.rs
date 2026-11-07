@@ -32,7 +32,7 @@ fn grade_class(grade: u8) -> &'static str {
 
 /// `/review`.
 #[component]
-pub fn ReviewPage() -> impl IntoView {
+pub(crate) fn ReviewPage() -> impl IntoView {
     let active = use_active_profile();
 
     // One session per page visit: replay any offline backlog first, then
@@ -363,7 +363,7 @@ fn CardView(
 
 /// `/review/summary`.
 #[component]
-pub fn SummaryPage() -> impl IntoView {
+pub(crate) fn SummaryPage() -> impl IntoView {
     let active = use_active_profile();
     let summary = LocalResource::new(move || {
         let id = active.id();
@@ -435,7 +435,7 @@ pub fn SummaryPage() -> impl IntoView {
 /// `/stats`: retention weeks + due forecast, rendered as native inline SVG
 /// bars — no JS chart library (09-frontend.md §1).
 #[component]
-pub fn StatsPage() -> impl IntoView {
+pub(crate) fn StatsPage() -> impl IntoView {
     let active = use_active_profile();
     let stats = LocalResource::new(move || {
         let id = active.id();

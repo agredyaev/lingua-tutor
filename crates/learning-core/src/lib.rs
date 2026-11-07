@@ -126,6 +126,28 @@ pub enum EvidenceKind {
     Correction,
 }
 
+/// True when a semantic context-family identifier is in the canonical,
+/// language-neutral wire/storage form. The identifier is deliberately opaque:
+/// this validates spelling stability, not semantic membership in a whitelist.
+#[must_use]
+pub fn stable_context_family_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let Some(first) = bytes.first().copied() else {
+        return false;
+    };
+    let Some(last) = bytes.last().copied() else {
+        return false;
+    };
+    let edge = |byte: u8| byte.is_ascii_lowercase() || byte.is_ascii_digit();
+    edge(first)
+        && edge(last)
+        && bytes.iter().all(|byte| {
+            byte.is_ascii_lowercase()
+                || byte.is_ascii_digit()
+                || matches!(*byte, b'.' | b'_' | b'-')
+        })
+}
+
 /// Error target lifecycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -155,8 +177,6 @@ pub enum CommunicativeImpact {
 
 /// Occurrences after which a medium-impact mini-target is recommended.
 pub const ERROR_ESCALATION_THRESHOLD: u32 = 3;
-/// Unresolved occurrences after which method change is required.
-pub const ERROR_METHOD_CHANGE_THRESHOLD: u32 = 5;
 /// Recheck schedule for a newly tracked error, in whole days.
 pub const ERROR_RECHECK_OFFSETS_DAYS: [u32; 3] = [1, 3, 7];
 
@@ -244,6 +264,30 @@ mod tests {
         ];
         for (actual, expected) in cases {
             assert_eq!(actual, serde_json::json!(expected));
+        }
+    }
+
+    #[test]
+    fn stable_context_family_identifier_is_language_neutral_and_canonical() {
+        for valid in [
+            "service.ask_help",
+            "transport.ask_stop",
+            "cafe.request-bill",
+            "topic_2.variant3",
+        ] {
+            assert!(stable_context_family_id(valid), "{valid}");
+        }
+        for invalid in [
+            "",
+            "Service.Ask_Help",
+            " service.ask_help",
+            "service.ask_help ",
+            ".service",
+            "service.",
+            "serviço.ask_help",
+            "service/ask_help",
+        ] {
+            assert!(!stable_context_family_id(invalid), "{invalid}");
         }
     }
 

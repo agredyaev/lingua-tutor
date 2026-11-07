@@ -7,7 +7,7 @@ use shared_schema::DashboardDto;
 
 /// Learner home.
 #[component]
-pub fn DashboardPage() -> impl IntoView {
+pub(crate) fn DashboardPage() -> impl IntoView {
     let active = use_active_profile();
     let dashboard = LocalResource::new(move || {
         let id = active.id();

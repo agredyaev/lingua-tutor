@@ -1,13 +1,13 @@
-//! Learning items, errors, listening pages (WBS 6.6).
+//! Learning-item and error inspection pages.
 
 use crate::api_client;
 use crate::app::{Page, use_active_profile};
 use leptos::prelude::*;
 use shared_schema::{ApiError, ErrorTargetDto};
 
-/// `/learning-items` + `/listening`: item inventory by status.
+/// `/learning-items`: item inventory by status.
 #[component]
-pub fn ItemsPage() -> impl IntoView {
+pub(crate) fn ItemsPage() -> impl IntoView {
     let active = use_active_profile();
     let state = LocalResource::new(move || {
         let id = active.id();
@@ -90,7 +90,7 @@ pub fn ItemsPage() -> impl IntoView {
 
 /// `/errors`: active error targets, method-change flags first.
 #[component]
-pub fn ErrorsPage() -> impl IntoView {
+pub(crate) fn ErrorsPage() -> impl IntoView {
     let active = use_active_profile();
     let targets = LocalResource::new(move || {
         let id = active.id();

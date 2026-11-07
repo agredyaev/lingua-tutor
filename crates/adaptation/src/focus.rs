@@ -4,31 +4,6 @@ use crate::{CapabilityEstimateView, CapabilityKind, ItemCapabilityView, TextSetR
 
 const DAY_SECONDS: i64 = 86_400;
 
-/// Borrowed focus view emitted by the canonical per-item pass.
-#[derive(Debug)]
-pub struct TutorFocusThreadView<'a> {
-    /// Learning item ID borrowed from the item state.
-    pub learning_item_id: &'a str,
-    /// Target text borrowed from the item state.
-    pub target_text: &'a str,
-    /// Capability being trained.
-    pub capability: CapabilityKind,
-    /// Spacing stage.
-    pub stage: u8,
-    /// Due instant.
-    pub due_at_unix: i64,
-    /// Due-now flag.
-    pub due_now: bool,
-    /// Successful contexts borrowed from the capability state.
-    pub successful_contexts: TextSetRef<'a>,
-    /// Successful context families borrowed from the capability state.
-    pub successful_context_families: TextSetRef<'a>,
-    /// Continuation rule. Dynamic only when existing contexts must be named.
-    pub next_context_policy: String,
-    /// Evidence-based explanation.
-    pub rationale: String,
-}
-
 /// Decision-only focus view. No explanation string is allocated before top-K
 /// selection; consumers may render it after selecting the final focus records.
 #[derive(Debug, Clone, Copy)]
@@ -72,16 +47,8 @@ pub fn visit_tutor_focus_decisions<'a>(
         now_unix,
         &mut emit,
     );
-    let spontaneous_ready = item
-        .spontaneous_production
-        .weighted_success_rate
-        .is_some_and(|rate| rate >= 0.80)
-        && item
-            .spontaneous_production
-            .unaided_success_rate
-            .is_some_and(|rate| rate >= 0.75)
-        && item.spontaneous_production.evidence_strength >= 0.55
-        && item.spontaneous_production.qualified_success_streak >= 2;
+    let spontaneous_ready =
+        crate::capability::spontaneous_ready_for_transfer(item.spontaneous_production);
     if spontaneous_ready {
         emit_if_needed(
             item,
@@ -91,39 +58,6 @@ pub fn visit_tutor_focus_decisions<'a>(
             &mut emit,
         );
     }
-}
-
-/// Emits all required focus threads for one item without allocating a collection.
-pub fn visit_tutor_focus_threads<'a>(
-    item: ItemCapabilityView<'a>,
-    now_unix: i64,
-    mut emit: impl FnMut(TutorFocusThreadView<'a>),
-) {
-    visit_tutor_focus_decisions(item, now_unix, |decision| {
-        emit(TutorFocusThreadView {
-            learning_item_id: decision.learning_item_id,
-            target_text: decision.target_text,
-            capability: decision.capability,
-            stage: decision.stage,
-            due_at_unix: decision.due_at_unix,
-            due_now: decision.due_now,
-            successful_contexts: decision.estimate.successful_contexts,
-            successful_context_families: decision.estimate.successful_context_families,
-            next_context_policy: format_focus_policy(
-                decision.capability,
-                decision.estimate.successful_contexts,
-                decision.estimate.successful_context_families,
-            ),
-            rationale: format_focus_rationale(
-                decision.capability,
-                decision.estimate.weighted_success_rate,
-                decision.estimate.evidence_strength,
-                decision.stage,
-                decision.estimate.distinct_success_contexts,
-                decision.estimate.distinct_success_families,
-            ),
-        });
-    });
 }
 
 fn focusable_status(status: &str) -> bool {
@@ -403,8 +337,13 @@ mod tests {
         let contexts = [None; 4];
         let families = [None; 4];
         let episodes = [Some("les-4"), Some("les-3"), Some("les-2"), Some("les-1")];
-        let base = 1_000_i64;
-        let at = [base; 4];
+        let base = 4 * DAY_SECONDS;
+        let at = [
+            base,
+            base - 13 * 60 * 60,
+            base - 26 * 60 * 60,
+            base - 39 * 60 * 60,
+        ];
 
         let fresh = crate::project_item_capabilities_columns(
             "li",

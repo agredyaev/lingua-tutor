@@ -1,12 +1,8 @@
 //! Stateless FSRS-6 processing passes over persisted scalar scheduling state.
-//! Pinned fsrs-rs dependency remains a request-local external computation resource.
 use crate::{
     Grade, ReviewEventInput, ScheduleError, ScheduledState, SchedulerSettings, Timestamp,
     clamp_interval,
 };
-
-pub(crate) const ALGORITHM: &str = "fsrs";
-pub(crate) const ALGORITHM_VERSION: &str = "fsrs-rs-6.6.1";
 
 pub(crate) fn init_fsrs() -> Result<fsrs::FSRS, ScheduleError> {
     fsrs::FSRS::new(&fsrs::DEFAULT_PARAMETERS)
@@ -16,11 +12,11 @@ pub(crate) fn init_fsrs() -> Result<fsrs::FSRS, ScheduleError> {
 fn memory_of(state: &ScheduledState) -> Option<fsrs::MemoryState> {
     match (state.stability, state.difficulty) {
         (Some(s), Some(d)) => Some(fsrs::MemoryState {
-                #[allow(clippy::cast_possible_truncation)] // fsrs is f32-native
-                stability: s as f32,
-                #[allow(clippy::cast_possible_truncation)]
-                difficulty: d as f32,
-            }),
+            #[allow(clippy::cast_possible_truncation)]
+            stability: s as f32,
+            #[allow(clippy::cast_possible_truncation)]
+            difficulty: d as f32,
+        }),
         _ => None,
     }
 }
@@ -35,9 +31,8 @@ fn elapsed_days(state: &ScheduledState, answered_at: Timestamp) -> u32 {
 
 pub(crate) fn initial_state(now: Timestamp) -> ScheduledState {
     ScheduledState {
-        algorithm: ALGORITHM.to_owned(),
-        algorithm_version: ALGORITHM_VERSION.to_owned(),
-        parameter_set_id: None,
+        algorithm: crate::ALGORITHM.to_owned(),
+        algorithm_version: crate::ALGORITHM_VERSION.to_owned(),
         difficulty: None,
         stability: None,
         last_review_at: None,
@@ -55,7 +50,7 @@ pub(crate) fn apply_review(
     event: &ReviewEventInput,
     settings: &SchedulerSettings,
 ) -> Result<ScheduledState, ScheduleError> {
-    #[allow(clippy::cast_possible_truncation)] // retention is 0.0..=1.0
+    #[allow(clippy::cast_possible_truncation)]
     let retention = settings.desired_retention as f32;
     let next = inner
         .next_states(
@@ -70,12 +65,14 @@ pub(crate) fn apply_review(
         Grade::Good => next.good,
         Grade::Easy => next.easy,
     };
-    let interval_seconds =
-        clamp_interval(f64::from(chosen.interval) * 86_400.0, settings, ALGORITHM)?;
+    let interval_seconds = clamp_interval(
+        f64::from(chosen.interval) * 86_400.0,
+        settings,
+        crate::ALGORITHM,
+    )?;
     Ok(ScheduledState {
-        algorithm: ALGORITHM.to_owned(),
-        algorithm_version: ALGORITHM_VERSION.to_owned(),
-        parameter_set_id: current.parameter_set_id.clone(),
+        algorithm: crate::ALGORITHM.to_owned(),
+        algorithm_version: crate::ALGORITHM_VERSION.to_owned(),
         difficulty: Some(f64::from(chosen.memory.difficulty)),
         stability: Some(f64::from(chosen.memory.stability)),
         last_review_at: Some(event.answered_at),
@@ -96,7 +93,7 @@ pub(crate) fn predicted_retrievability(
     let last = state
         .last_review_at
         .ok_or_else(|| ScheduleError::InvalidState("no last review".to_owned()))?;
-    #[allow(clippy::cast_precision_loss)] // day counts are tiny vs f32 range
+    #[allow(clippy::cast_precision_loss)]
     let days = (at.0.saturating_sub(last.0)).max(0) as f32 / 86_400.0;
     Ok(f64::from(fsrs::current_retrievability(
         memory,

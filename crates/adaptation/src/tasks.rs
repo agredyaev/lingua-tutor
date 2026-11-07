@@ -54,12 +54,7 @@ pub fn visit_task_candidates<'a>(
         );
     if spontaneous_uncertain {
         let diagnostic_score = (66 + uncertainty_points(spontaneous))
-            .saturating_add(
-                u8::from(matches!(
-                    primary_objective,
-                    "reduce_prompt_dependence" | "probe_prompt_independence"
-                )) * 8,
-            )
+            .saturating_add(u8::from(primary_objective == "probe_prompt_independence") * 8)
             .min(100);
         emit(view(
             item,
@@ -76,21 +71,22 @@ pub fn visit_task_candidates<'a>(
             prompted.effective_evidence_weight,
             0.70,
         );
-    if !spontaneous_uncertain
+    let prompt_gap_established = !spontaneous_uncertain
         && prompted_established
         && prompted.weighted_success_rate.unwrap_or(0.0) >= 0.70
-        && spontaneous.unaided_success_rate.unwrap_or(0.0) < 0.60
-    {
+        && spontaneous.unaided_success_rate.unwrap_or(0.0) < 0.60;
+    if prompt_gap_established {
         emit(view(
             item,
             "fade_prompts",
-            boosted(90, primary_objective, "reduce_prompt_dependence"),
+            98,
             "prompted production is stronger than explicitly unaided production",
             "spontaneous_production",
         ));
     }
 
     if !spontaneous_uncertain
+        && !prompt_gap_established
         && spontaneous.attempts > 0
         && spontaneous.unaided_success_rate.unwrap_or(0.0) < 0.70
     {
@@ -98,7 +94,7 @@ pub fn visit_task_candidates<'a>(
         emit(view(
             item,
             "spontaneous_retrieval",
-            boosted(68 + gap, primary_objective, "reduce_prompt_dependence"),
+            boosted(68 + gap, primary_objective, "probe_prompt_independence"),
             "explicitly unaided production is below the target range",
             "spontaneous_production",
         ));
@@ -127,7 +123,7 @@ pub fn visit_task_candidates<'a>(
         emit(view(
             item,
             "listening_probe",
-            boosted(base, primary_objective, "strengthen_listening"),
+            base,
             "listening state is uncertain/stale or needs an independent source/context check",
             "listening",
         ));
@@ -136,20 +132,13 @@ pub fn visit_task_candidates<'a>(
         emit(view(
             item,
             "listening_repair",
-            boosted(base, primary_objective, "strengthen_listening"),
+            base,
             "independent listening weakness is established; repair before spending more time diagnosing it",
             "listening",
         ));
     }
 
-    let spontaneous_ready = spontaneous
-        .weighted_success_rate
-        .is_some_and(|rate| rate >= 0.75)
-        && spontaneous
-            .unaided_success_rate
-            .is_some_and(|rate| rate >= 0.70)
-        && spontaneous.evidence_strength >= 0.45
-        && spontaneous.qualified_success_streak >= 2;
+    let spontaneous_ready = crate::capability::spontaneous_ready_for_transfer(spontaneous);
     if !spontaneous_uncertain
         && spontaneous_ready
         && (transfer.distinct_success_families < 3
@@ -182,7 +171,7 @@ pub fn visit_task_candidates<'a>(
         emit(view(
             item,
             "automaticity_drill",
-            boosted(82, primary_objective, "build_automaticity"),
+            82,
             "unaided production is often correct but still slow",
             "spontaneous_production",
         ));
@@ -388,7 +377,7 @@ mod tests {
         let mut repair = false;
         visit_task_candidates(
             crate::item_capability_view(&item),
-            "strengthen_listening",
+            "introduce_high_utility_material",
             |candidate| match candidate.task_type {
                 "listening_probe" => probe = true,
                 "listening_repair" => repair = true,
@@ -423,7 +412,7 @@ mod tests {
         let mut repair = false;
         visit_task_candidates(
             crate::item_capability_view(&item),
-            "strengthen_listening",
+            "introduce_high_utility_material",
             |candidate| match candidate.task_type {
                 "listening_probe" => probe = true,
                 "listening_repair" => repair = true,
@@ -465,6 +454,36 @@ mod tests {
         assert!(
             !transfer,
             "the same state cannot be both diagnostically uncertain and ready for transfer promotion"
+        );
+    }
+
+    #[test]
+    fn transfer_candidate_and_spaced_focus_share_one_readiness_boundary() {
+        let mut item = state("learning", 0.95, Some(0.79));
+        item.spontaneous_production.attempts = 4;
+        item.spontaneous_production.weighted_success_rate = Some(0.79);
+        item.spontaneous_production.unaided_success_rate = Some(0.76);
+        item.spontaneous_production.evidence_strength = 0.50;
+        item.spontaneous_production.effective_evidence_weight = 20.0;
+        item.spontaneous_production.unaided_evidence_weight = 20.0;
+        item.spontaneous_production.independent_evidence_episodes = 4;
+        item.spontaneous_production.qualified_success_streak = 2;
+
+        let mut candidate = false;
+        visit_task_candidates(
+            crate::item_capability_view(&item),
+            "diagnose_and_expand",
+            |task| candidate |= task.task_type == "transfer_practice",
+        );
+
+        let mut focus = false;
+        crate::visit_tutor_focus_decisions(crate::item_capability_view(&item), 1_000, |thread| {
+            focus |= thread.capability == crate::CapabilityKind::Transfer;
+        });
+
+        assert_eq!(
+            candidate, focus,
+            "transfer must not be emitted as an unscheduled practice candidate before the same readiness boundary opens its spaced focus thread"
         );
     }
 
@@ -533,7 +552,7 @@ mod tests {
         let mut retrieval = false;
         visit_task_candidates(
             crate::item_capability_view(&item),
-            "reduce_prompt_dependence",
+            "probe_prompt_independence",
             |candidate| match candidate.task_type {
                 "fade_prompts" => fade = true,
                 "spontaneous_retrieval" => retrieval = true,
@@ -567,7 +586,7 @@ mod tests {
         let mut retrieval = false;
         visit_task_candidates(
             crate::item_capability_view(&item),
-            "reduce_prompt_dependence",
+            "probe_prompt_independence",
             |candidate| match candidate.task_type {
                 "diagnostic_spontaneous" => diagnostic = true,
                 "spontaneous_retrieval" => retrieval = true,
@@ -594,7 +613,7 @@ mod tests {
         let mut retrieval = false;
         visit_task_candidates(
             crate::item_capability_view(&item),
-            "reduce_prompt_dependence",
+            "probe_prompt_independence",
             |candidate| match candidate.task_type {
                 "diagnostic_spontaneous" => diagnostic = true,
                 "fade_prompts" => fade = true,
@@ -652,7 +671,7 @@ mod tests {
         let mut retrieval = false;
         visit_task_candidates(
             crate::item_capability_view(&item),
-            "reduce_prompt_dependence",
+            "probe_prompt_independence",
             |candidate| match candidate.task_type {
                 "diagnostic_spontaneous" => diagnostic = true,
                 "fade_prompts" => fade = true,
@@ -670,15 +689,20 @@ mod tests {
     fn prompt_gap_emits_boosted_fade_prompts() {
         let item = state("learning", 1.0, Some(0.3));
         let mut best = None;
+        let mut generic_retrieval = false;
         visit_task_candidates(
             crate::item_capability_view(&item),
-            "reduce_prompt_dependence",
-            |candidate| {
-                if candidate.task_type == "fade_prompts" {
-                    best = Some(candidate.score);
-                }
+            "introduce_high_utility_material",
+            |candidate| match candidate.task_type {
+                "fade_prompts" => best = Some(candidate.score),
+                "spontaneous_retrieval" => generic_retrieval = true,
+                _ => {}
             },
         );
         assert_eq!(best, Some(98));
+        assert!(
+            !generic_retrieval,
+            "an established same-item prompt gap should select prompt fading, not compete with generic retrieval"
+        );
     }
 }

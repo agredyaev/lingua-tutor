@@ -7,9 +7,9 @@ use leptos::prelude::*;
 use leptos_router::hooks::use_params_map;
 use shared_schema::{ApiError, CardDto};
 
-/// `/cards` (+ `/cards/redesign` shares the list until WBS 8).
+/// `/cards`: card library.
 #[component]
-pub fn CardsPage() -> impl IntoView {
+pub(crate) fn CardsPage() -> impl IntoView {
     let active = use_active_profile();
     let status_filter = RwSignal::new(String::new());
     let cards = LocalResource::new(move || {
@@ -113,7 +113,7 @@ pub fn CardsPage() -> impl IntoView {
 
 /// `/cards/:id`.
 #[component]
-pub fn CardDetailPage() -> impl IntoView {
+pub(crate) fn CardDetailPage() -> impl IntoView {
     let params = use_params_map();
     let card_id = Memo::new(move |_| params.read().get("id").unwrap_or_default());
     let refresh = RwSignal::new(0_u32);
