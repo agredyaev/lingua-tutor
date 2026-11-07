@@ -1524,6 +1524,9 @@ pub fn exercise_adaptation_model(data: &[u8]) {
         let measurements = adaptation::measurement_requirements_for_action(action, kind);
         assert!(!measurements.is_empty());
         assert!(measurements.contains(&required));
+        let closeout = adaptation::completion_requirements_for_action(action);
+        assert!(closeout.contains(&"persist_task_outcome"));
+        assert!(closeout.contains(&"evaluate_card_mutation_from_observed_outcome"));
         assert!(!adaptation::criterion_for_action(action, kind).is_empty());
     }
 

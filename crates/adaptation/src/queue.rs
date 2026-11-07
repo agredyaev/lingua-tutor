@@ -35,6 +35,9 @@ pub struct TutorTask {
     /// next to the executable task instead of forcing the tutor to infer them
     /// from the global lesson-result contract.
     pub measurement_requirements: Vec<&'static str>,
+    /// Task-local closeout contract. These requirements are evaluated after the
+    /// observed outcome and before lesson completion.
+    pub completion_requirements: Vec<&'static str>,
 }
 
 #[must_use]
@@ -136,6 +139,22 @@ const AUTOMATICITY_MEASUREMENTS: &[&str] = &[
     "response_millis_required",
 ];
 
+const PROBE_CLOSEOUT: &[&str] = &[
+    "persist_task_outcome",
+    "evaluate_card_mutation_from_observed_outcome",
+    "card_trigger=failed_retrieval|failed_listening|prompt_dependence|recurring_error|new_high_value_item_needing_spaced_retrieval_or_transfer|high_value_expected_situation",
+    "no_duplicate_active_card_same_target_modality",
+    "no_card_for_mere_exposure_or_stable_independent_retrieval",
+];
+const INTERVENTION_CLOSEOUT: &[&str] = &[
+    "persist_task_outcome",
+    "persist_intervention_if_applied",
+    "evaluate_card_mutation_from_observed_outcome",
+    "card_trigger=failed_retrieval|failed_listening|prompt_dependence|recurring_error|new_high_value_item_needing_spaced_retrieval_or_transfer|high_value_expected_situation",
+    "no_duplicate_active_card_same_target_modality",
+    "no_card_for_mere_exposure_or_stable_independent_retrieval",
+];
+
 #[must_use]
 /// Return the task-local measurement contract for one executable tutor action.
 ///
@@ -162,6 +181,25 @@ pub fn measurement_requirements_for_action(
         },
     }
 }
+#[must_use]
+/// Return the task-local closeout contract for one executable tutor action.
+///
+/// Card evaluation happens after the observed outcome. A card mutation is
+/// warranted only when evidence supports review work: failed retrieval,
+/// failed listening, prompt dependence, a recurring error, new high-value
+/// material that needs spaced retrieval or transfer, or a high-value expected
+/// situation. Mere exposure or stable independent retrieval is not sufficient.
+pub fn completion_requirements_for_action(action: &str) -> &'static [&'static str] {
+    match action {
+        "listening_repair"
+        | "fade_prompts"
+        | "guided_retrieval"
+        | "spontaneous_retrieval"
+        | "automaticity_drill" => INTERVENTION_CLOSEOUT,
+        _ => PROBE_CLOSEOUT,
+    }
+}
+
 #[must_use]
 /// Return the LLM-facing observable criterion for one concrete tutor action.
 pub fn criterion_for_action(action: &str, capability: CapabilityKind) -> &'static str {
@@ -213,5 +251,22 @@ mod tests {
         );
         assert!(requirements.contains(&"response_millis_required"));
         assert!(!requirements.contains(&"response_millis_if_instrumented"));
+    }
+
+    #[test]
+    fn closeout_requires_outcome_persistence_and_card_evaluation() {
+        let probe = completion_requirements_for_action("diagnostic_spontaneous");
+        assert!(probe.contains(&"persist_task_outcome"));
+        assert!(probe.contains(&"evaluate_card_mutation_from_observed_outcome"));
+        assert!(probe.iter().any(|value| {
+            value.contains("new_high_value_item_needing_spaced_retrieval_or_transfer")
+        }));
+        assert!(probe.contains(&"no_duplicate_active_card_same_target_modality"));
+        assert!(probe.contains(&"no_card_for_mere_exposure_or_stable_independent_retrieval"));
+        assert!(!probe.contains(&"persist_intervention_if_applied"));
+
+        let repair = completion_requirements_for_action("fade_prompts");
+        assert!(repair.contains(&"persist_intervention_if_applied"));
+        assert!(repair.contains(&"evaluate_card_mutation_from_observed_outcome"));
     }
 }

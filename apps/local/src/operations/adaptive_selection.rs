@@ -627,6 +627,8 @@ pub(crate) fn selection_tutor_tasks(
             adaptation::criterion_for_action(&action, entry.capability).to_owned();
         let measurement_requirements =
             adaptation::measurement_requirements_for_action(&action, entry.capability).to_vec();
+        let completion_requirements =
+            adaptation::completion_requirements_for_action(&action).to_vec();
         output.push(adaptation::TutorTask {
             action,
             learning_item_id: id,
@@ -642,6 +644,7 @@ pub(crate) fn selection_tutor_tasks(
             rationale,
             success_criterion,
             measurement_requirements,
+            completion_requirements,
         });
     }
     output

@@ -45,8 +45,8 @@ pub use planner::{
     plan_diagnostic_probe_count, plan_next_lesson_fixed, plan_priorities, plan_success_criteria,
 };
 pub use queue::{
-    TutorTask, criterion, criterion_for_action, default_action, default_focus_score,
-    evidence_capability, measurement_requirements_for_action,
+    TutorTask, completion_requirements_for_action, criterion, criterion_for_action, default_action,
+    default_focus_score, evidence_capability, measurement_requirements_for_action,
 };
 pub use rules::{CardSignalView, GRADE_WINDOW, RecommendationView, visit_card_rules};
 #[cfg(fuzzing)]
