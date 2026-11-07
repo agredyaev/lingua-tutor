@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.1.6](https://github.com/agredyaev/lingua-tutor/compare/v0.1.5...v0.1.6) (2026-11-07)
+
+
+### Bug Fixes
+
+* align fuzz callers with updated error contracts ([f54921a](https://github.com/agredyaev/lingua-tutor/commit/f54921a30d8247a0f5d65c1e952768d6f2476980))
+* **ci:** align cross-platform fuzz and browser gates ([e8baf01](https://github.com/agredyaev/lingua-tutor/commit/e8baf0170b3d6279ebe7de0eeae76c437ca4b4ee))
+* **fuzz:** restore canonical coverage gates ([cd7252d](https://github.com/agredyaev/lingua-tutor/commit/cd7252d6e46085235cbd3f81526406461e11adad))
+* validate migration history in fuzz path ([ae269b3](https://github.com/agredyaev/lingua-tutor/commit/ae269b33df5d5eb6dfb027870001d8c3155949ad))
+
+
+### Refactoring
+
+* enforce DOD methodology and release invariants ([b6dab80](https://github.com/agredyaev/lingua-tutor/commit/b6dab80ddd009442c5c67d9745da7a79e3f961a6))
+* publish audited cleanup (1/5) ([0978189](https://github.com/agredyaev/lingua-tutor/commit/097818988b3a8d2ff9f9350ed5c8964318e4a7fe))
+* publish audited cleanup (2/5) ([c4f9434](https://github.com/agredyaev/lingua-tutor/commit/c4f943448c3638e5e8b703aa39a537ff1b7a7163))
+* publish audited cleanup (3/5) ([8e651b7](https://github.com/agredyaev/lingua-tutor/commit/8e651b757e6bce1ead0c9e27604e05aa0ae0160c))
+* publish audited cleanup (4/5) ([b698f6c](https://github.com/agredyaev/lingua-tutor/commit/b698f6ccadb9df62976a5a39588858454ed03d58))
+* publish audited cleanup (5/5) ([d6978db](https://github.com/agredyaev/lingua-tutor/commit/d6978dbc7341ae7d7e1224f655e14b9f4fa922ce))
+
 ## [0.1.5](https://github.com/agredyaev/lingua-tutor/compare/v0.1.4...v0.1.5) (2026-11-06)
 
 
