@@ -53,7 +53,7 @@ def main():
         if line.startswith('SF:'):
             try:file=str(Path(line[3:]).relative_to(ROOT))
             except ValueError:file=None
-            if file and not file.startswith(('apps/local/src/','crates/','language-packs/')):file=None
+            if file and not file.startswith(('apps/local/src/','crates/')):file=None
             if file and ('/tests/' in file or '/fuzzing' in file):file=None
             if file and file not in cutoffs:
                 source=(ROOT/file).read_text().splitlines()

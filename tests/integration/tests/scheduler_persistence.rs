@@ -6,7 +6,7 @@
 
 use integration_tests::{migrated_connection, seed_profile};
 use review_engine::{
-    FSRS_ID, Grade, ReviewEventInput, SchedulerSettings, Timestamp, apply_review, initial_state,
+    Grade, ReviewEventInput, SchedulerSettings, Timestamp, apply_review, initial_state,
     new_scheduler_scratch,
 };
 
@@ -36,13 +36,11 @@ fn review_event_persists_next_due_date() {
     )
     .unwrap();
 
-    let scheduler = FSRS_ID;
-    let scratch = new_scheduler_scratch(scheduler).unwrap();
+    let scratch = new_scheduler_scratch().unwrap();
     let settings = SchedulerSettings::default();
     let t0 = Timestamp(1_780_000_000);
-    let prior = initial_state(scheduler, t0).unwrap();
+    let prior = initial_state(t0);
     let result = apply_review(
-        scheduler,
         &scratch,
         &prior,
         &ReviewEventInput {

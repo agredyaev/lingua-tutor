@@ -24,51 +24,13 @@ fn between<'a>(source: &'a str, start: &str, end: &str) -> &'a str {
 
 #[test]
 fn public_read_paths_never_reconstruct_domain_objects() {
-    for source in [
-        between(
-            LESSONS,
-            "pub(crate) fn list_lessons_for",
-            "pub(crate) fn get_lesson",
-        ),
-        between(
-            LESSONS,
-            "pub(crate) fn get_lesson",
-            "pub(crate) fn validate_import_text",
-        ),
-        between(
-            ERRORS,
-            "pub(crate) fn list_error_targets_for",
-            "pub(crate) fn get_error_target",
-        ),
-        between(
-            ERRORS,
-            "pub(crate) fn get_error_target",
-            "#[derive(serde::Deserialize)]\npub(crate) struct ListeningAttemptParams",
-        ),
-        between(
-            ERRORS,
-            "fn active_error_context",
-            "fn planner_history_context",
-        ),
-        between(CARDS, "pub(crate) fn list_for", "pub(crate) fn get"),
-        between(CARDS, "pub(crate) fn get", "#[derive(serde::Deserialize)]"),
-        between(
-            PROFILES,
-            "pub(crate) fn list_profiles",
-            "#[derive(Deserialize)]\npub(crate) struct PatchProfileParams",
-        ),
-    ] {
+    for source in [LESSONS, ERRORS, CARDS, PROFILES] {
         assert!(
-            !source.contains("into_domain"),
-            "domain materialization returned to public read path"
-        );
-        assert!(
-            !source.contains("::from_row"),
-            "owned SQL row returned to public read path"
+            !source.contains("into_domain") && !source.contains("::from_row"),
+            "domain-row reconstruction returned to read projections"
         );
     }
 }
-
 #[test]
 fn adaptation_has_no_owned_compatibility_domain_api() {
     let files = [
@@ -130,6 +92,27 @@ fn adaptation_internal_relationships_use_dense_u32_keys() {
 }
 
 #[test]
+fn lesson_result_reference_validation_uses_one_sorted_index() {
+    let validation = include_str!("../../../crates/tutor-contract/src/validate.rs");
+    assert!(
+        validation.contains("let item_keys = collect_item_keys(result, &mut issues);")
+            && validation.contains("binary_search_by"),
+        "lesson-result references must share one sorted request-local index"
+    );
+    for forbidden in [
+        "keys.contains(&",
+        "known_keys.contains(&",
+        "seen.contains(",
+        ".iter().any(|learning_item_id",
+    ] {
+        assert!(
+            !validation.contains(forbidden),
+            "quadratic validation membership scan reintroduced: {forbidden}"
+        );
+    }
+}
+
+#[test]
 fn native_llm_surface_preserves_authoritative_methodology_contract() {
     let records = include_str!("../../../apps/local/src/handlers/records.rs");
     let mcp = include_str!("../../../apps/local/src/mcp_tools.rs");
@@ -152,17 +135,17 @@ fn native_llm_surface_preserves_authoritative_methodology_contract() {
         "Partial inspection only: failing cards",
     ] {
         assert!(
-            mcp.contains(name),
-            "partial MCP read can again masquerade as sufficient teaching context: {name}"
+            !mcp.contains(name),
+            "removed partial MCP surface reappeared: {name}"
         );
     }
 
     assert!(
         records.contains(
-            "минимум 1 diagnostic baseline и минимум 2 независимых measured probes overall"
-        ) && validation
-            .contains("at least 1 diagnostic baseline and 2 independent measured probes overall"),
-        "LLM lesson-result instructions drifted from backend measurement validation"
+            "Для calibration-eligible outcome нужен минимум 1 diagnostic baseline и минимум 2 measurement-eligible probes overall"
+        ) && records.contains("calibration_valid=false")
+            && validation.contains("pub fn measurement_coverage_counts"),
+        "LLM lesson-result instructions drifted from calibration coverage semantics"
     );
     assert!(
         !records.contains("минимум 2 полностью измеренных diagnostic probes"),
@@ -323,11 +306,24 @@ fn planner_history_uses_one_sql_pass_and_only_calibration_columns() {
         "fn planner_history_context",
         "pub(crate) fn tutor_context_for",
     );
-    assert!(path.contains("ORDER BY created_at DESC LIMIT 10"));
+    assert!(
+        path.contains("ORDER BY created_at DESC LIMIT ?2")
+            && ERRORS.contains(
+                "CALIBRATION_HISTORY_DECISIONS: i64 = adaptation::MAX_CALIBRATION_SNAPSHOTS as i64"
+            ),
+        "planner history must keep one bounded SQL scan backed by the shared calibration cap"
+    );
+    assert_eq!(adaptation::MAX_CALIBRATION_SNAPSHOTS, 10);
     assert!(path.contains("while let Some(row) = rows.next()?"));
-    assert!(path.contains("let mut timestamps = Vec::with_capacity(10);"));
-    assert!(path.contains("let mut capability_json = Vec::with_capacity(10);"));
-    assert!(path.contains("let mut outcome_json = Vec::with_capacity(10);"));
+    assert!(path.contains(
+        "let mut timestamps = Vec::with_capacity(adaptation::MAX_CALIBRATION_SNAPSHOTS);"
+    ));
+    assert!(path.contains(
+        "let mut capability_json = Vec::with_capacity(adaptation::MAX_CALIBRATION_SNAPSHOTS);"
+    ));
+    assert!(path.contains(
+        "let mut outcome_json = Vec::with_capacity(adaptation::MAX_CALIBRATION_SNAPSHOTS);"
+    ));
     assert!(
         !path.contains("task_candidates_json"),
         "planned candidates must not drive calibration"
@@ -352,8 +348,12 @@ fn calibration_is_explicit_columnar_processing_without_domain_traits() {
         "trait CalItem",
         "trait CalCandidate",
         "trait CalSnapshot",
+        "HashMap<",
         "BTreeMap<",
         "BTreeSet<",
+        ".position(|existing|",
+        "after_match",
+        "middle_start",
         "struct CompactSnapshot",
     ] {
         assert!(
@@ -370,6 +370,9 @@ fn calibration_is_explicit_columnar_processing_without_domain_traits() {
         "intervention_action: Vec<",
         "item_rate: Vec<",
         "item_observed_at: Vec<",
+        "ITEM_KEY_INDEX_CAPACITY",
+        "pending_intervention",
+        "pending_before_metric",
     ] {
         assert!(live.contains(required), "missing SoA storage: {required}");
     }
@@ -378,27 +381,21 @@ fn calibration_is_explicit_columnar_processing_without_domain_traits() {
 #[test]
 fn review_read_views_stream_sql_into_fixed_counters() {
     let review = include_str!("../../../apps/local/src/handlers/review.rs");
-    for (from, to) in [
-        ("pub(crate) fn summary_for", "pub(crate) fn forecast_for"),
-        ("pub(crate) fn forecast_for", "pub(crate) fn retention_for"),
-        ("pub(crate) fn retention_for", "pub(crate) fn evaluate"),
-    ] {
-        let read = between(review, from, to);
-        assert!(
-            !read.contains("collect::<rusqlite::Result<Vec<_>>>()"),
-            "{from} must not materialize SQL rows"
-        );
-        assert!(
-            read.contains("while let Some(row) = rows.next()?"),
-            "streaming pass missing: {from}"
-        );
-    }
+    assert!(
+        !review.contains("collect::<rusqlite::Result<Vec<_>>>()"),
+        "review projections must not materialize SQL rows"
+    );
+    assert_eq!(
+        review.matches("while let Some(row) = rows.next()?").count(),
+        3,
+        "summary, forecast, and retention must remain streaming passes"
+    );
 }
 
 #[test]
 fn legacy_review_runtime_implementation_is_absent() {
     let review = include_str!("../../../apps/local/src/handlers/review.rs");
-    let repository = include_str!("../../../apps/local/src/repositories/review.rs");
+    let sqlite = include_str!("../../../apps/local/src/sqlite.rs");
     for legacy in [
         "enum Scheduler",
         "fn scheduler_id(name: &str)",
@@ -409,90 +406,67 @@ fn legacy_review_runtime_implementation_is_absent() {
         "ScheduleStateRow",
     ] {
         assert!(
-            !review.contains(legacy) && !repository.contains(legacy),
+            !review.contains(legacy) && !sqlite.contains(legacy),
             "legacy review implementation remains: {legacy}"
         );
     }
 }
 
 #[test]
-fn answer_evaluation_uses_only_required_sql_columns() {
-    let review = include_str!("../../../apps/local/src/handlers/review.rs");
-    let path = review.split_once("pub(crate) fn evaluate(").unwrap().1;
-    assert!(!path.contains("CardRow::from_row"));
-    assert!(!path.contains("into_domain()"));
-    assert!(path.contains("SELECT answer, accepted_answers_json, intent, status, created_by"));
-}
-
-#[test]
 fn sqlite_enum_conversion_uses_pure_functions_not_trait_dispatch() {
-    let repository = include_str!("../../../apps/local/src/repositories/mod.rs");
+    let sqlite = include_str!("../../../apps/local/src/sqlite.rs");
     assert!(
-        !repository.contains("pub trait DbText"),
+        !sqlite.contains("pub trait DbText"),
         "DbText trait reintroduced"
     );
     assert!(
-        !repository.contains("impl DbText for"),
+        !sqlite.contains("impl DbText for"),
         "DbText object adapter reintroduced"
     );
     assert!(
-        !repository.contains("pub fn parse_enum<T:"),
+        !sqlite.contains("pub fn parse_enum<T:"),
         "generic enum conversion reintroduced"
     );
     assert!(
-        !repository.contains("pub fn enum_str<T:"),
+        !sqlite.contains("pub fn enum_str<T:"),
         "generic enum conversion reintroduced"
     );
     for name in [
+        "learning_item_type_db",
+        "learning_item_status_db",
+        "evidence_kind_db",
+        "card_status_from_db",
+        "card_status_db",
+        "core_error_category_db",
+        "card_intent_from_db",
+        "card_intent_db",
+        "mutation_operation_db",
+    ] {
+        assert!(
+            sqlite.contains(name),
+            "missing production-used SQLite enum pass: {name}"
+        );
+    }
+    for dead in [
         "profile_status_from_db",
+        "profile_status_db",
         "lesson_status_from_db",
+        "lesson_status_db",
         "lesson_source_from_db",
+        "lesson_source_db",
         "learning_item_type_from_db",
         "learning_item_status_from_db",
         "evidence_kind_from_db",
         "error_target_status_from_db",
-        "card_status_from_db",
-        "card_actor_from_db",
+        "error_target_status_db",
+        "card_actor_db",
         "core_error_category_from_db",
-        "card_intent_from_db",
         "mutation_operation_from_db",
     ] {
         assert!(
-            repository.contains(name),
-            "missing explicit enum pass: {name}"
+            !sqlite.contains(dead),
+            "test-only or unused SQLite enum pass reintroduced: {dead}"
         );
-    }
-}
-
-#[test]
-fn repository_domain_row_adapters_are_absent() {
-    for source in [
-        include_str!("../../../apps/local/src/repositories/profiles.rs"),
-        include_str!("../../../apps/local/src/repositories/lessons.rs"),
-        include_str!("../../../apps/local/src/repositories/records.rs"),
-        include_str!("../../../apps/local/src/repositories/cards.rs"),
-        include_str!("../../../apps/local/src/repositories/review.rs"),
-    ] {
-        for obsolete in [
-            "LanguageProfileRow",
-            "LearnerProfileRow",
-            "LessonRow",
-            "ItemRow",
-            "EvidenceRow",
-            "ErrorTargetRow",
-            "CardRow",
-            "ScheduleStateRow",
-            "PackRow",
-            "into_domain(",
-            "into_state(",
-            "from_domain(",
-            "from_state(",
-        ] {
-            assert!(
-                !source.contains(obsolete),
-                "legacy repository adapter remains: {obsolete}"
-            );
-        }
     }
 }
 
@@ -696,8 +670,7 @@ fn review_scheduler_uses_explicit_algorithm_passes_not_object_dispatch() {
         !source.contains("&dyn ReviewScheduler"),
         "virtual replay argument returned"
     );
-    assert!(source.contains("pub const FSRS_ID: u32"));
-    assert!(source.contains("pub const FALLBACK_ID: u32"));
+    assert!(source.contains("pub const ALGORITHM: &str = \"fsrs\""));
     for function in [
         "pub fn new_scheduler_scratch(",
         "pub fn initial_state(",
@@ -710,13 +683,46 @@ fn review_scheduler_uses_explicit_algorithm_passes_not_object_dispatch() {
             "missing explicit pass: {function}"
         );
     }
-    for file in [
-        include_str!("../../../crates/review-engine/src/fsrs_adapter.rs"),
-        include_str!("../../../crates/review-engine/src/fallback.rs"),
+    let file = include_str!("../../../crates/review-engine/src/fsrs_adapter.rs");
+    assert!(!file.contains("impl ReviewScheduler for"));
+    assert!(!file.contains("impl FsrsScheduler {"));
+    assert!(!file.contains("impl FallbackScheduler {"));
+}
+
+#[test]
+fn lesson_completion_has_no_implicit_latest_open_lesson_fallback() {
+    let complete = include_str!("../../../apps/local/src/operations/complete_lesson.rs");
+    let tools = include_str!("../../../apps/local/src/mcp_tools.rs");
+
+    assert!(
+        !complete.contains("ORDER BY started_at DESC LIMIT 1"),
+        "lesson completion still silently binds missing lesson_id to database state"
+    );
+    assert!(
+        tools.contains(r#"required: &["lesson_id"]"#),
+        "MCP complete_lesson must require the explicit start_lesson id"
+    );
+}
+
+#[test]
+fn review_runtime_has_one_scheduler_and_no_speculative_parameter_subsystem() {
+    let engine = include_str!("../../../crates/review-engine/src/lib.rs");
+    let schema = include_str!("../../../apps/local/migrations/0001_init.sql");
+    let review_repo = include_str!("../../../apps/local/src/sqlite.rs");
+
+    for forbidden in [
+        "FALLBACK_ID",
+        "mod fallback;",
+        r#"fallback" =>"#,
+        "parameter_set_id",
+        "scheduler_parameter_sets",
     ] {
-        assert!(!file.contains("impl ReviewScheduler for"));
-        assert!(!file.contains("impl FsrsScheduler {"));
-        assert!(!file.contains("impl FallbackScheduler {"));
+        assert!(
+            !engine.contains(forbidden)
+                && !schema.contains(forbidden)
+                && !review_repo.contains(forbidden),
+            "obsolete review subsystem remains: {forbidden}"
+        );
     }
 }
 
@@ -850,16 +856,6 @@ fn current_storage_schema_has_no_language_pack_identity() {
             !init.contains(forbidden),
             "obsolete storage identity remains: {forbidden}"
         );
-    }
-    let production = [
-        include_str!("../../../apps/local/src/repositories/profiles.rs"),
-        include_str!("../../../apps/local/src/repositories/lessons.rs"),
-        include_str!("../../../apps/local/src/repositories/records.rs"),
-        include_str!("../../../apps/local/src/repositories/cards.rs"),
-    ];
-    for source in production {
-        assert!(!source.contains("language_pack_id"));
-        assert!(!source.contains("language_pack_version"));
     }
 }
 
@@ -1204,7 +1200,7 @@ fn methodology_optimizes_communicative_outcome_not_proxies() {
         "Вовлечённость, естественность разговора и чувство прогресса — важные constraints",
         "Объяснение — это intervention, а не доказательство learning",
         "Новый материал — это expansion после контроля текущих ограничений",
-        "Если bottleneck остаётся нестабильным, новых элементов должно быть 0",
+        "Пока bottleneck остаётся нестабильным, optional expansion должен быть 0",
         "какой latent state пытается оценить",
     ] {
         assert!(
@@ -1212,6 +1208,85 @@ fn methodology_optimizes_communicative_outcome_not_proxies() {
             "methodology lost optimization-policy invariant: {required}"
         );
     }
+}
+
+#[test]
+fn methodology_ab_changes_require_predeclared_acceptance_gate() {
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let tutor_spec = include_str!("../../../docs/spec/07-tutor-contract.md");
+
+    for required in [
+        "primary outcome",
+        "control/baseline",
+        "unit of analysis",
+        "минимально важный effect size",
+        "выборки/power",
+        "правило остановки",
+        "uncertainty/CI",
+        "statistical significance",
+        "practical significance",
+        "optional stopping",
+        "результат остаётся UNVERIFIED",
+    ] {
+        assert!(
+            methodology.contains(required),
+            "methodology lost A/B acceptance guard: {required}"
+        );
+    }
+    for required in [
+        "predeclared primary outcome",
+        "control/baseline",
+        "unit of analysis",
+        "minimally important effect",
+        "sample/power plan",
+        "stopping rule",
+        "confidence interval",
+        "statistical significance",
+        "practical significance",
+    ] {
+        assert!(
+            tutor_spec.contains(required),
+            "tutor spec lost policy-level A/B acceptance guard: {required}"
+        );
+    }
+}
+
+#[test]
+fn communicative_task_success_requires_target_language_solution() {
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let records = include_str!("../../../apps/local/src/handlers/records.rs");
+    let tutor_spec = include_str!("../../../docs/spec/07-tutor-contract.md");
+
+    assert!(
+        methodology.contains("Исходный язык, жест или другое non-linguistic действие")
+            && methodology.contains("не заменять тот target-language материал"),
+        "Tutor methodology must not count source-language/non-linguistic substitution as L2 task success"
+    );
+    assert!(
+        records.contains(
+            "source-language или gesture-only workaround не является языковым task success"
+        ),
+        "LLM-facing lesson-result contract lost the strong v2 communicative-task rubric"
+    );
+    assert!(
+        tutor_spec.contains("Source-language or gesture-only workarounds do not count as v2"),
+        "Tutor spec lost the target-language requirement for communicative-task success"
+    );
+    assert!(
+        methodology
+            .contains("form-only упражнение — это practice/evidence, а не communicative task"),
+        "Tutor methodology must not count form-only drills as communicative tasks"
+    );
+    assert!(
+        records.contains("form-only drill (`скажи/повтори X`) не является communicative task"),
+        "LLM-facing contract must not count form-only drills as communicative tasks"
+    );
+    assert!(
+        tutor_spec.contains(
+            "form-only exercises are practice/evidence but do not increment `task_attempt_count`"
+        ),
+        "Tutor spec lost meaning-focused task-attempt semantics"
+    );
 }
 
 #[test]
@@ -1322,15 +1397,150 @@ fn tutor_owns_curriculum_direction_and_engine_persists_observed_context() {
 }
 
 #[test]
+fn error_recheck_lifecycle_is_closed_through_canonical_lesson_completion() {
+    let contract = include_str!("../../../crates/tutor-contract/src/lib.rs");
+    let complete = include_str!("../../../apps/local/src/operations/complete_lesson.rs");
+    let errors = include_str!("../../../apps/local/src/operations/error.rs");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let tutor_spec = include_str!("../../../docs/spec/07-tutor-contract.md");
+    let records = include_str!("../../../apps/local/src/handlers/records.rs");
+    let mcp = include_str!("../../../apps/local/src/mcp_tools.rs");
+
+    assert!(
+        contract.contains("pub error_rechecks: Vec<ErrorRecheckResult>"),
+        "lesson-result contract lost due error-recheck outcomes"
+    );
+    assert!(
+        complete.contains("apply_error_recheck(")
+            && complete.contains("Some(&result.language_profile_id)"),
+        "canonical complete_lesson no longer applies rechecks in the lesson transaction"
+    );
+    for required in [
+        "recheck_target_mismatch",
+        "recheck_profile_mismatch",
+        "recheck_not_due",
+        "recheck_not_unaided",
+        "recheck_context_missing",
+        "recheck_repair_missing",
+        "status='resolved',method_change_required=0",
+        "schedule_error_rechecks(database, target_id, now)",
+        "r.cycle",
+    ] {
+        assert!(
+            errors.contains(required),
+            "error recheck lifecycle lost invariant: {required}"
+        );
+    }
+    assert!(
+        methodology.contains(
+            "Если recheck failed, target логически возвращается в active practice на время corrective repair"
+        ) && methodology
+            .contains("Только полностью успешная spaced-серия закрывает target как resolved"),
+        "Tutor methodology drifted from deterministic error-recheck lifecycle"
+    );
+    assert!(
+        methodology.contains(
+            "достаточно подтверждённый провал независимой коммуникативной задачи → method-change → due error recheck"
+        ) && methodology.contains(
+            "recurring errors → evidence-based recommendations → sparse spontaneous-production diagnostic"
+        ) && methodology.contains(
+            "FSRS card backlog не является самостоятельной целью Tutor-урока"
+        ) && tutor_spec.contains(
+            "sufficiently sampled independent communicative-task failure → required method change → due error rechecks"
+        ) && tutor_spec.contains(
+            "FSRS card backlog is not a standalone Tutor-lesson objective"
+        ),
+        "Tutor/spec profile-level priority order drifted from deterministic planner"
+    );
+    assert!(
+        records.contains("\"error_rechecks\"") && records.contains("outcome в error_rechecks"),
+        "LLM-facing lesson-result contract stopped exposing recheck persistence"
+    );
+    assert!(
+        !mcp.contains("name: \"complete_error_recheck\""),
+        "maintenance recheck write leaked back into the canonical MCP surface"
+    );
+}
+
+#[test]
+fn recommendation_lifecycle_is_closed_through_canonical_lesson_completion() {
+    let contract = include_str!("../../../crates/tutor-contract/src/lib.rs");
+    let complete = include_str!("../../../apps/local/src/operations/complete_lesson.rs");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let records = include_str!("../../../apps/local/src/handlers/records.rs");
+    let mcp = include_str!("../../../apps/local/src/mcp_tools.rs");
+    let server = include_str!("../../../apps/local/src/server.rs");
+
+    assert!(
+        contract.contains("pub recommendation_resolutions: Vec<RecommendationResolution>")
+            && contract.contains("RecommendationResolutionStatus"),
+        "lesson-result contract lost recommendation disposition"
+    );
+    assert!(
+        complete.contains("WHERE id=?1 AND learner_language_profile_id=?2 AND status='open'")
+            && complete.contains("recommendation_resolution_status_id(resolution.status)"),
+        "canonical completion no longer owns recommendation state transition"
+    );
+    assert!(
+        methodology.contains("Open recommendation — это незавершённое решение")
+            && methodology.contains("status=`accepted`")
+            && methodology.contains("status=`dismissed`"),
+        "Tutor methodology lost recommendation lifecycle rules"
+    );
+    assert!(
+        records.contains("\"recommendation_resolutions\"")
+            && records.contains("\"recommendation_resolution_status\""),
+        "LLM-facing contract stopped exposing recommendation resolution"
+    );
+    assert!(
+        !mcp.contains("name: \"resolve_recommendation\"")
+            && !server.contains("\"resolve_recommendation\" =>"),
+        "recommendation lifecycle regressed to a separate maintenance write surface"
+    );
+}
+
+#[test]
+fn sticky_method_change_is_active_repair_pressure_not_recheck_interference() {
+    let planner_read = include_str!("../../../apps/local/src/operations/planner_read.rs");
+    let records = include_str!("../../../apps/local/src/handlers/records.rs");
+    let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
+    let tutor_spec = include_str!("../../../docs/spec/07-tutor-contract.md");
+
+    assert!(
+        planner_read.contains("method_change_required=1 AND status IN ('active','escalated')"),
+        "planner must preserve method-change pressure for active repair states without leaking it into recheck"
+    );
+    assert!(
+        planner_read.contains("status IN ('active','escalated')")
+            && !planner_read.contains("status IN ('active','recheck','escalated')"),
+        "recheck state must not create generic recurring-error repair pressure"
+    );
+    assert!(
+        records.contains("method_change_required = 1 AND status IN ('active','escalated')"),
+        "tutor-context method-change pressure must use the same active-repair state"
+    );
+    assert!(
+        methodology.contains("method_change_required — это constraint на следующий repair"),
+        "Tutor methodology must distinguish sticky repair constraint from repeated method switching"
+    );
+    assert!(
+        tutor_spec.contains(
+            "sticky repair constraint, not a command to reteach before each successful recheck"
+        ),
+        "Tutor spec lost method-change/recheck state semantics"
+    );
+}
+
+#[test]
 fn methodology_requires_distributed_evidence_and_fresh_mastery() {
     let methodology = include_str!("../../../apps/local/src/methodology_instructions_ru.md");
 
     for required in [
         "Сила evidence и decision-rate для capability растут по независимым learning episodes",
-        "Recall/task decision-rates усредняй по урокам",
+        "decision-rates усредняй по урокам, а не по числу попыток",
         "старше 28 дней не используй как authority",
-        "Переход в provisionally_mastered требует свежего unaided productive success",
-        "как минимум 2 независимых предыдущих lesson episodes",
+        "Переход в provisionally_mastered требует, чтобы последняя mastery-eligible non-practice productive exit-observation",
+        "как минимум 2 временно разнесённых предыдущих lesson episodes",
         "непустым `context_family`",
         "Свежий unresolved spontaneous-production failure блокирует full mastery",
         "84-дневном окне revalidation",
@@ -1354,10 +1564,10 @@ fn methodology_requires_distributed_evidence_and_fresh_mastery() {
         "Numeric effectiveness delta считай между pre-lesson capability snapshot и delayed future snapshot",
         "Если один следующий независимый success/failure способен перевести решение через operational threshold",
         "оба исхода ведут к одному и тому же action, не трать отдельный diagnostic slot",
-        "Prompt dependence считай установленной только когда достаточно evidence есть и на prompted, и на spontaneous стороне",
+        "Prompt dependence считай установленной только item-level для одного и того же learning item",
         "устойчиво подтверждённый gap (`listening_repair`)",
         "latency измерена как минимум в 2 независимых qualified episodes",
-        "минимум 1 diagnostic baseline и минимум 2 независимых measured probes overall",
+        "минимум 1 diagnostic baseline и минимум 2 measurement-eligible probes overall",
         "не увеличивай допустимый порог автоматически из-за числа слов в target_text",
     ] {
         assert!(
@@ -1370,6 +1580,7 @@ fn methodology_requires_distributed_evidence_and_fresh_mastery() {
 #[test]
 fn planner_recall_state_comes_from_persisted_evidence_not_tutor_counters() {
     let source = include_str!("../../../apps/local/src/operations/planner_read.rs");
+    let planner = include_str!("../../../crates/adaptation/src/planner.rs");
 
     assert!(
         source.contains("FROM learning_item_evidence e"),
@@ -1377,11 +1588,23 @@ fn planner_recall_state_comes_from_persisted_evidence_not_tutor_counters() {
     );
     assert!(
         source.contains("GROUP BY e.lesson_id"),
-        "planner recall state must retain lesson-level independence"
+        "planner spontaneous-production signal must retain lesson-level independence"
+    );
+    assert!(
+        source.contains("WHERE e.kind='spontaneous_production'"),
+        "profile production weakness must use spontaneous production only; same-item prompt dependence belongs to tutor_tasks"
     );
     assert!(
         source.contains("RECENT_SIGNAL_WINDOW_SECONDS"),
         "planner current-state evidence must have an explicit freshness window"
+    );
+    assert!(
+        source.contains("MIN_DISTRIBUTED_SUCCESS_GAP_SECONDS")
+            && source.contains("recall_temporally_distributed")
+            && source.contains("communicative_task_temporally_distributed")
+            && planner.contains("input.recent.recall_temporally_distributed")
+            && planner.contains("input.recent.communicative_task_temporally_distributed"),
+        "massed lesson IDs must not regain positive stretch authority"
     );
     assert!(
         !source.contains("m.unaided_recall_count"),
@@ -1401,10 +1624,17 @@ fn lesson_snapshot_and_live_tutor_use_same_selection_capacity() {
     for source in [start, records] {
         assert!(
             source.contains("adaptive_selection::DEFAULT_CANDIDATE_LIMIT")
-                && source.contains("adaptive_selection::DEFAULT_FOCUS_LIMIT"),
-            "lesson-start snapshot and live tutor context must share one selection-capacity contract"
+                && source.contains("adaptive_selection::DEFAULT_FOCUS_LIMIT")
+                && source.contains("adaptive_selection::effective_new_item_cap"),
+            "lesson-start snapshot and live tutor context must share one selection-capacity and post-selection load contract"
         );
     }
+    let selection = include_str!("../../../apps/local/src/operations/adaptive_selection.rs");
+    assert!(
+        selection.contains("task.action == \"fade_prompts\"")
+            && selection.contains("pub(crate) fn effective_new_item_cap"),
+        "same-item prompt dependence must deterministically suppress optional expansion"
+    );
 }
 
 #[test]
@@ -1464,7 +1694,7 @@ fn adaptive_state_regressions_keep_episode_freshness_and_revalidation() {
     assert!(
         lesson_plan.contains("latest_fresh_spontaneous_qualified != Some(false)")
             && lesson_plan.contains(".context_family")
-            && lesson_plan.contains("!family.trim().is_empty()"),
+            && lesson_plan.contains("stable_context_family_id"),
         "full mastery can again ignore unresolved spontaneous failure or empty transfer family"
     );
     for required in [
@@ -1523,9 +1753,11 @@ fn adaptive_state_regressions_keep_episode_freshness_and_revalidation() {
         "contract again permits a diagnostic baseline to masquerade as intervention outcome"
     );
     assert!(
-        contract_validate
-            .contains("at least 1 diagnostic baseline and 2 independent measured probes overall"),
-        "lesson measurement coverage drifted away from baseline plus independent delayed/transfer evidence"
+        contract_validate.contains("pub fn measurement_coverage_counts")
+            && complete_lesson.contains(
+                "let calibration_valid = diagnostic_probe_count >= 1 && measurement_eligible_probe_count >= 2"
+            ),
+        "lesson calibration coverage must stay explicit without turning sparse measurement into persistence failure"
     );
     assert!(
         !include_str!("../../../apps/local/src/methodology_instructions_ru.md")
@@ -1538,4 +1770,371 @@ fn adaptive_state_regressions_keep_episode_freshness_and_revalidation() {
             && !calibration.contains("default_true"),
         "calibration eligibility no longer fails closed for legacy outcomes"
     );
+}
+
+#[test]
+fn native_release_platform_paths_are_not_macos_only() {
+    let main = include_str!("../../../apps/local/src/main.rs");
+    let tunnel = include_str!("../../../apps/local/src/tunnel.rs");
+
+    for forbidden in [
+        r#"secure terminal input is currently supported on Unix only"#,
+        r#".args(["-f", "/dev/tty", "-echo"])"#,
+        r#".args(["-f", "/dev/tty", "echo"])"#,
+    ] {
+        assert!(
+            !main.contains(forbidden),
+            "platform-specific credential prompt leaked into release runtime: {forbidden}"
+        );
+    }
+    assert!(
+        !tunnel.contains(r#"const CURL_PATH: &str = "/usr/bin/curl";"#),
+        "secure tunnel is still hard-wired to a Unix curl path"
+    );
+    assert!(
+        main.contains("prompt_secret_windows"),
+        "Windows release lacks a hidden credential-input implementation"
+    );
+    assert!(
+        tunnel.contains("system_curl_path"),
+        "tunnel release lacks platform-aware system curl resolution"
+    );
+}
+
+#[test]
+fn release_build_requires_complete_generated_web_bundle() {
+    let build = include_str!("../../../apps/local/build.rs");
+    assert!(
+        build.contains(r#"env::var("PROFILE")"#),
+        "native build script does not distinguish release packaging from test compilation"
+    );
+    assert!(
+        build.contains("release web bundle is incomplete"),
+        "release packaging can still silently embed an incomplete generated web bundle"
+    );
+    for extension in [
+        r#""index.html""#,
+        r#"Some("wasm")"#,
+        r#"Some("js")"#,
+        r#"Some("css")"#,
+    ] {
+        assert!(
+            build.contains(extension),
+            "release web-bundle validation is missing required asset check: {extension}"
+        );
+    }
+}
+
+#[test]
+fn github_actions_are_pinned_to_immutable_commits() {
+    for path in [
+        "../../.github/workflows/ci.yml",
+        "../../.github/workflows/e2e.yml",
+        "../../.github/workflows/fuzz.yml",
+        "../../.github/workflows/release.yml",
+        "../../.github/workflows/release-please.yml",
+    ] {
+        let workflow =
+            std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
+                .unwrap();
+        for line in workflow.lines().map(str::trim) {
+            let Some(action) = line.strip_prefix("- uses: ") else {
+                continue;
+            };
+            if action.starts_with("./") {
+                continue;
+            }
+            let action = action.split_once(" #").map_or(action, |(value, _)| value);
+            let revision = action.rsplit_once('@').map_or("", |(_, revision)| revision);
+            assert!(
+                !revision.is_empty(),
+                "external action is missing a revision in {path}: {line}"
+            );
+            assert!(
+                revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "external action is not pinned to an immutable commit in {path}: {line}"
+            );
+        }
+    }
+}
+
+#[test]
+fn fsrs_dependency_is_exactly_pinned_to_persisted_algorithm_version() {
+    let manifest = include_str!("../../../crates/review-engine/Cargo.toml");
+    let engine = include_str!("../../../crates/review-engine/src/lib.rs");
+    assert!(
+        manifest.contains(r#"fsrs = "=6.6.1""#),
+        "FSRS must be exact-pinned because its implementation version is persisted"
+    );
+    assert!(
+        engine.contains(r#"pub const ALGORITHM_VERSION: &str = "fsrs-rs-6.6.1";"#),
+        "persisted scheduler version must match the exact FSRS dependency"
+    );
+}
+
+#[test]
+fn web_has_no_placeholder_or_behaviorless_routes() {
+    let app = include_str!("../../../apps/web/src/app.rs");
+    let misc = include_str!("../../../apps/web/src/pages/misc.rs");
+    let spec = include_str!("../../../docs/spec/09-frontend.md");
+    assert!(
+        !misc.contains("fn SettingsPage"),
+        "hardcoded settings placeholder component remains in the web binary"
+    );
+    for route in [
+        "/settings",
+        "/languages/:profile_id",
+        "/lessons/:id",
+        "/learning-items/:id",
+        "/errors/:id",
+        "/listening",
+        "/cards/redesign",
+    ] {
+        assert!(
+            !app.contains(&format!("path!(\"{route}\")")),
+            "route has no route-specific behavior: {route}"
+        );
+        assert!(
+            !spec.lines().any(|line| line.trim() == route),
+            "frontend spec still advertises behaviorless route: {route}"
+        );
+    }
+}
+
+#[test]
+fn fuzz_ci_has_locked_compile_preflight_before_long_fuzz_runs() {
+    let workflow = include_str!("../../../.github/workflows/fuzz.yml");
+    let preflight = "cargo +nightly check --locked --manifest-path fuzz/Cargo.toml --bins";
+    let first_fuzz = "cargo +nightly fuzz run lesson_result_parse";
+    let preflight_at = workflow.find(preflight).unwrap_or(usize::MAX);
+    let fuzz_at = workflow.find(first_fuzz).unwrap_or(usize::MAX);
+    assert!(
+        preflight_at != usize::MAX,
+        "fuzz workflow must compile its separate workspace with the committed lockfile"
+    );
+    assert!(
+        fuzz_at != usize::MAX,
+        "fuzz workflow must retain parser fuzzing"
+    );
+    assert!(
+        preflight_at < fuzz_at,
+        "locked fuzz compile preflight must run before expensive fuzz targets"
+    );
+}
+
+#[test]
+fn release_version_contract_covers_all_release_bearing_files() {
+    let config = include_str!("../../../release-please-config.json");
+    let ci = include_str!("../../../.github/workflows/ci.yml");
+    let app_manifest = include_str!("../../../apps/local/Cargo.toml");
+    let version = include_str!("../../../VERSION").trim();
+    let release_manifest = include_str!("../../../.release-please-manifest.json");
+
+    assert!(
+        config.contains(r#""version-file": "VERSION""#),
+        "release-please must own the canonical VERSION file"
+    );
+    assert!(
+        config.contains(r#""path": "apps/local/Cargo.toml""#),
+        "release-please does not update the shipped application manifest"
+    );
+    assert!(
+        app_manifest
+            .lines()
+            .any(|line| line.starts_with("version = ")
+                && line.contains("# x-release-please-version")),
+        "shipped application manifest lost the generic release-please marker"
+    );
+    let release_manifest_version = release_manifest
+        .lines()
+        .find(|line| line.trim_start().starts_with(r#""."#))
+        .and_then(|line| line.split('"').nth(3));
+    assert_eq!(
+        release_manifest_version,
+        Some(version),
+        "release-please manifest must match the canonical VERSION"
+    );
+    assert!(
+        ci.contains(
+            r#"grep -Fq "version = \"$version\" # x-release-please-version" apps/local/Cargo.toml"#
+        ),
+        "CI must verify the application manifest release marker before Cargo commands"
+    );
+    assert!(
+        ci.contains("release_manifest_version=")
+            && ci.contains(r#"test "$version" = "$release_manifest_version""#),
+        "CI must enforce VERSION equality with .release-please-manifest.json"
+    );
+
+    for lock in ["Cargo.lock", "fuzz/Cargo.lock"] {
+        assert!(
+            config.contains(&format!(r#""path": "{lock}""#)),
+            "release-please does not update {lock}"
+        );
+        assert!(
+            ci.contains(&format!(
+                r#"grep -Fq "version = \"$version\" # x-release-please-version" {lock}"#
+            )),
+            "CI must verify the generic release marker in {lock} before Cargo normalizes comments"
+        );
+    }
+    let release_check = ci
+        .find("- name: Release version consistency")
+        .unwrap_or(usize::MAX);
+    let first_cargo = ci.find("- name: Format").unwrap_or(usize::MAX);
+    assert!(
+        release_check < first_cargo,
+        "release marker consistency must run before Cargo commands can normalize Cargo.lock comments"
+    );
+    assert!(
+        ci.contains("lock_version=")
+            && ci.contains("fuzz_lock_version=")
+            && ci.contains(r#"test "$version" = "$lock_version""#)
+            && ci.contains(r#"test "$version" = "$fuzz_lock_version""#),
+        "CI does not enforce semantic version equality for both lockfiles"
+    );
+}
+
+#[test]
+fn card_mutation_contract_exposes_only_runtime_supported_operations() {
+    let contract = include_str!("../../../crates/tutor-contract/src/lib.rs");
+    let planner = include_str!("../../../apps/local/src/operations/card_plan.rs");
+    let schema = include_str!("../../../apps/local/migrations/0001_init.sql");
+    let spec = include_str!("../../../docs/spec/07-tutor-contract.md");
+
+    for variant in ["Split,", "Merge,", "AddListeningVariant,", "Link,"] {
+        assert!(
+            !contract.contains(variant),
+            "Tutor contract advertises an unsupported card mutation: {variant}"
+        );
+    }
+    assert!(
+        !planner.contains("not supported in M2; proposed via redesign loop"),
+        "runtime still carries always-rejected mutation branches"
+    );
+
+    let card_mutations_tail = schema
+        .split_once("CREATE TABLE card_mutations")
+        .map_or("", |(_, tail)| tail);
+    assert!(
+        !card_mutations_tail.is_empty(),
+        "card_mutations table must exist"
+    );
+    let card_mutations = card_mutations_tail
+        .split_once(");")
+        .map_or("", |(table, _)| table);
+    assert!(
+        !card_mutations.is_empty(),
+        "card_mutations table terminator must exist"
+    );
+    for operation in ["'split'", "'merge'", "'add_listening_variant'", "'link'"] {
+        assert!(
+            !card_mutations.contains(operation),
+            "fresh schema permits unsupported card mutation {operation}"
+        );
+    }
+
+    let operations_line = spec
+        .lines()
+        .find(|line| line.starts_with("Operations:"))
+        .unwrap_or("");
+    assert!(
+        !operations_line.is_empty(),
+        "card mutation operations line must exist"
+    );
+    for operation in ["`split`", "`merge`", "`add_listening_variant`", "`link`"] {
+        assert!(
+            !operations_line.contains(operation),
+            "spec advertises unsupported card mutation {operation}"
+        );
+    }
+}
+
+#[test]
+fn fuzz_write_surface_has_no_self_justifying_targets() {
+    let manifest = include_str!("../../../fuzz/Cargo.toml");
+    let workflow = include_str!("../../../.github/workflows/fuzz.yml");
+    for target in ["error_writes", "auxiliary_writes"] {
+        assert!(
+            !manifest.contains(&format!("name = \"{target}\"")),
+            "dedicated fuzz binary reintroduced: {target}"
+        );
+        assert!(
+            !workflow.contains(&format!("fuzz run {target}")),
+            "fuzz workflow invokes removed write target: {target}"
+        );
+    }
+
+    let system_state = include_str!("../../../fuzz/fuzz_targets/system_state.rs");
+    let fuzzing = include_str!("../../../apps/local/src/fuzzing.rs");
+    let error = include_str!("../../../apps/local/src/operations/error.rs");
+    assert!(!system_state.contains("exercise_error_writes"));
+    assert!(!fuzzing.contains("exercise_error_writes"));
+    assert!(!error.contains("fuzz_error_occurrence_sequence"));
+    assert!(
+        system_state.contains("exercise_auxiliary_writes"),
+        "real auxiliary write coverage must stay in canonical system_state fuzzing"
+    );
+    assert!(
+        !std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fuzz/fuzz_targets/auxiliary_writes.rs")
+            .exists(),
+        "dedicated auxiliary_writes target duplicates system_state coverage"
+    );
+}
+
+#[test]
+fn lean_runtime_surface_stays_minimal() {
+    let lib = include_str!("../../../apps/local/src/lib.rs");
+    let sqlite = include_str!("../../../apps/local/src/sqlite.rs");
+    let operations = include_str!("../../../apps/local/src/operations/mod.rs");
+    let tools = include_str!("../../../apps/local/src/mcp_tools.rs");
+    let server = include_str!("../../../apps/local/src/server.rs");
+    let card_direct = include_str!("../../../apps/local/src/operations/card_direct.rs");
+
+    assert!(!lib.contains("repositories"));
+    assert!(lib.contains("pub(crate) mod sqlite;"));
+    assert_eq!(
+        sqlite.matches("pub(crate) const ").count(),
+        4,
+        "sqlite boundary must contain only multi-consumer SQL"
+    );
+    assert!(!card_direct.contains("handlers::"));
+
+    for removed in [
+        "recommendation_ops",
+        "lesson_correction",
+        "records_write",
+        "upsert_cards",
+        "suspend_cards",
+        "log_error",
+    ] {
+        assert!(!operations.contains(&format!("mod {removed};")));
+    }
+
+    assert_eq!(tools.matches("        name: \"").count(), 4);
+    for required in [
+        "get_active_language_profile",
+        "get_tutor_context",
+        "start_lesson",
+        "complete_lesson",
+    ] {
+        assert!(tools.contains(&format!("name: \"{required}\"")));
+    }
+
+    for removed in [
+        "update_profile",
+        "get_lesson",
+        "get_error_target",
+        "patch_card",
+        "list_recommendations",
+        "resolve_recommendation",
+        "get_card_redesign_candidates",
+        "start_lesson",
+        "complete_lesson",
+        "create_listening_attempt",
+        "evaluate_review_answer",
+    ] {
+        assert!(!server.contains(&format!("\"{removed}\" =>")));
+    }
 }

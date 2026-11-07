@@ -13,8 +13,12 @@ pub fn migrations_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/local/migrations")
 }
 
-/// Fresh in-memory DB with every migration applied in numeric order and
+/// Fresh in-memory DB from the current baseline plus additive migrations and
 /// foreign keys ON (04-database.md §1).
+///
+/// Historical rewrite migrations 0006/0007/0008 are exercised separately against
+/// their real predecessor schemas; the current 0001 baseline already contains
+/// those transformations.
 #[must_use]
 pub fn migrated_connection() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
@@ -33,6 +37,7 @@ pub fn migrated_connection() -> Connection {
             let name = name.to_string_lossy();
             name.starts_with("0006_language_neutral_storage")
                 || name.starts_with("0007_semantic_metadata")
+                || name.starts_with("0008_remove_review_experiments")
         }) {
             continue;
         }

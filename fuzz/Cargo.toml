@@ -67,22 +67,8 @@ doc = false
 bench = false
 
 [[bin]]
-name = "maintenance_writes"
-path = "fuzz_targets/maintenance_writes.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
 name = "tunnel_wire"
 path = "fuzz_targets/tunnel_wire.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "error_writes"
-path = "fuzz_targets/error_writes.rs"
 test = false
 doc = false
 bench = false
