@@ -22,6 +22,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     files.sort_by(|left, right| left.0.cmp(&right.0));
 
+    if fuzzing && !files.iter().any(|(name, _)| name == "index.html") {
+        let fuzz_index = PathBuf::from(env::var("OUT_DIR")?).join("fuzz-index.html");
+        fs::write(&fuzz_index, b"<!doctype html><title>fuzz</title>")?;
+        files.push(("index.html".to_owned(), fuzz_index));
+    }
+
     if profile == "release" && !fuzzing {
         let has_index = files.iter().any(|(name, _)| name == "index.html");
         let has_wasm = files

@@ -32,6 +32,8 @@ pub use capability::{
     ItemCapabilityStateFixed, ItemCapabilityView, MAX_CAPABILITY_OBSERVATIONS, TextSetRef,
     item_capability_view, project_item_capabilities_columns,
 };
+#[cfg(fuzzing)]
+pub use focus::fuzz_support as fuzz_focus_support;
 pub use focus::{
     TutorFocusDecisionView, format_focus_policy, format_focus_rationale,
     visit_tutor_focus_decisions,
@@ -47,6 +49,8 @@ pub use queue::{
     evidence_capability,
 };
 pub use rules::{CardSignalView, GRADE_WINDOW, RecommendationView, visit_card_rules};
+#[cfg(fuzzing)]
+pub use tasks::fuzz_support as fuzz_tasks_support;
 pub use tasks::{TaskCandidateView, visit_task_candidates};
 
 /// One study day's signals, most recent first.

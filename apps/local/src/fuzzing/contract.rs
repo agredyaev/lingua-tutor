@@ -8,7 +8,7 @@ pub fn exercise_contract(data: &[u8]) {
     let mut doc = serde_json::to_value(rich_lesson_result("p", "op".into(), None, 0))
         .expect("serialize fixture");
     let long = "ñ".repeat(tutor_contract::bounds::MAX_LONG_TEXT + 1);
-    match seed % 16 {
+    match seed % 20 {
         0 => {
             doc["schema_version"] = json!("unknown");
             doc["client_operation_id"] = json!("");
@@ -145,7 +145,7 @@ pub fn exercise_contract(data: &[u8]) {
             all.push(m);
             doc["card_mutations"] = json!(all);
         }
-        _ => {
+        14 | 15 => {
             doc["metrics"]["task_attempt_count"] = json!(if seed & 1 == 0 { 0 } else { 2 });
             doc["metrics"]["task_success_count"] = json!(3);
             if seed & 1 != 0 {
@@ -154,6 +154,115 @@ pub fn exercise_contract(data: &[u8]) {
             doc["metrics"]["listening_score"] = json!(2);
             doc["metrics"]["confidence"] = json!(-1);
         }
+        16 => {
+            doc["mastery_changes"] = json!([
+                {"learning_item_id":"known","new_status":"candidate"},
+                {"learning_item_id":"known","new_status":"learning"}
+            ]);
+        }
+        17 => {
+            let long_id = "x".repeat(tutor_contract::bounds::MAX_ID + 1);
+            let long_context = "x".repeat(tutor_contract::bounds::MAX_SHORT_TEXT + 1);
+            doc["error_rechecks"] = json!([
+                {
+                    "error_target_id":"",
+                    "recheck_id":"",
+                    "passed":true,
+                    "assistance_level":1,
+                    "context":"",
+                    "repair_applied":true,
+                    "repair_action":"repair"
+                },
+                {
+                    "error_target_id":long_id,
+                    "recheck_id":"duplicate",
+                    "passed":false,
+                    "assistance_level":0,
+                    "context":long_context,
+                    "repair_applied":false,
+                    "repair_action":"unexpected"
+                },
+                {
+                    "error_target_id":"target",
+                    "recheck_id":"duplicate",
+                    "passed":false,
+                    "assistance_level":0,
+                    "context":"context",
+                    "repair_applied":true,
+                    "repair_action":""
+                },
+                {
+                    "error_target_id":"target",
+                    "recheck_id":"long-action",
+                    "passed":false,
+                    "assistance_level":0,
+                    "context":"context",
+                    "repair_applied":true,
+                    "repair_action":"x".repeat(tutor_contract::bounds::MAX_ID + 1)
+                },
+                {
+                    "error_target_id":"target",
+                    "recheck_id":"invalid-action",
+                    "passed":false,
+                    "assistance_level":0,
+                    "context":"context",
+                    "repair_applied":true,
+                    "repair_action":"Not_Canonical"
+                },
+                {
+                    "error_target_id":"target",
+                    "recheck_id":"missing-action",
+                    "passed":false,
+                    "assistance_level":0,
+                    "context":"context",
+                    "repair_applied":true
+                }
+            ]);
+        }
+        18 => {
+            let long_id = "x".repeat(tutor_contract::bounds::MAX_ID + 1);
+            doc["recommendation_resolutions"] = json!([
+                {"recommendation_id":"","status":"accepted","repair_action":""},
+                {"recommendation_id":long_id,"status":"dismissed","repair_action":"repair"},
+                {"recommendation_id":"duplicate","status":"accepted","repair_action":"Not_Canonical"},
+                {"recommendation_id":"duplicate","status":"accepted","repair_action":"x".repeat(tutor_contract::bounds::MAX_ID + 1)}
+            ]);
+        }
+        _ => {
+            let evidence = doc["evidence"][0].clone();
+            let listening = doc["listening_attempts"][0].clone();
+            doc["evidence"] = json!([evidence]);
+            doc["listening_attempts"] = json!([listening]);
+            let template = doc["interventions"][0].clone();
+            let mut both = template.clone();
+            both["evidence_index"] = json!(0);
+            both["listening_attempt_index"] = json!(0);
+            let mut missing_evidence = template.clone();
+            missing_evidence["evidence_index"] = json!(255);
+            missing_evidence["listening_attempt_index"] = Value::Null;
+            let mut mismatched_evidence = template.clone();
+            mismatched_evidence["evidence_index"] = json!(0);
+            mismatched_evidence["listening_attempt_index"] = Value::Null;
+            mismatched_evidence["target_capability"] = json!("transfer");
+            mismatched_evidence["learning_item_id"] = json!("different");
+            mismatched_evidence["client_item_key"] = Value::Null;
+            let mut missing_listening = template.clone();
+            missing_listening["evidence_index"] = Value::Null;
+            missing_listening["listening_attempt_index"] = json!(255);
+            let mut mismatched_listening = template;
+            mismatched_listening["evidence_index"] = Value::Null;
+            mismatched_listening["listening_attempt_index"] = json!(0);
+            mismatched_listening["target_capability"] = json!("recognition");
+            mismatched_listening["learning_item_id"] = json!("different");
+            mismatched_listening["client_item_key"] = Value::Null;
+            doc["interventions"] = json!([
+                both,
+                missing_evidence,
+                mismatched_evidence,
+                missing_listening,
+                mismatched_listening
+            ]);
+        }
     }
     let text = doc.to_string();
     if let Ok(result) = tutor_contract::parse_lesson_result(&text) {
@@ -161,6 +270,31 @@ pub fn exercise_contract(data: &[u8]) {
         let b = tutor_contract::validate(&result);
         assert_eq!(a, b);
         assert!(!a.is_empty(), "invalid structured fixture must be rejected");
+        let _ = tutor_contract::measurement_coverage_counts(&result);
+        assert_eq!(
+            tutor_contract::communicative_task_rubric_id(
+                tutor_contract::CommunicativeTaskRubric::GoalAchievementV1
+            ),
+            tutor_contract::COMMUNICATIVE_TASK_SUCCESS_RUBRIC_V1
+        );
+        assert_eq!(
+            tutor_contract::communicative_task_rubric_id(
+                tutor_contract::CommunicativeTaskRubric::IndependentGoalAchievementV2
+            ),
+            tutor_contract::COMMUNICATIVE_TASK_SUCCESS_RUBRIC_V2
+        );
+        assert_eq!(
+            tutor_contract::recommendation_resolution_status_id(
+                tutor_contract::RecommendationResolutionStatus::Accepted
+            ),
+            "accepted"
+        );
+        assert_eq!(
+            tutor_contract::recommendation_resolution_status_id(
+                tutor_contract::RecommendationResolutionStatus::Dismissed
+            ),
+            "dismissed"
+        );
         for p in [
             tutor_contract::ProbePhase::Diagnostic,
             tutor_contract::ProbePhase::Practice,

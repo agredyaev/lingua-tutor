@@ -429,3 +429,74 @@ mod tests {
         assert_eq!(found, Some((true, 0)));
     }
 }
+
+// FUZZ SUPPORT BELOW: excluded from production line coverage.
+#[cfg(fuzzing)]
+/// Exercise focus scoring branches from the system-state fuzz harness.
+pub fn fuzz_support(seed: u8) {
+    let estimate = |rate: Option<f64>, strength: f64, streak: u8, families: u16, attempts: u32| {
+        CapabilityEstimateView {
+            attempts,
+            successes: attempts,
+            weighted_success_rate: rate,
+            unaided_success_rate: rate,
+            latency_weighted_millis: Some(6_000),
+            latency_evidence_episodes: 2,
+            qualified_success_streak: streak,
+            distinct_success_contexts: 2,
+            distinct_success_families: families,
+            successful_contexts: &["shop", "home"],
+            successful_context_families: &["commerce", "domestic"],
+            evidence_strength: strength,
+            effective_evidence_weight: 4.0,
+            unaided_evidence_weight: 4.0,
+            unaided_evidence_episodes: 4,
+            independent_evidence_episodes: 4,
+            last_observed_at_unix: Some(0),
+            last_observed_success: Some(true),
+            last_observed_qualified_success: Some(true),
+        }
+    };
+    let weak = estimate(Some(0.5), 0.5, seed % 5, 1, 4);
+    let spontaneous = estimate(Some(0.9), 0.8, 3, 2, 4);
+    let transfer = if seed & 1 == 0 {
+        estimate(Some(0.5), 0.5, 1, 1, 4)
+    } else {
+        estimate(Some(0.9), 0.8, 3, 3, 4)
+    };
+    let item = ItemCapabilityView {
+        learning_item_id: "fuzz-item",
+        target_text: "hablar",
+        status: "learning",
+        recognition: weak,
+        listening: weak,
+        prompted_production: weak,
+        spontaneous_production: spontaneous,
+        transfer,
+    };
+    visit_tutor_focus_decisions(item, 20 * DAY_SECONDS, |_| {});
+    let _ = consolidated(CapabilityKind::Listening, estimate(Some(0.9), 0.8, 3, 3, 4));
+    let _ = consolidated(
+        CapabilityKind::SpontaneousProduction,
+        estimate(Some(0.9), 0.8, 3, 3, 4),
+    );
+    let _ = consolidated(CapabilityKind::Transfer, estimate(Some(0.9), 0.8, 3, 3, 4));
+    let _ = consolidated(CapabilityKind::Recognition, weak);
+    let _ = consolidated(CapabilityKind::PromptedProduction, weak);
+    let mut zero = weak;
+    zero.attempts = 0;
+    let _ = spacing_stage(zero);
+    for streak in 1..=4 {
+        let _ = spacing_stage(estimate(Some(0.5), 0.5, streak, 1, 4));
+    }
+    let _ = format_focus_policy(CapabilityKind::Transfer, &[], &[]);
+    let _ = format_focus_policy(CapabilityKind::Transfer, &[], &["commerce", "travel"]);
+    let _ = format_focus_policy(CapabilityKind::SpontaneousProduction, &[], &[]);
+    let _ = format_focus_policy(
+        CapabilityKind::SpontaneousProduction,
+        &["shop", "home"],
+        &[],
+    );
+    let _ = format_focus_policy(CapabilityKind::Listening, &[], &[]);
+    let _ = format_focus_policy(CapabilityKind::Recognition, &[], &[]);
+}

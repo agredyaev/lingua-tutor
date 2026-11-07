@@ -131,8 +131,6 @@ pub fn exercise_review_states(data: &[u8]) {
         .map(|r| r["card_id"].as_str().expect("queue card id"))
         .collect::<std::collections::BTreeSet<_>>();
     assert_eq!(ids.len(), rows.len());
-    // All answer evaluation paths use the real stored card.
-    let answer = String::from_utf8_lossy(data);
     // A long effective event stream followed by undo drives replay and recommendation rules.
     for n in 0..12 {
         let prior = schedule_hash(&env, &card).expect("current hash");

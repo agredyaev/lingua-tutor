@@ -706,3 +706,92 @@ mod tests {
         );
     }
 }
+
+// FUZZ SUPPORT BELOW: excluded from production line coverage.
+#[cfg(fuzzing)]
+/// Exercise task-candidate scoring branches from the system-state fuzz harness.
+pub fn fuzz_support() {
+    let estimate = |rate: Option<f64>, strength: f64, attempts: u32| CapabilityEstimateView {
+        attempts,
+        successes: attempts,
+        weighted_success_rate: rate,
+        unaided_success_rate: rate,
+        latency_weighted_millis: Some(6_500),
+        latency_evidence_episodes: 2,
+        qualified_success_streak: 3,
+        distinct_success_contexts: 2,
+        distinct_success_families: 2,
+        successful_contexts: &["shop", "home"],
+        successful_context_families: &["commerce", "domestic"],
+        evidence_strength: strength,
+        effective_evidence_weight: 5.0,
+        unaided_evidence_weight: 5.0,
+        unaided_evidence_episodes: 4,
+        independent_evidence_episodes: 4,
+        last_observed_at_unix: Some(100),
+        last_observed_success: Some(true),
+        last_observed_qualified_success: Some(true),
+    };
+    let strong = estimate(Some(0.9), 0.8, 4);
+    let weak = estimate(Some(0.4), 0.8, 4);
+    let uncertain = estimate(None, 0.2, 0);
+
+    let prompt_gap = ItemCapabilityView {
+        learning_item_id: "prompt-gap",
+        target_text: "quiero agua",
+        status: "learning",
+        recognition: strong,
+        listening: strong,
+        prompted_production: strong,
+        spontaneous_production: weak,
+        transfer: weak,
+    };
+    visit_task_candidates(prompt_gap, "probe_prompt_independence", |_| {});
+
+    let listening_gap = ItemCapabilityView {
+        learning_item_id: "listening-gap",
+        target_text: "donde",
+        status: "learning",
+        recognition: strong,
+        listening: weak,
+        prompted_production: strong,
+        spontaneous_production: strong,
+        transfer: weak,
+    };
+    visit_task_candidates(listening_gap, "diagnose_and_expand", |_| {});
+
+    let transfer_gap = ItemCapabilityView {
+        learning_item_id: "transfer-gap",
+        target_text: "necesito ayuda",
+        status: "transfer_pending",
+        recognition: strong,
+        listening: strong,
+        prompted_production: strong,
+        spontaneous_production: strong,
+        transfer: weak,
+    };
+    visit_task_candidates(transfer_gap, "diagnose_and_expand", |_| {});
+
+    let diagnostic = ItemCapabilityView {
+        learning_item_id: "diagnostic",
+        target_text: "hola",
+        status: "introduced",
+        recognition: uncertain,
+        listening: uncertain,
+        prompted_production: uncertain,
+        spontaneous_production: uncertain,
+        transfer: uncertain,
+    };
+    visit_task_candidates(diagnostic, "probe_prompt_independence", |_| {});
+    let mut inactive = diagnostic;
+    inactive.status = "retired";
+    visit_task_candidates(inactive, "probe_prompt_independence", |_| {});
+
+    let _ = needs_diagnostic(uncertain);
+    let _ = uncertainty_points(uncertain);
+    let _ = decision_fragile(None, 1.0, 0.7);
+    let _ = decision_fragile(Some(0.8), 0.0, 0.7);
+    let _ = decision_fragile(Some(0.7), 1.0, 0.7);
+    let _ = gap_points(None, 0.8, 18);
+    let _ = boosted(95, "x", "x");
+}

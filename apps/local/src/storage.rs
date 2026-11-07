@@ -1297,7 +1297,7 @@ pub(crate) fn fuzz_storage(data: &[u8]) {
     let dir = std::env::temp_dir().join(format!("lingua-storage-fuzz-{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&dir).expect("directory");
     let path = dir.join("db.sqlite3");
-    let version = 1 + i64::from(seed % 5);
+    let version = 1 + i64::from(seed % 10);
     let db = Connection::open(&path).expect("db");
     db.execute_batch(LEGACY_INIT).expect("v1 schema");
     db.execute_batch("CREATE TABLE schema_migrations(id INTEGER PRIMARY KEY,name TEXT UNIQUE NOT NULL,applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL); INSERT INTO schema_migrations(id,name) VALUES(1,'0001_init.sql');PRAGMA user_version=1;").expect("history");
@@ -1306,6 +1306,11 @@ pub(crate) fn fuzz_storage(data: &[u8]) {
         (3, MIGRATION_3, "0003_review_methodology.sql"),
         (4, MIGRATION_4, "0004_methodology_calibration.sql"),
         (5, MIGRATION_5, "0005_methodology_semantics.sql"),
+        (6, MIGRATION_6, "0006_language_neutral_storage.sql"),
+        (7, MIGRATION_7, "0007_semantic_metadata.sql"),
+        (8, MIGRATION_8, "0008_remove_review_experiments.sql"),
+        (9, MIGRATION_9, "0009_error_recheck_cycles.sql"),
+        (10, MIGRATION_10, "0010_error_recheck_repair_action.sql"),
     ] {
         if v <= version {
             db.execute_batch(sql).expect("seed schema");
@@ -1427,6 +1432,25 @@ pub(crate) fn fuzz_storage(data: &[u8]) {
         )
         .expect("invalid fk fixture");
     assert!(validate(&invalid_fk).is_err());
+
+    let missing_history = dir.join("missing-history.sqlite3");
+    drop(open(&missing_history).expect("initialize missing-history fixture"));
+    Connection::open(&missing_history)
+        .expect("missing-history db")
+        .execute("DELETE FROM schema_migrations WHERE id=5", [])
+        .expect("delete migration history row");
+    assert!(open(&missing_history).is_err());
+
+    let extra_history = dir.join("extra-history.sqlite3");
+    drop(open(&extra_history).expect("initialize extra-history fixture"));
+    Connection::open(&extra_history)
+        .expect("extra-history db")
+        .execute(
+            "INSERT INTO schema_migrations(id,name) VALUES(12,'0012_unknown.sql')",
+            [],
+        )
+        .expect("append unsupported migration history row");
+    assert!(open(&extra_history).is_err());
 
     if seed & 7 == 0 {
         let assets = dir.join("assets");

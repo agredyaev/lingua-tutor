@@ -4196,3 +4196,228 @@ fn plan_error(error: super::lesson_plan::LessonPlanError) -> crate::Error {
         serde_json::Value::Null,
     )
 }
+
+// FUZZ SUPPORT BELOW: excluded from production line coverage.
+
+/// Exercise private completion passes through real bounded state and SQLite rows.
+#[cfg(fuzzing)]
+#[allow(clippy::expect_used, missing_docs)]
+pub(crate) fn fuzz_private_paths(
+    env: &crate::Env,
+    profile_id: &str,
+    base: &tutor_contract::LessonResult,
+) {
+    let mut database = env.connection().expect("completion fuzz connection");
+    let transaction = database.transaction().expect("completion fuzz transaction");
+    let now = learning_core::Timestamp(crate::api::now().0.saturating_sub(86_400));
+    let at = crate::sqlite::to_rfc3339(now);
+
+    // Pure helper branches used by completion admission/calibration.
+    let mut left = base
+        .listening_attempts
+        .first()
+        .cloned()
+        .expect("rich fuzz listening attempt");
+    left.source_variant_id = Some("variant-a".to_owned());
+    left.talker_key = Some("talker-a".to_owned());
+    left.context_tag = Some("context-a".to_owned());
+    let mut right = left.clone();
+    right.source_variant_id = Some("variant-b".to_owned());
+    assert!(listening_variant_differs(&left, &right));
+    right.source_variant_id = left.source_variant_id.clone();
+    right.talker_key = Some("talker-b".to_owned());
+    assert!(listening_variant_differs(&left, &right));
+    right.talker_key = left.talker_key.clone();
+    right.context_tag = Some("context-b".to_owned());
+    assert!(listening_variant_differs(&left, &right));
+
+    let mut transfer_a = base.evidence[0].clone();
+    transfer_a.kind = learning_core::EvidenceKind::Transfer;
+    transfer_a.context_family = Some("family-a".to_owned());
+    let mut transfer_b = transfer_a.clone();
+    transfer_b.context_family = Some("family-b".to_owned());
+    assert!(transfer_family_differs(&transfer_a, &transfer_b));
+
+    let mut calibration_result = base.clone();
+    calibration_result.evidence = vec![base.evidence[0].clone(), base.evidence[1].clone()];
+    calibration_result.evidence[0].probe_phase = Some(tutor_contract::ProbePhase::Diagnostic);
+    calibration_result.evidence[0].assistance_level = Some(0);
+    calibration_result.evidence[1].probe_phase = Some(tutor_contract::ProbePhase::Practice);
+    let evidence_intervention = tutor_contract::InterventionEvent {
+        action: "fuzz".to_owned(),
+        learning_item_id: Some("li-fuzz".to_owned()),
+        client_item_key: None,
+        target_capability: learning_core::EvidenceKind::SpontaneousProduction,
+        evidence_index: Some(1),
+        listening_attempt_index: None,
+    };
+    let _ = intervention_calibration_eligible(&calibration_result, &evidence_intervention);
+
+    let mut listening_result = base.clone();
+    let mut diagnostic = left.clone();
+    diagnostic.learning_item_id = Some("li-fuzz".to_owned());
+    diagnostic.client_item_key = None;
+    diagnostic.probe_phase = Some(tutor_contract::ProbePhase::Diagnostic);
+    diagnostic.assistance_level = Some(0);
+    let mut post = diagnostic.clone();
+    post.probe_phase = Some(tutor_contract::ProbePhase::Practice);
+    post.source_variant_id = Some("variant-post".to_owned());
+    listening_result.listening_attempts = vec![diagnostic, post];
+    let listening_intervention = tutor_contract::InterventionEvent {
+        action: "fuzz-listening".to_owned(),
+        learning_item_id: Some("li-fuzz".to_owned()),
+        client_item_key: None,
+        target_capability: learning_core::EvidenceKind::Listening,
+        evidence_index: None,
+        listening_attempt_index: Some(1),
+    };
+    let _ = intervention_calibration_eligible(&listening_result, &listening_intervention);
+
+    assert_eq!(canonical_target_text("  uno\t dos  "), "uno dos");
+    let mut error_a = base.error_occurrences[0].clone();
+    let mut error_b = error_a.clone();
+    error_a.communicative_impact = learning_core::CommunicativeImpact::Low;
+    error_b.communicative_impact = learning_core::CommunicativeImpact::High;
+    assert!(same_lesson_error_target(&error_a, &error_b));
+    assert_eq!(
+        strongest_lesson_error_impact(&[error_a.clone(), error_b.clone()], &error_a),
+        learning_core::CommunicativeImpact::High
+    );
+    error_b.error_target_id = Some("other-target".to_owned());
+    assert!(!same_lesson_error_target(&error_a, &error_b));
+
+    // Real recommendation rows exercise the private resolution pass without
+    // mutating the caller because this transaction is intentionally rolled back.
+    for (id, method_change_required, status) in [
+        ("fuzz-rec-error", false, "active"),
+        ("fuzz-rec-change", true, "active"),
+        ("fuzz-rec-inactive", false, "recheck"),
+    ] {
+        crate::operations::error::insert_error_target(
+            &transaction,
+            id,
+            profile_id,
+            "grammar",
+            None,
+            "wrong",
+            "right",
+            Some("completion fuzz target"),
+            1,
+            method_change_required,
+            status,
+            &at,
+        )
+        .expect("seed completion fuzz error target");
+    }
+
+    transaction
+        .execute(
+            "INSERT INTO recommendations
+             (id,learner_language_profile_id,subject_type,subject_id,action,detail_json,status,created_at,resolved_at)
+             VALUES
+             ('rec-prev',?1,'error_target','fuzz-rec-change','require_method_change',
+              json_object('repair_action','repeat_drill'),'accepted',?2,?2),
+             ('rec-repair',?1,'error_target','fuzz-rec-error','practice_again','{}','open',?2,NULL),
+             ('rec-repair-missing',?1,'error_target','fuzz-rec-error','practice_again','{}','open',?2,NULL),
+             ('rec-change-same',?1,'error_target','fuzz-rec-change','require_method_change','{}','open',?2,NULL),
+             ('rec-change-diff',?1,'error_target','fuzz-rec-change','require_method_change','{}','open',?2,NULL),
+             ('rec-inactive',?1,'error_target','fuzz-rec-inactive','practice_again','{}','open',?2,NULL),
+             ('rec-no-target',?1,'error_target',NULL,'practice_again','{}','open',?2,NULL),
+             ('rec-missing-target',?1,'error_target','missing-error','practice_again','{}','open',?2,NULL),
+             ('rec-card-null',?1,'card',NULL,'redesign_card','{}','open',?2,NULL),
+             ('rec-card',?1,'card','missing-card','redesign_card','{}','open',?2,NULL),
+             ('rec-learning',?1,'learning_item','never-observed','practice_in_lesson','{}','open',?2,NULL),
+             ('rec-dismiss',?1,'learning_item','li-fuzz','practice_in_lesson','{}','open',?2,NULL),
+             ('rec-unexpected-repair',?1,'learning_item','li-fuzz','practice_in_lesson','{}','open',?2,NULL)",
+            rusqlite::params![profile_id, at],
+        )
+        .expect("seed completion fuzz recommendations");
+
+    let card_state = super::card_plan::new_card_plan_state(0);
+    let card_plan =
+        super::card_plan::plan_card_mutations(&[], &card_state).expect("empty card plan");
+
+    let run = |recommendation_id: &str,
+               status: tutor_contract::RecommendationResolutionStatus,
+               repair_action: Option<&str>| {
+        let mut result = base.clone();
+        result.language_profile_id = profile_id.to_owned();
+        result.recommendation_resolutions = vec![tutor_contract::RecommendationResolution {
+            recommendation_id: recommendation_id.to_owned(),
+            status,
+            repair_action: repair_action.map(str::to_owned),
+        }];
+        apply_recommendation_resolutions(&transaction, &result, &card_plan, now, &at)
+    };
+
+    let _ = run(
+        "not-open",
+        tutor_contract::RecommendationResolutionStatus::Accepted,
+        None,
+    );
+    let _ = run(
+        "rec-card-null",
+        tutor_contract::RecommendationResolutionStatus::Accepted,
+        None,
+    );
+    let _ = run(
+        "rec-card",
+        tutor_contract::RecommendationResolutionStatus::Accepted,
+        None,
+    );
+    let _ = run(
+        "rec-learning",
+        tutor_contract::RecommendationResolutionStatus::Accepted,
+        None,
+    );
+    let _ = run(
+        "rec-repair-missing",
+        tutor_contract::RecommendationResolutionStatus::Accepted,
+        None,
+    );
+    let _ = run(
+        "rec-unexpected-repair",
+        tutor_contract::RecommendationResolutionStatus::Dismissed,
+        Some("unexpected"),
+    );
+    let _ = run(
+        "rec-no-target",
+        tutor_contract::RecommendationResolutionStatus::Accepted,
+        Some("drill"),
+    );
+    let _ = run(
+        "rec-missing-target",
+        tutor_contract::RecommendationResolutionStatus::Accepted,
+        Some("drill"),
+    );
+    let _ = run(
+        "rec-inactive",
+        tutor_contract::RecommendationResolutionStatus::Accepted,
+        Some("drill"),
+    );
+    let _ = run(
+        "rec-change-same",
+        tutor_contract::RecommendationResolutionStatus::Accepted,
+        Some("repeat_drill"),
+    );
+    let _ = run(
+        "rec-change-diff",
+        tutor_contract::RecommendationResolutionStatus::Accepted,
+        Some("semantic_reframe"),
+    )
+    .expect("changed repair method must be accepted");
+    let _ = run(
+        "rec-repair",
+        tutor_contract::RecommendationResolutionStatus::Accepted,
+        Some("practice_drill"),
+    )
+    .expect("ordinary repair must be accepted");
+    let _ = run(
+        "rec-dismiss",
+        tutor_contract::RecommendationResolutionStatus::Dismissed,
+        None,
+    )
+    .expect("dismissal must be accepted");
+
+    drop(transaction);
+}
