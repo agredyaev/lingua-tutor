@@ -24,6 +24,19 @@ const MIGRATION_10: &str = include_str!("../migrations/0010_error_recheck_repair
 const MIGRATION_11: &str = include_str!("../migrations/0011_planner_tutor_tasks_snapshot.sql");
 const SCHEMA_VERSION: i64 = 11;
 const SCHEMA_NAME: &str = "0011_planner_tutor_tasks_snapshot.sql";
+const MIGRATION_NAMES: [&str; SCHEMA_VERSION as usize] = [
+    "0001_init.sql",
+    "0002_planner_history.sql",
+    "0003_review_methodology.sql",
+    "0004_methodology_calibration.sql",
+    "0005_methodology_semantics.sql",
+    "0006_language_neutral_storage.sql",
+    "0007_semantic_metadata.sql",
+    "0008_remove_review_experiments.sql",
+    "0009_error_recheck_cycles.sql",
+    "0010_error_recheck_repair_action.sql",
+    SCHEMA_NAME,
+];
 
 fn private_dir(path: &Path) -> Result<(), String> {
     let mut builder = DirBuilder::new();
@@ -61,6 +74,49 @@ fn table_exists(connection: &Connection, name: &str) -> Result<bool, String> {
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())
+}
+
+fn validate_migration_history(connection: &Connection) -> Result<(), String> {
+    let mut statement = connection
+        .prepare("SELECT id,name FROM schema_migrations ORDER BY id")
+        .map_err(|e| format!("unknown database schema: {e}"))?;
+    let mut rows = statement
+        .query([])
+        .map_err(|e| format!("unknown database schema: {e}"))?;
+    let mut expected_index = 0_usize;
+
+    while let Some(row) = rows
+        .next()
+        .map_err(|e| format!("unknown database schema: {e}"))?
+    {
+        let id: i64 = row
+            .get(0)
+            .map_err(|e| format!("unknown database schema: {e}"))?;
+        let name: String = row
+            .get(1)
+            .map_err(|e| format!("unknown database schema: {e}"))?;
+        let Some(expected_name) = MIGRATION_NAMES.get(expected_index) else {
+            return Err(format!(
+                "unsupported SQLite migration: id={id}, name={name}"
+            ));
+        };
+        let expected_id = i64::try_from(expected_index + 1)
+            .map_err(|_| "migration history exceeds supported range".to_owned())?;
+        if id != expected_id || name != *expected_name {
+            return Err(format!(
+                "unsupported SQLite migration: id={id}, name={name}"
+            ));
+        }
+        expected_index += 1;
+    }
+
+    if expected_index != MIGRATION_NAMES.len() {
+        return Err(format!(
+            "unsupported SQLite migration history: expected {} entries, found {expected_index}",
+            MIGRATION_NAMES.len()
+        ));
+    }
+    Ok(())
 }
 
 fn initialize(connection: &Connection) -> Result<(), String> {
@@ -405,21 +461,11 @@ pub fn open(path: &Path) -> Result<Connection, String> {
             migrate_v10_to_v11(&connection)?;
         }
         (10, true) => migrate_v10_to_v11(&connection)?,
-        (SCHEMA_VERSION, true) => {
-            let name: String = connection
-                .query_row(
-                    "SELECT name FROM schema_migrations ORDER BY id DESC LIMIT 1",
-                    [],
-                    |row| row.get(0),
-                )
-                .map_err(|e| format!("unknown database schema: {e}"))?;
-            if name != SCHEMA_NAME {
-                return Err(format!("unsupported SQLite migration: {name}"));
-            }
-        }
+        (SCHEMA_VERSION, true) => {}
         _ => return Err(format!("unsupported SQLite schema version {version}")),
     }
 
+    validate_migration_history(&connection)?;
     validate(&connection)?;
     Ok(connection)
 }
@@ -605,6 +651,29 @@ mod tests {
         );
         assert!(backup(&dir.join("missing.sqlite3")).is_err());
         assert!(!dir.join("missing.sqlite3").exists());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_tampered_intermediate_migration_name() {
+        let dir =
+            std::env::temp_dir().join(format!("lingua-migration-history-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("lingua.sqlite3");
+        drop(open(&path).unwrap());
+
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE schema_migrations SET name='unknown' WHERE id=10",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert!(
+            open(&path).is_err(),
+            "current schema must reject a corrupted intermediate migration name"
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1360,7 +1429,11 @@ pub(crate) fn fuzz_storage(data: &[u8]) {
     assert!(validate(&invalid_fk).is_err());
 
     if seed & 7 == 0 {
-        crate::assets::write_to(&dir.join("assets")).expect("embedded assets");
+        let assets = dir.join("assets");
+        match crate::assets::write_to(&assets) {
+            Ok(()) => assert!(assets.join("index.html").is_file()),
+            Err(error) => assert_eq!(error, "embedded web assets are missing index.html"),
+        }
     }
     fs::remove_dir_all(dir).expect("cleanup");
 }
