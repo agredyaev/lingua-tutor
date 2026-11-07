@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.7](https://github.com/agredyaev/lingua-tutor/compare/v0.1.6...v0.1.7) (2026-11-07)
+
+
+### Features
+
+* **tutor:** make task measurements actionable ([43109a3](https://github.com/agredyaev/lingua-tutor/commit/43109a386309e3f0a1cb3d7a48dc091f51c9f044))
+* **tutor:** make task measurements actionable ([14fc985](https://github.com/agredyaev/lingua-tutor/commit/14fc985c6616734d914ccdf261b691d07f9e41b9))
+
+
+### Bug Fixes
+
+* **tutor:** use English contracts and cover fuzz paths ([4ebf814](https://github.com/agredyaev/lingua-tutor/commit/4ebf81475f185f29e2e80489c1498fb8c6d3e945))
+
 ## [0.1.6](https://github.com/agredyaev/lingua-tutor/compare/v0.1.5...v0.1.6) (2026-11-07)
 
 
