@@ -153,6 +153,14 @@ fn native_llm_surface_preserves_authoritative_methodology_contract() {
         "stale duplicate-diagnostic rule returned to the live LLM contract"
     );
     assert!(
+        records.contains("run a closeout pass over executed tutor_tasks")
+            && records.contains("Do not leave card_mutations empty by omission")
+            && mcp.contains("completion_requirements")
+            && include_str!("../../../apps/local/src/methodology_instructions.md")
+                .contains("Do not leave `card_mutations` empty by omission"),
+        "LLM lesson closeout no longer requires an explicit outcome-driven card decision"
+    );
+    assert!(
         records.contains("lesson_result_contract(profile_id, &source_language)")
             && records
                 .matches("\"prompt_language\": source_language")
@@ -177,15 +185,23 @@ fn native_llm_surface_preserves_authoritative_methodology_contract() {
     assert!(
         selection.contains("criterion_for_action(&action, entry.capability)")
             && selection.contains("measurement_requirements_for_action(&action, entry.capability)")
+            && selection.contains("completion_requirements_for_action(&action)")
             && queue.contains("pub fn criterion_for_action(")
             && queue.contains("pub fn measurement_requirements_for_action(")
+            && queue.contains("pub fn completion_requirements_for_action(")
             && queue.contains("pub measurement_requirements:")
+            && queue.contains("pub completion_requirements:")
             && queue.contains("\"response_millis_if_instrumented\"")
             && queue.contains("\"response_millis_required\"")
+            && queue.contains("\"evaluate_card_mutation_from_observed_outcome\"")
+            && queue.contains("new_high_value_item_needing_spaced_retrieval_or_transfer")
+            && queue.contains("\"no_duplicate_active_card_same_target_modality\"")
+            && queue.contains("\"no_card_for_mere_exposure_or_stable_independent_retrieval\"")
+            && queue.contains("\"persist_intervention_if_applied\"")
             && queue.contains("\"diagnostic_spontaneous\"")
             && queue.contains("\"listening_probe\"")
             && queue.contains("\"listening_repair\""),
-        "LLM task execution criteria or task-local measurement contract drifted"
+        "LLM task execution, measurement, or closeout contract drifted"
     );
 }
 

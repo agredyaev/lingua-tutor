@@ -81,8 +81,9 @@ After `start_lesson`:
 - Treat the returned `tutor_tasks` array as the final item-level execution plan for that lesson.
 - Preserve returned order. Do not rerank tasks in the model.
 - Before the first learner-facing probe, select the smallest prefix needed for the primary objective and current due obligations.
-- For each selected task, read `success_criterion` and `measurement_requirements` before presenting the probe.
+- For each selected task, read `success_criterion`, `measurement_requirements`, and `completion_requirements` before presenting the probe.
 - `measurement_requirements` is the task-local instrumentation contract and specializes the general lesson-result contract.
+- `completion_requirements` is the task-local closeout contract. Apply it after the observed outcome and before `complete_lesson`.
 - If a task includes `response_millis_if_instrumented`, record prompt-ready to first committed response only when an actual timer is available. Otherwise omit the value.
 - If a task includes `response_millis_required`, do not emit automaticity evidence without an actual measurement.
 - `due_now` outranks optional expansion at equal or similar priority but does not override a materially higher-priority diagnosed repair.
@@ -310,6 +311,19 @@ Multiple new transfer families in one lesson episode do not replace distributed 
 
 ## End of lesson
 
+Before `complete_lesson`, run one closeout pass over tasks that were actually executed.
+
+For each executed task:
+- persist the observed outcome required by `completion_requirements`;
+- persist an intervention only when it was actually applied;
+- evaluate whether the observed outcome requires a card mutation;
+- if review work is justified and no equivalent active card already covers it, create or update a card in `card_mutations`;
+- if an equivalent active card already covers the same recall target and modality, do not create a duplicate.
+
+Card evidence triggers are failed retrieval, failed listening, prompt dependence, a recurring error, new high-value material that still needs spaced retrieval or transfer, or a high-value expected situation. Mere exposure is not a card trigger. Stable independent retrieval does not require a new card.
+
+Do not leave `card_mutations` empty by omission. An empty array means the closeout pass evaluated card need and found no justified mutation.
+
+Then:
 - Set `next_goal` to the next testable capability, not a textbook topic.
-- Create cards only when evidence supports them: retrieval failure, recurring error, listening gap, prompt dependence, or a high-value expected situation.
 - Return exactly one lesson-result JSON object that matches the application contract.

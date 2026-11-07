@@ -24,17 +24,17 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "get_tutor_context",
-        description: "Authoritative adaptive tutor context: methodology, ranked plan/tasks, persisted learner state, recent signals, preferences, errors, review/redesign evidence, planner history, and lesson-result contract. tutor_tasks is the ordered item-level execution queue; each task carries success_criterion and measurement_requirements. Fetch this before every lesson.",
+        description: "Authoritative adaptive tutor context: methodology, ranked plan/tasks, persisted learner state, recent signals, preferences, errors, review/redesign evidence, planner history, and lesson-result contract. tutor_tasks is the ordered item-level execution queue; each task carries success_criterion, measurement_requirements, and completion_requirements. Fetch this before every lesson.",
         required: &["language_profile_id"],
     },
     ToolDef {
         name: "start_lesson",
-        description: "After get_tutor_context, open the lesson record before teaching with an explicit scenario and planned goal fixed before instruction. Use the adaptive_lesson_plan and the ordered tutor_tasks returned by start_lesson as the final authoritative execution snapshot for this lesson; consume selected tasks in returned order and instrument them from measurement_requirements before teaching.",
+        description: "After get_tutor_context, open the lesson record before teaching with an explicit scenario and planned goal fixed before instruction. Use the adaptive_lesson_plan and ordered tutor_tasks returned by start_lesson as the final authoritative execution snapshot; consume selected tasks in returned order, instrument them from measurement_requirements before teaching, and apply completion_requirements after each observed outcome.",
         required: &["language_profile_id", "scenario", "planned_goal"],
     },
     ToolDef {
         name: "complete_lesson",
-        description: "Submit the finished lesson using the lesson_id returned by start_lesson plus the full lesson-result document (schema_version 2). Applied atomically; safe to retry (client_operation_id).",
+        description: "Submit the finished lesson using the lesson_id returned by start_lesson plus the full lesson-result document (schema_version 2). Before submitting, complete the closeout pass for executed tutor_tasks, including the card decision required by completion_requirements. Applied atomically; safe to retry (client_operation_id).",
         required: &["lesson_id"],
     },
 ];
@@ -244,6 +244,7 @@ mod tests {
     fn lesson_tools_make_context_order_explicit_for_the_llm() {
         let context = find("get_tutor_context").unwrap();
         let start = find("start_lesson").unwrap();
+        let complete = find("complete_lesson").unwrap();
         assert!(context.description.contains("Authoritative"));
         assert!(context.description.contains("before every lesson"));
         assert!(
@@ -252,10 +253,13 @@ mod tests {
                     .description
                     .contains("final authoritative execution snapshot")
                 && start.description.contains("measurement_requirements")
+                && start.description.contains("completion_requirements")
+                && complete.description.contains("closeout pass")
+                && complete.description.contains("card decision")
                 && context
                     .description
                     .contains("ordered item-level execution queue"),
-            "start_lesson must bind the chat LLM to context-first flow and its persisted executable plan"
+            "lesson tools must bind the chat LLM to context-first execution and explicit closeout"
         );
     }
 
