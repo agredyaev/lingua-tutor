@@ -21,13 +21,7 @@ mod tests {
                      created_at, updated_at)
                  VALUES
                     ('llp-1', 'learner-1', 'ru', 'es-ES',
-                     '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');
-                 INSERT INTO scheduler_parameter_sets
-                    (id, learner_language_profile_id, algorithm, algorithm_version,
-                     parameters_json, origin, created_at)
-                 VALUES
-                    ('default', 'llp-1', 'fsrs', '6.0', '{}', 'default',
-                     '2026-10-16T00:00:00Z');",
+                     '2026-10-16T00:00:00Z', '2026-10-16T00:00:00Z');",
             )
             .unwrap();
 
@@ -278,7 +272,6 @@ mod tests {
                 &card,
                 "fsrs",
                 "6.0",
-                Some("default"),
                 Some(1.0 + i as f64),
                 Some(2.0 + i as f64),
                 None,
@@ -298,7 +291,6 @@ mod tests {
             "card-3",
             "fsrs",
             "6.1",
-            None,
             Some(9.9),
             Some(8.8),
             Some("2026-10-16T00:00:00Z"),
@@ -321,18 +313,9 @@ mod tests {
             .unwrap();
         assert_eq!(count, 5);
 
-        let row: (
-            String,
-            Option<String>,
-            Option<f64>,
-            Option<i64>,
-            u32,
-            u32,
-            u32,
-            String,
-        ) = connection
+        let row: (String, Option<f64>, Option<i64>, u32, u32, u32, String) = connection
             .query_row(
-                "SELECT algorithm_version, parameter_set_id, stability,
+                "SELECT algorithm_version, stability,
                         scheduled_interval_seconds, lapse_count, review_count,
                         state_version, state_hash
                  FROM card_schedule_state WHERE card_id='card-3'",
@@ -346,7 +329,6 @@ mod tests {
                         row.get(4)?,
                         row.get(5)?,
                         row.get(6)?,
-                        row.get(7)?,
                     ))
                 },
             )
@@ -356,7 +338,6 @@ mod tests {
             row,
             (
                 "6.1".to_owned(),
-                None,
                 Some(8.8),
                 Some(999),
                 7,
@@ -426,7 +407,6 @@ mod tests {
 }
 
 use crate::Result;
-use crate::repositories::{cards, review};
 use rusqlite::{Connection, params};
 
 /// Bind admitted values directly to the SQLite statement (no staging allocation).
@@ -456,7 +436,14 @@ pub(crate) fn insert_card(
     created_by: &str,
     at: &str,
 ) -> Result<()> {
-    let mut statement = database.prepare_cached(cards::INSERT_CARD)?;
+    let mut statement = database.prepare_cached(
+        "INSERT INTO cards
+         (id,learner_language_profile_id,intent,status,prompt,prompt_language,answer,answer_language,
+          accepted_answers_json,explanation,pronunciation_note,source_learning_item_id,
+          source_error_target_id,source_lesson_id,creation_reason,priority_score,content_hash,
+          content_version,parent_card_id,suspended_reason,created_by,created_at,updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?22)",
+    )?;
     statement.execute(params![
         id,
         profile_id,
@@ -496,7 +483,11 @@ pub(crate) fn update_card_content(
     content_hash: &str,
     at: &str,
 ) -> Result<()> {
-    let mut statement = database.prepare_cached(cards::UPDATE_CARD_CONTENT)?;
+    let mut statement = database.prepare_cached(
+        "UPDATE cards SET prompt=?2,explanation=?3,pronunciation_note=?4,
+         accepted_answers_json=?5,content_hash=?6,content_version=content_version+1,updated_at=?7
+         WHERE id=?1",
+    )?;
     statement.execute(params![
         id,
         prompt,
@@ -518,7 +509,9 @@ pub(crate) fn update_card_status(
     suspended_reason: Option<&str>,
     at: &str,
 ) -> Result<()> {
-    let mut statement = database.prepare_cached(cards::UPDATE_CARD_STATUS)?;
+    let mut statement = database.prepare_cached(
+        "UPDATE cards SET status=?2,suspended_reason=?3,updated_at=?4 WHERE id=?1",
+    )?;
     statement.execute(params![id, status, suspended_reason, at,])?;
     Ok(())
 }
@@ -532,7 +525,9 @@ pub(crate) fn update_accepted_answers(
     content_hash: &str,
     at: &str,
 ) -> Result<()> {
-    let mut statement = database.prepare_cached(cards::UPDATE_ACCEPTED_ANSWERS)?;
+    let mut statement = database.prepare_cached(
+        "UPDATE cards SET accepted_answers_json=?2,content_hash=?3,updated_at=?4 WHERE id=?1",
+    )?;
     statement.execute(params![id, accepted_answers_json, content_hash, at,])?;
     Ok(())
 }
@@ -544,7 +539,6 @@ pub(crate) fn upsert_schedule_state(
     card_id: &str,
     algorithm: &str,
     algorithm_version: &str,
-    parameter_set_id: Option<&str>,
     difficulty: Option<f64>,
     stability: Option<f64>,
     last_review_at: Option<&str>,
@@ -556,12 +550,24 @@ pub(crate) fn upsert_schedule_state(
     state_hash: &str,
     updated_at: &str,
 ) -> Result<()> {
-    let mut statement = database.prepare_cached(review::UPSERT_SCHEDULE_STATE)?;
+    let mut statement = database.prepare_cached(
+        "INSERT INTO card_schedule_state
+         (card_id,algorithm,algorithm_version,difficulty,stability,last_review_at,due_at,
+          scheduled_interval_seconds,lapse_count,review_count,state_version,state_hash,updated_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+         ON CONFLICT(card_id) DO UPDATE SET
+          algorithm=excluded.algorithm,algorithm_version=excluded.algorithm_version,
+          difficulty=excluded.difficulty,stability=excluded.stability,
+          last_review_at=excluded.last_review_at,due_at=excluded.due_at,
+          scheduled_interval_seconds=excluded.scheduled_interval_seconds,
+          lapse_count=excluded.lapse_count,review_count=excluded.review_count,
+          state_version=excluded.state_version,state_hash=excluded.state_hash,
+          updated_at=excluded.updated_at",
+    )?;
     statement.execute(params![
         card_id,
         algorithm,
         algorithm_version,
-        parameter_set_id,
         difficulty,
         stability,
         last_review_at,
@@ -584,7 +590,10 @@ pub(crate) fn insert_card_tag(
     tag_type: &str,
     normalized_tag: &str,
 ) -> Result<()> {
-    let mut statement = database.prepare_cached(cards::INSERT_CARD_TAG)?;
+    let mut statement = database.prepare_cached(
+        "INSERT INTO card_tags(card_id,tag_type,normalized_tag)
+         VALUES (?1,?2,?3) ON CONFLICT DO NOTHING",
+    )?;
     statement.execute(params![card_id, tag_type, normalized_tag,])?;
     Ok(())
 }
@@ -605,7 +614,13 @@ pub(crate) fn insert_card_mutation(
     validation_result: &str,
     created_at: &str,
 ) -> Result<()> {
-    let mut statement = database.prepare_cached(cards::INSERT_CARD_MUTATION)?;
+    let mut statement = database.prepare_cached(
+        "INSERT INTO card_mutations
+         (id,card_id,operation,client_operation_id,before_json,after_json,source_lesson_id,
+          actor,reason,validation_result,created_at)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+         ON CONFLICT(client_operation_id) DO NOTHING",
+    )?;
     statement.execute(params![
         id,
         card_id,

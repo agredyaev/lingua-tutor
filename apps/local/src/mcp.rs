@@ -3,7 +3,7 @@
 use crate::{Env, mcp_tools};
 
 /// Result of one stateless JSON-RPC dispatch, used by the native tunnel.
-pub enum DirectDispatch {
+pub(crate) enum DirectDispatch {
     /// JSON-RPC response body.
     Response(String),
     /// Notification accepted; no JSON-RPC response body.
@@ -11,7 +11,7 @@ pub enum DirectDispatch {
 }
 
 /// Dispatch one bounded MCP JSON-RPC message in-process.
-pub fn dispatch_jsonrpc(env: &Env, input: &[u8]) -> Result<DirectDispatch, String> {
+pub(crate) fn dispatch_jsonrpc(env: &Env, input: &[u8]) -> Result<DirectDispatch, String> {
     if input.len() > 512 * 1024 {
         return Err("MCP request exceeds 512 KB".to_owned());
     }
@@ -127,7 +127,7 @@ mod tests {
             panic!("expected tools response");
         };
         let tools: serde_json::Value = serde_json::from_str(&tools).unwrap();
-        assert_eq!(tools["result"]["tools"].as_array().map(Vec::len), Some(13));
+        assert_eq!(tools["result"]["tools"].as_array().map(Vec::len), Some(4));
 
         let context = dispatch_jsonrpc(
             &env,
@@ -150,13 +150,13 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains(
-                    "минимум 1 diagnostic baseline и минимум 2 независимых measured probes overall"
+                    "Для calibration-eligible outcome нужен минимум 1 diagnostic baseline и минимум 2 measurement-eligible probes overall"
                 )
         );
 
         let start = dispatch_jsonrpc(
             &env,
-            br#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"start_lesson","arguments":{"language_profile_id":"llp-1","scenario":"MCP smoke"}}}"#,
+            br#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"start_lesson","arguments":{"language_profile_id":"llp-1","scenario":"MCP smoke","planned_goal":"complete the smoke-test communicative task"}}}"#,
         )
         .unwrap();
         let DirectDispatch::Response(start) = start else {

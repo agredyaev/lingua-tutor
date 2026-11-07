@@ -88,7 +88,7 @@ mod tests {
                INSERT INTO card_schedule_state
                 (card_id,algorithm,algorithm_version,due_at,lapse_count,review_count,
                  state_version,state_hash,updated_at)
-               VALUES('card-1','fallback','fallback-1','2020-01-01T00:00:00Z',0,2,2,
+               VALUES('card-1','fsrs','fsrs-rs-6.6.1','2020-01-01T00:00:00Z',0,2,2,
                  'not-used-by-planner','2026-10-16T00:00:00Z');"#,
         )
         .unwrap();
@@ -130,6 +130,28 @@ mod tests {
                 serde_json::from_str(&row.4).unwrap(),
             ],
         )
+    }
+
+    #[test]
+    fn start_rejects_empty_scenario_or_planned_goal() {
+        let (path, env) = create_env("empty-goal");
+        assert!(start_lesson(&env, "llp-1", "", "buy medicine", "mcp").is_err());
+        assert!(start_lesson(&env, "llp-1", "pharmacy", "   ", "mcp").is_err());
+
+        let db = env.connection().unwrap();
+        let open: u32 = db
+            .query_row(
+                "SELECT COUNT(*) FROM lessons WHERE status IN ('planned','active')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            open, 0,
+            "invalid lesson framing must not persist an open lesson"
+        );
+        drop(db);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -175,8 +197,13 @@ mod tests {
         let first = start_lesson(&env, "llp-1", "pharmacy", "buy medicine", "mcp").unwrap();
         let second = start_lesson(&env, "llp-1", "transport", "buy a ticket", "mcp").unwrap();
 
-        assert_eq!(second["id"], first["id"]);
-        assert_eq!(second["lesson_number"], first["lesson_number"]);
+        assert_eq!(
+            second, first,
+            "idempotent start retry must return the exact persisted authoritative snapshot"
+        );
+        assert_eq!(first["scenario"], "pharmacy");
+        assert_eq!(first["planned_goal"], "buy medicine");
+        assert_eq!(first["snapshot_complete"], true);
 
         let db = env.connection().unwrap();
         let open_count: u32 = db
@@ -200,6 +227,46 @@ mod tests {
         assert_eq!(open_count, 1);
         assert_eq!(planner_count, 1);
         drop(db);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_open_lesson_retry_marks_missing_exact_task_snapshot() {
+        let (path, env) = create_env("legacy-open-snapshot");
+        env.connection()
+            .unwrap()
+            .execute_batch(
+                r#"INSERT INTO lessons
+                    (id,learner_language_profile_id,lesson_number,status,scenario,planned_goal,
+                     source,started_at,created_at,updated_at)
+                 VALUES('lesson-legacy','llp-1',5,'active','pharmacy','buy medicine','mcp',
+                        '2026-11-06T10:00:00Z','2026-11-06T10:00:00Z',
+                        '2026-11-06T10:00:00Z');
+                 INSERT INTO planner_decisions
+                    (id,learner_language_profile_id,lesson_id,planner_version,
+                     input_json,plan_json,task_candidates_json,capability_state_json,
+                     focus_threads_json,outcome_json,created_at,updated_at)
+                 VALUES('pd-legacy','llp-1','lesson-legacy','planner-v3',
+                        '{}','{"primary_objective":"diagnose_and_expand","max_new_items":1}',
+                        '[]','[]','[]',NULL,
+                        '2026-11-06T10:00:00Z','2026-11-06T10:00:00Z');"#,
+            )
+            .unwrap();
+
+        let retry = start_lesson(&env, "llp-1", "transport", "buy a ticket", "mcp").unwrap();
+        assert_eq!(retry["id"], "lesson-legacy");
+        assert_eq!(retry["scenario"], "pharmacy");
+        assert_eq!(retry["planned_goal"], "buy medicine");
+        assert_eq!(
+            retry["snapshot_complete"], false,
+            "legacy migrated planner rows must expose missing exact tutor-task snapshot explicitly"
+        );
+        assert_eq!(
+            retry["adaptive_lesson_plan"]["primary_objective"],
+            "diagnose_and_expand"
+        );
+        assert!(retry["tutor_tasks"].is_null());
 
         let _ = std::fs::remove_file(path);
     }
@@ -318,13 +385,29 @@ mod tests {
             .unwrap();
         assert!(
             contract_instructions.contains(
-                "минимум 1 diagnostic baseline и минимум 2 независимых measured probes overall"
+                "Для calibration-eligible outcome нужен минимум 1 diagnostic baseline и минимум 2 measurement-eligible probes overall"
             ),
             "LLM-facing lesson contract drifted from runtime validator"
         );
         assert!(
             !contract_instructions.contains("минимум 2 полностью измеренных diagnostic probes"),
             "stale duplicate-diagnostic rule leaked into LLM context"
+        );
+        assert!(
+            contract_instructions.contains("outcome в error_rechecks"),
+            "LLM-facing contract must explain how due error rechecks are persisted"
+        );
+        assert!(
+            context["lesson_result_contract"]["template"]["error_rechecks"].is_array(),
+            "LLM-facing template must expose error_rechecks on canonical complete_lesson"
+        );
+        let metrics_template = &context["lesson_result_contract"]["template"]["metrics"];
+        assert_eq!(metrics_template["task_attempt_count"], 0);
+        assert_eq!(metrics_template["task_success_count"], 0);
+        assert!(metrics_template.get("task_success_rubric").is_some());
+        assert!(
+            metrics_template.get("speaking_seconds").is_none(),
+            "LLM-facing template must not force uninstrumented speaking-time telemetry"
         );
 
         let dashboard = crate::handlers::records::dashboard_for(&env, "llp-1").unwrap();
@@ -346,11 +429,42 @@ mod tests {
         }
 
         let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
-        let template = &context["lesson_result_contract"]["template"];
-        assert_eq!(template["new_learning_items"][0]["prompt_language"], "en");
-        assert_eq!(
-            template["card_mutations"][0]["card"]["prompt_language"],
-            "en"
+        let examples = &context["lesson_result_contract"]["shape_examples"];
+        assert_eq!(examples["new_learning_item"]["prompt_language"], "en");
+        assert_eq!(examples["card_mutation"]["card"]["prompt_language"], "en");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn llm_submit_template_does_not_invent_optional_actions() {
+        let (path, env) = create_env("safe-llm-template");
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
+        let contract = &context["lesson_result_contract"];
+        let template = &contract["template"];
+        for field in [
+            "new_learning_items",
+            "evidence",
+            "interventions",
+            "listening_attempts",
+            "error_occurrences",
+            "error_rechecks",
+            "recommendation_resolutions",
+            "mastery_changes",
+            "card_mutations",
+        ] {
+            assert_eq!(
+                template[field].as_array().map(Vec::len),
+                Some(0),
+                "submit template must not manufacture optional write rows: {field}"
+            );
+        }
+        assert!(contract["shape_examples"].is_object());
+        assert!(
+            contract["instructions"]
+                .as_str()
+                .unwrap()
+                .contains("shape_examples"),
+            "LLM contract must explicitly separate examples from submitted rows"
         );
         let _ = std::fs::remove_file(path);
     }
@@ -413,6 +527,10 @@ mod tests {
                 };
                 let outcome = if i == 4 {
                     Some("{invalid")
+                } else if i == 7 {
+                    Some(
+                        r#"{"evidence":[],"error_occurrences":[],"error_rechecks":[{"error_target_id":"et-1","repair_applied":true,"repair_action":"semantic_reframe"}],"error_recommendation_repairs":"et-1=contrast"}"#,
+                    )
                 } else {
                     Some(
                         r#"{"evidence":[{"pronunciation_intelligible":false,"pronunciation_repeat_required":true}],"error_occurrences":[]}"#,
@@ -437,9 +555,452 @@ mod tests {
             entry["outcome_summary"]["pronunciation_repeat_count"] == 1
                 && entry["outcome_summary"]["pronunciation_unintelligible_count"] == 1
         }));
+        assert!(history.iter().any(|entry| {
+            entry["outcome_summary"]["error_recheck_repairs"]
+                .as_str()
+                .is_some_and(|repairs| repairs.contains("et-1=semantic_reframe"))
+        }));
+        assert!(history.iter().any(|entry| {
+            entry["outcome_summary"]["error_recommendation_repairs"]
+                .as_str()
+                .is_some_and(|repairs| repairs.contains("et-1=contrast"))
+        }));
         assert!(
             actual["intervention_effectiveness"].is_object()
                 || actual["intervention_effectiveness"].is_array()
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn active_lesson_recheck_cap_uses_persisted_start_objective() {
+        let (path, env) = create_env("persisted-recheck-cap");
+        {
+            let db = env.connection().unwrap();
+            db.execute(
+                "UPDATE lesson_metrics
+                 SET task_attempt_count=2,task_success_count=0,
+                     task_success_rubric='goal_completed_independently_v2'
+                 WHERE lesson_id='done-1'",
+                [],
+            )
+            .unwrap();
+            db.execute_batch(
+                "INSERT INTO lessons
+                 (id,learner_language_profile_id,lesson_number,status,scenario,planned_goal,
+                  source,started_at,completed_at,duration_seconds,created_at,updated_at)
+                 VALUES
+                 ('done-cap-2','llp-1',3,'completed','transport','ask route','pwa',
+                  '2026-10-16T10:00:00Z','2026-10-16T10:20:00Z',1200,
+                  '2026-10-16T10:00:00Z','2026-10-16T10:20:00Z'),
+                 ('done-cap-3','llp-1',2,'completed','cafe','order drink','pwa',
+                  '2026-10-17T10:00:00Z','2026-10-17T10:20:00Z',1200,
+                  '2026-10-17T10:00:00Z','2026-10-17T10:20:00Z');
+                 INSERT INTO lesson_metrics
+                 (lesson_id,speaking_seconds,unaided_recall_count,aided_recall_count,
+                  listening_score,avg_answer_millis,long_pause_count,confidence,created_at,
+                  task_attempt_count,task_success_count,task_success_rubric)
+                 VALUES
+                 ('done-cap-2',0,0,0,NULL,NULL,0,NULL,'2026-10-16T10:20:00Z',
+                  2,0,'goal_completed_independently_v2'),
+                 ('done-cap-3',0,0,0,NULL,NULL,0,NULL,'2026-10-17T10:20:00Z',
+                  1,0,'goal_completed_independently_v2');",
+            )
+            .unwrap();
+            for i in 2..=4_u32 {
+                let target_id = format!("et-cap-{i}");
+                let recheck_id = format!("rc-cap-{i}");
+                db.execute(
+                    "INSERT INTO error_targets
+                     (id,learner_language_profile_id,core_category,original_production,
+                      corrected_production,occurrence_count,method_change_required,status,
+                      created_at,updated_at)
+                     VALUES (?1,'llp-1','grammar',?2,?3,3,0,'recheck',
+                             '2026-10-15T00:00:00Z','2026-10-16T00:00:00Z')",
+                    rusqlite::params![target_id, format!("cx-{i}"), format!("cy-{i}")],
+                )
+                .unwrap();
+                db.execute(
+                    "INSERT INTO error_rechecks(id,error_target_id,offset_days,due_at)
+                     VALUES (?1,?2,1,'2020-01-01T00:00:00Z')",
+                    rusqlite::params![recheck_id, target_id],
+                )
+                .unwrap();
+            }
+        }
+
+        let started = start_lesson(
+            &env,
+            "llp-1",
+            "pharmacy",
+            "complete the planned pharmacy task",
+            "mcp",
+        )
+        .unwrap();
+        assert_eq!(
+            started["adaptive_lesson_plan"]["primary_objective"],
+            "improve_communicative_task_success"
+        );
+        assert_eq!(
+            started["adaptive_lesson_plan"]["max_new_items"], 1,
+            "established task failure should persist only the one-item repair slot"
+        );
+
+        {
+            let db = env.connection().unwrap();
+            db.execute(
+                "UPDATE lesson_metrics
+                 SET task_attempt_count=0,task_success_count=0,
+                     task_success_rubric=NULL
+                 WHERE lesson_id='done-1'",
+                [],
+            )
+            .unwrap();
+            db.execute(
+                "UPDATE card_schedule_state
+                 SET due_at='2099-01-01T00:00:00Z'
+                 WHERE card_id='card-1'",
+                [],
+            )
+            .unwrap();
+        }
+
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
+        assert_eq!(
+            context["adaptive_lesson_plan"]["primary_objective"], "run_error_rechecks",
+            "live context may reflect fresher state"
+        );
+        assert_eq!(
+            context["adaptive_lesson_plan"]["max_new_items"], 1,
+            "live context must not expand the persisted new-item contract of an active lesson"
+        );
+        assert_eq!(
+            context["due_error_rechecks"].as_array().unwrap().len(),
+            1,
+            "recheck workload must stay aligned to the persisted task-first lesson contract"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn same_item_prompt_dependence_suppresses_persisted_optional_expansion() {
+        let (path, env) = create_env("prompt-gap-no-expansion");
+        {
+            let db = env.connection().unwrap();
+            db.execute_batch(
+                r#"
+                INSERT INTO lessons
+                    (id,learner_language_profile_id,lesson_number,status,scenario,planned_goal,
+                     source,started_at,completed_at,duration_seconds,created_at,updated_at)
+                VALUES
+                    ('done-2','llp-1',5,'completed','shop','goal','pwa',
+                     '2026-11-04T10:00:00Z','2026-11-04T10:20:00Z',1200,
+                     '2026-11-04T10:00:00Z','2026-11-04T10:20:00Z'),
+                    ('done-3','llp-1',6,'completed','street','goal','pwa',
+                     '2026-11-05T10:00:00Z','2026-11-05T10:20:00Z',1200,
+                     '2026-11-05T10:00:00Z','2026-11-05T10:20:00Z'),
+                    ('done-4','llp-1',7,'completed','cafe','goal','pwa',
+                     '2026-11-06T10:00:00Z','2026-11-06T10:20:00Z',1200,
+                     '2026-11-06T10:00:00Z','2026-11-06T10:20:00Z');
+                INSERT INTO learning_item_evidence
+                    (id,learning_item_id,lesson_id,kind,success,detail,metadata_json,recorded_at)
+                VALUES
+                    ('ev-p2','li-1','done-2','prompted_production',1,NULL,
+                     '{"assistance_level":1,"probe_phase":"diagnostic","context_key":"shop:b"}',
+                     '2026-11-04T10:10:00Z'),
+                    ('ev-s2','li-1','done-2','spontaneous_production',0,NULL,
+                     '{"assistance_level":0,"probe_phase":"diagnostic","context_key":"shop:c"}',
+                     '2026-11-04T10:15:00Z'),
+                    ('ev-p3','li-1','done-3','prompted_production',1,NULL,
+                     '{"assistance_level":1,"probe_phase":"diagnostic","context_key":"street:b"}',
+                     '2026-11-05T10:10:00Z'),
+                    ('ev-s3','li-1','done-3','spontaneous_production',0,NULL,
+                     '{"assistance_level":0,"probe_phase":"diagnostic","context_key":"street:c"}',
+                     '2026-11-05T10:15:00Z'),
+                    ('ev-p4','li-1','done-4','prompted_production',1,NULL,
+                     '{"assistance_level":1,"probe_phase":"diagnostic","context_key":"cafe:b"}',
+                     '2026-11-06T10:10:00Z'),
+                    ('ev-s4','li-1','done-4','spontaneous_production',0,NULL,
+                     '{"assistance_level":0,"probe_phase":"diagnostic","context_key":"cafe:c"}',
+                     '2026-11-06T10:15:00Z');
+                "#,
+            )
+            .unwrap();
+        }
+
+        let started = start_lesson(&env, "llp-1", "pharmacy", "buy medicine", "mcp").unwrap();
+        assert!(
+            started["tutor_tasks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|task| task["action"] == "fade_prompts"),
+            "fixture must establish a same-item prompt-dependence bottleneck; tasks={:?}",
+            started["tutor_tasks"]
+        );
+        assert_eq!(
+            started["adaptive_lesson_plan"]["max_new_items"], 0,
+            "same-item fade_prompts must suppress optional expansion deterministically"
+        );
+
+        let db = env.connection().unwrap();
+        let persisted: String = db
+            .query_row(
+                "SELECT plan_json FROM planner_decisions
+                 WHERE lesson_id=?1",
+                [started["id"].as_str().unwrap()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let persisted: serde_json::Value = serde_json::from_str(&persisted).unwrap();
+        assert_eq!(persisted["max_new_items"], 0);
+        drop(db);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn active_error_context_cannot_be_starved_by_resolved_history() {
+        let (path, env) = create_env("active-error-resolved-starvation");
+        {
+            let db = env.connection().unwrap();
+            db.execute(
+                "UPDATE error_targets SET status='resolved' WHERE id='et-1'",
+                [],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO error_targets
+                 (id,learner_language_profile_id,core_category,original_production,
+                  corrected_production,occurrence_count,method_change_required,status,
+                  created_at,updated_at)
+                 VALUES('et-live','llp-1','grammar','live-wrong','live-right',
+                        1,0,'active','2026-10-16T00:00:00Z','2026-10-16T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+            for i in 0..25_u32 {
+                db.execute(
+                    "INSERT INTO error_targets
+                     (id,learner_language_profile_id,core_category,original_production,
+                      corrected_production,occurrence_count,method_change_required,status,
+                      created_at,updated_at)
+                     VALUES(?1,'llp-1','grammar',?2,?3,100,0,'resolved',
+                            '2026-10-15T00:00:00Z','2026-10-15T00:00:00Z')",
+                    rusqlite::params![
+                        format!("et-resolved-{i}"),
+                        format!("old-wrong-{i}"),
+                        format!("old-right-{i}")
+                    ],
+                )
+                .unwrap();
+                db.execute(
+                    "INSERT INTO error_targets
+                     (id,learner_language_profile_id,core_category,original_production,
+                      corrected_production,occurrence_count,method_change_required,status,
+                      created_at,updated_at)
+                     VALUES(?1,'llp-1','grammar',?2,?3,99,0,'recheck',
+                            '2026-10-15T00:00:00Z','2026-10-15T00:00:00Z')",
+                    rusqlite::params![
+                        format!("et-recheck-history-{i}"),
+                        format!("recheck-wrong-{i}"),
+                        format!("recheck-right-{i}")
+                    ],
+                )
+                .unwrap();
+            }
+        }
+
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
+        let active = context["active_error_targets"].as_array().unwrap();
+        assert!(
+            active.iter().any(|row| row["error_target_id"] == "et-live"),
+            "resolved history must be filtered before the bounded active-error projection"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn active_error_context_exposes_last_named_repair_action() {
+        let (path, env) = create_env("active-error-last-repair-action");
+        {
+            let db = env.connection().unwrap();
+            db.execute(
+                "UPDATE error_targets
+                 SET status='active',method_change_required=1
+                 WHERE id='et-1'",
+                [],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO recommendations
+                 (id,learner_language_profile_id,subject_type,subject_id,action,
+                  detail_json,status,created_at,resolved_at)
+                 VALUES('rec-prior-repair','llp-1','error_target','et-1',
+                        'activate_mini_target',
+                        json_object('repair_action','contrast'),
+                        'accepted','2026-10-15T00:00:00Z','2026-10-15T01:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
+        let target = context["active_error_targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["error_target_id"] == "et-1")
+            .unwrap();
+        assert_eq!(
+            target["last_repair_action"], "contrast",
+            "active method-change repair must see the last persisted named method"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn due_recheck_context_exposes_last_named_repair_action() {
+        let (path, env) = create_env("recheck-last-repair-action");
+        {
+            let db = env.connection().unwrap();
+            db.execute(
+                "UPDATE error_rechecks
+                 SET completed_at='2026-10-16T00:00:00Z',passed=0,
+                     assistance_level=0,context='prior-check',
+                     repair_applied=1,repair_action='contrast'
+                 WHERE id='rc-1'",
+                [],
+            )
+            .unwrap();
+            db.execute(
+                "INSERT INTO error_rechecks
+                 (id,error_target_id,cycle,offset_days,due_at)
+                 VALUES('rc-next','et-1',1,1,'2020-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
+        let rows = context["due_error_rechecks"].as_array().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["recheck_id"], "rc-next");
+        assert_eq!(
+            rows[0]["last_repair_action"], "contrast",
+            "direct recheck repair history must remain visible to the next Tutor"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn tutor_context_bounds_recheck_primary_block() {
+        let (path, env) = create_env("recheck-primary-bound");
+        {
+            let db = env.connection().unwrap();
+            for i in 2..=5_u32 {
+                let target_id = format!("et-{i}");
+                let recheck_id = format!("rc-{i}");
+                db.execute(
+                    "INSERT INTO error_targets
+                     (id,learner_language_profile_id,core_category,original_production,
+                      corrected_production,occurrence_count,method_change_required,status,
+                      created_at,updated_at)
+                     VALUES (?1,'llp-1','grammar',?2,?3,3,0,'recheck',
+                             '2026-10-15T00:00:00Z','2026-10-16T00:00:00Z')",
+                    rusqlite::params![target_id, format!("x-{i}"), format!("y-{i}")],
+                )
+                .unwrap();
+                db.execute(
+                    "INSERT INTO error_rechecks(id,error_target_id,offset_days,due_at)
+                     VALUES (?1,?2,1,'2020-01-01T00:00:00Z')",
+                    rusqlite::params![recheck_id, target_id],
+                )
+                .unwrap();
+            }
+        }
+
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
+        assert_eq!(
+            context["adaptive_lesson_plan"]["primary_objective"],
+            "run_error_rechecks"
+        );
+        assert_eq!(
+            context["due_error_rechecks"].as_array().unwrap().len(),
+            3,
+            "a recheck-focused lesson should expose a small bounded block, not the whole backlog"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn task_primary_context_keeps_one_due_recheck_maintenance_slot() {
+        let (path, env) = create_env("task-primary-recheck-bound");
+        {
+            let db = env.connection().unwrap();
+            db.execute(
+                "UPDATE lesson_metrics
+                 SET task_attempt_count=2,task_success_count=0,
+                     task_success_rubric='goal_completed_independently_v2'
+                 WHERE lesson_id='done-1'",
+                [],
+            )
+            .unwrap();
+            db.execute_batch(
+                "INSERT INTO lessons
+                 (id,learner_language_profile_id,lesson_number,status,scenario,planned_goal,
+                  source,started_at,completed_at,duration_seconds,created_at,updated_at)
+                 VALUES
+                 ('done-2','llp-1',3,'completed','transport','ask route','pwa',
+                  '2026-10-16T10:00:00Z','2026-10-16T10:20:00Z',1200,
+                  '2026-10-16T10:00:00Z','2026-10-16T10:20:00Z'),
+                 ('done-3','llp-1',2,'completed','cafe','order drink','pwa',
+                  '2026-10-17T10:00:00Z','2026-10-17T10:20:00Z',1200,
+                  '2026-10-17T10:00:00Z','2026-10-17T10:20:00Z');
+                 INSERT INTO lesson_metrics
+                 (lesson_id,speaking_seconds,unaided_recall_count,aided_recall_count,
+                  listening_score,avg_answer_millis,long_pause_count,confidence,created_at,
+                  task_attempt_count,task_success_count,task_success_rubric)
+                 VALUES
+                 ('done-2',0,0,0,NULL,NULL,0,NULL,'2026-10-16T10:20:00Z',
+                  2,0,'goal_completed_independently_v2'),
+                 ('done-3',0,0,0,NULL,NULL,0,NULL,'2026-10-17T10:20:00Z',
+                  1,0,'goal_completed_independently_v2');",
+            )
+            .unwrap();
+            for i in 2..=4_u32 {
+                let target_id = format!("et-task-{i}");
+                let recheck_id = format!("rc-task-{i}");
+                db.execute(
+                    "INSERT INTO error_targets
+                     (id,learner_language_profile_id,core_category,original_production,
+                      corrected_production,occurrence_count,method_change_required,status,
+                      created_at,updated_at)
+                     VALUES (?1,'llp-1','grammar',?2,?3,3,0,'recheck',
+                             '2026-10-15T00:00:00Z','2026-10-16T00:00:00Z')",
+                    rusqlite::params![target_id, format!("tx-{i}"), format!("ty-{i}")],
+                )
+                .unwrap();
+                db.execute(
+                    "INSERT INTO error_rechecks(id,error_target_id,offset_days,due_at)
+                     VALUES (?1,?2,1,'2020-01-01T00:00:00Z')",
+                    rusqlite::params![recheck_id, target_id],
+                )
+                .unwrap();
+            }
+        }
+
+        let context = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
+        assert_eq!(
+            context["adaptive_lesson_plan"]["primary_objective"],
+            "improve_communicative_task_success"
+        );
+        assert_eq!(
+            context["due_error_rechecks"].as_array().unwrap().len(),
+            1,
+            "task-first lessons should retain one maintenance recheck without letting backlog hijack the lesson"
         );
         let _ = std::fs::remove_file(path);
     }
@@ -459,7 +1020,15 @@ mod tests {
             )
             .unwrap();
         let current = crate::handlers::records::tutor_context_for(&env, "llp-1").unwrap();
-        assert_eq!(current["open_recommendations"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            current["open_recommendations"].as_array().unwrap().len(),
+            1,
+            "stale repair recommendations for targets already in recheck must fail closed"
+        );
+        assert_eq!(
+            current["open_recommendations"][0]["id"], "rec-redesign",
+            "the remaining actionable recommendation must stay visible"
+        );
         assert_eq!(current["redesign_candidates"].as_array().unwrap().len(), 1);
         assert_eq!(current["due_error_rechecks"].as_array().unwrap().len(), 1);
         assert_eq!(current["learning_items"].as_array().unwrap().len(), 1);
@@ -525,7 +1094,7 @@ mod tests {
     }
 }
 
-use crate::repositories::{lessons, to_rfc3339};
+use crate::sqlite::to_rfc3339;
 use crate::{Env, Result};
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 use serde::Serialize;
@@ -537,6 +1106,17 @@ pub(crate) fn start_lesson(
     planned_goal: &str,
     source: &str,
 ) -> Result<serde_json::Value> {
+    if scenario.trim().is_empty() || planned_goal.trim().is_empty() {
+        return Err(crate::Error::operation(
+            400,
+            "invalid_lesson_framing",
+            "scenario and planned_goal must be non-empty before the lesson starts",
+            serde_json::json!({
+                "scenario_present": !scenario.trim().is_empty(),
+                "planned_goal_present": !planned_goal.trim().is_empty()
+            }),
+        ));
+    }
     let mut database = env.connection()?;
     let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
@@ -559,22 +1139,73 @@ pub(crate) fn start_lesson(
         })?;
     let (_learner_id, current_lesson_number, preferences_json) = profile;
 
-    if let Some((id, lesson_number)) = transaction
+    if let Some((
+        id,
+        lesson_number,
+        persisted_scenario,
+        persisted_goal,
+        planner_version,
+        plan_json,
+        tutor_tasks_json,
+    )) = transaction
         .query_row(
-            lessons::SELECT_LATEST_OPEN_LESSON,
+            "SELECT l.id,l.lesson_number,l.scenario,l.planned_goal,
+                    pd.planner_version,pd.plan_json,pd.tutor_tasks_json
+             FROM lessons l
+             LEFT JOIN planner_decisions pd ON pd.lesson_id=l.id
+             WHERE l.learner_language_profile_id = ?1
+               AND l.status IN ('planned','active')
+             ORDER BY l.started_at DESC
+             LIMIT 1",
             params![profile_id],
             |row| {
                 Ok((
-                    row.get::<_, String>("id")?,
-                    row.get::<_, u32>("lesson_number")?,
+                    row.get::<_, String>(0)?,
+                    row.get::<_, u32>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
                 ))
             },
         )
         .optional()?
     {
+        if let (Some(planner_version), Some(plan_json)) = (planner_version, plan_json) {
+            let plan: serde_json::Value = serde_json::from_str(&plan_json)?;
+            if let Some(tutor_tasks_json) = tutor_tasks_json {
+                let tutor_tasks: serde_json::Value = serde_json::from_str(&tutor_tasks_json)?;
+                return crate::json(&serde_json::json!({
+                    "id": id,
+                    "lesson_number": lesson_number,
+                    "scenario": persisted_scenario,
+                    "planned_goal": persisted_goal,
+                    "snapshot_complete": true,
+                    "planner_version": planner_version,
+                    "adaptive_lesson_plan": plan,
+                    "tutor_tasks": tutor_tasks,
+                }));
+            }
+            return crate::json(&serde_json::json!({
+                "id": id,
+                "lesson_number": lesson_number,
+                "scenario": persisted_scenario,
+                "planned_goal": persisted_goal,
+                "snapshot_complete": false,
+                "planner_version": planner_version,
+                "adaptive_lesson_plan": plan,
+                "tutor_tasks": serde_json::Value::Null,
+            }));
+        }
         return crate::json(&serde_json::json!({
             "id": id,
-            "lesson_number": lesson_number
+            "lesson_number": lesson_number,
+            "scenario": persisted_scenario,
+            "planned_goal": persisted_goal,
+            "snapshot_complete": false,
+            "adaptive_lesson_plan": serde_json::Value::Null,
+            "tutor_tasks": serde_json::Value::Null,
         }));
     }
 
@@ -637,6 +1268,9 @@ pub(crate) fn start_lesson(
 
     let candidate_json = super::adaptive_selection::selection_serialize_candidates(&selection)?;
     let focus_json = super::adaptive_selection::selection_serialize_focus(&selection)?;
+    let tutor_tasks = super::adaptive_selection::selection_tutor_tasks(&selection, 16);
+    let effective_max_new_items =
+        super::adaptive_selection::effective_new_item_cap(plan.max_new_items, &tutor_tasks);
 
     #[derive(Serialize)]
     struct PlanJson<'a> {
@@ -659,42 +1293,40 @@ pub(crate) fn start_lesson(
     let plan_value = serde_json::to_value(PlanJson {
         primary_objective: plan.primary_objective,
         difficulty: plan.difficulty,
-        max_new_items: plan.max_new_items,
+        max_new_items: effective_max_new_items,
         priorities: adaptation::plan_priorities(&plan),
         diagnostic_probes: &probes[..probe_len],
         success_criteria: adaptation::plan_success_criteria(&plan),
         recent_signals: plan.recent_signals,
     })?;
     let plan_json = plan_value.to_string();
-    let tutor_tasks = super::adaptive_selection::selection_tutor_tasks(&selection, 16);
+    let tutor_tasks_json = serde_json::to_string(&tutor_tasks)?;
     let input_json = serde_json::to_string(&planner_input)?;
 
     let lesson_id = crate::api::new_id("les");
-    transaction.execute(
-        lessons::INSERT_LESSON,
-        params![
-            lesson_id,
-            profile_id,
-            next_lesson_number,
-            "active",
-            scenario,
-            planned_goal,
-            source,
-            at,
-            Option::<String>::None,
-            Option::<u32>::None,
-            Option::<String>::None,
-            Option::<String>::None,
-            Option::<String>::None,
-            at,
-        ],
+    super::lesson_write::insert_lesson(
+        &transaction,
+        &lesson_id,
+        profile_id,
+        next_lesson_number,
+        "active",
+        scenario,
+        planned_goal,
+        source,
+        Some(&at),
+        None,
+        None,
+        None,
+        None,
+        None,
+        &at,
     )?;
     transaction.execute(
         "INSERT INTO planner_decisions
          (id,learner_language_profile_id,lesson_id,planner_version,
           input_json,plan_json,task_candidates_json,capability_state_json,
-          focus_threads_json,outcome_json,created_at,updated_at)
-         VALUES (?1,?2,?3,'planner-v3',?4,?5,?6,?7,?8,NULL,?9,?9)",
+          focus_threads_json,tutor_tasks_json,outcome_json,created_at,updated_at)
+         VALUES (?1,?2,?3,'planner-v3',?4,?5,?6,?7,?8,?9,NULL,?10,?10)",
         params![
             crate::api::new_id("pd"),
             profile_id,
@@ -704,6 +1336,7 @@ pub(crate) fn start_lesson(
             candidate_json,
             capability_json,
             focus_json,
+            tutor_tasks_json,
             at,
         ],
     )?;
@@ -712,6 +1345,9 @@ pub(crate) fn start_lesson(
     crate::json(&serde_json::json!({
         "id": lesson_id,
         "lesson_number": next_lesson_number,
+        "scenario": scenario,
+        "planned_goal": planned_goal,
+        "snapshot_complete": true,
         "planner_version": "planner-v3",
         "adaptive_lesson_plan": plan_value,
         "tutor_tasks": tutor_tasks,

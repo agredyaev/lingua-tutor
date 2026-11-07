@@ -1,12 +1,12 @@
 //! Bounded review queue with transactional candidate promotion.
 
-use crate::repositories::{cards, from_rfc3339, review, to_rfc3339};
+use crate::sqlite::{from_rfc3339, to_rfc3339};
 use crate::{Env, Result};
 use review_engine::ScheduledState;
 use rusqlite::{OptionalExtension as _, TransactionBehavior, params};
 
 use super::card_write::{update_card_status, upsert_schedule_state};
-use super::review_ops::select_scheduler;
+use super::review_ops::validate_scheduler;
 
 const MAX_QUEUE: usize = 50;
 const MAX_PROMOTIONS: usize = u8::MAX as usize;
@@ -63,7 +63,7 @@ pub(crate) fn queue(env: &Env, session_id: &str) -> Result<serde_json::Value> {
     let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
 
     let profile_id: String = transaction
-        .query_row(review::SELECT_SESSION, params![session_id], |row| {
+        .query_row(crate::sqlite::SELECT_SESSION, params![session_id], |row| {
             row.get("learner_language_profile_id")
         })
         .optional()?
@@ -74,20 +74,12 @@ pub(crate) fn queue(env: &Env, session_id: &str) -> Result<serde_json::Value> {
     let now = crate::api::now();
     let at = to_rfc3339(now);
 
-    let mint_budget = super::card_budget::remaining_budget(
-        &transaction,
-        &profile_id,
-        now,
-        cards::COUNT_ACTIVATED_TODAY,
-    )?;
+    let mint_budget =
+        super::card_budget::remaining_activation_budget(&transaction, &profile_id, now)?;
     promote_candidates(&transaction, &profile_id, now, &at, mint_budget)?;
 
-    let session_budget = super::card_budget::remaining_budget(
-        &transaction,
-        &profile_id,
-        now,
-        review::COUNT_NEW_CARDS_INTRODUCED_TODAY,
-    )?;
+    let session_budget =
+        super::card_budget::remaining_session_budget(&transaction, &profile_id, now)?;
 
     let max_batch = MAX_QUEUE;
     let mut queue_text = String::new();
@@ -97,8 +89,7 @@ pub(crate) fn queue(env: &Env, session_id: &str) -> Result<serde_json::Value> {
 
     let mut statement = transaction.prepare(
         "SELECT c.id,c.status,c.created_at,
-                s.algorithm,s.algorithm_version,s.parameter_set_id,s.difficulty,
-                s.stability,s.last_review_at,s.due_at,s.scheduled_interval_seconds,
+                s.algorithm,s.algorithm_version,s.difficulty,s.stability,s.last_review_at,s.due_at,s.scheduled_interval_seconds,
                 s.lapse_count,s.review_count,s.state_version,s.state_hash
          FROM cards c
          LEFT JOIN card_schedule_state s ON s.card_id=c.id
@@ -170,13 +161,10 @@ pub(crate) fn queue(env: &Env, session_id: &str) -> Result<serde_json::Value> {
             continue;
         }
 
-        let scheduler = select_scheduler(&state.algorithm, &state.algorithm_version)?;
-        let retrievability = review_engine::predicted_retrievability(
-            scheduler,
-            &state,
-            review_engine::Timestamp(now.0),
-        )
-        .map_err(|error| crate::Error::RustError(error.to_string()))?;
+        validate_scheduler(&state.algorithm, &state.algorithm_version)?;
+        let retrievability =
+            review_engine::predicted_retrievability(&state, review_engine::Timestamp(now.0))
+                .map_err(|error| crate::Error::RustError(error.to_string()))?;
 
         let category = match status {
             "relearning" => 0,
@@ -264,7 +252,11 @@ fn promote_candidates(
     let mut ids = [TextRef::default(); MAX_PROMOTIONS];
     let mut len = 0usize;
     {
-        let mut statement = database.prepare(cards::SELECT_OLDEST_CANDIDATES)?;
+        let mut statement = database.prepare(
+            "SELECT id FROM cards
+             WHERE learner_language_profile_id=?1 AND status='candidate'
+             ORDER BY created_at ASC LIMIT ?2",
+        )?;
         let mut rows = statement.query(params![profile_id, u32::from(budget)])?;
         while let Some(row) = rows.next()? {
             if len == usize::from(budget) || len == MAX_PROMOTIONS {
@@ -285,9 +277,7 @@ fn promote_candidates(
     for id_ref in &ids[..len] {
         let id = text_at(&promotion_text, *id_ref);
         update_card_status(database, id, "new", None, at)?;
-        let state =
-            review_engine::initial_state(review_engine::FSRS_ID, review_engine::Timestamp(now.0))
-                .map_err(|error| crate::Error::RustError(error.to_string()))?;
+        let state = review_engine::initial_state(review_engine::Timestamp(now.0));
         let last_review_at = state
             .last_review_at
             .map(|value| to_rfc3339(learning_core::Timestamp(value.0)));
@@ -299,7 +289,6 @@ fn promote_candidates(
             id,
             &state.algorithm,
             &state.algorithm_version,
-            state.parameter_set_id.as_deref(),
             state.difficulty,
             state.stability,
             last_review_at.as_deref(),
@@ -354,9 +343,9 @@ fn state_from_row<'a>(row: &'a rusqlite::Row<'_>) -> Result<Option<(ScheduledSta
                 )
             })
     };
-    let last_review_at = timestamp(8)?;
-    let due_at = timestamp(9)?;
-    let state_hash = match row.get_ref(14)? {
+    let last_review_at = timestamp(7)?;
+    let due_at = timestamp(8)?;
+    let state_hash = match row.get_ref(13)? {
         rusqlite::types::ValueRef::Null => "",
         rusqlite::types::ValueRef::Text(raw) => {
             std::str::from_utf8(raw).map_err(|error| crate::Error::RustError(error.to_string()))?
@@ -375,15 +364,14 @@ fn state_from_row<'a>(row: &'a rusqlite::Row<'_>) -> Result<Option<(ScheduledSta
         ScheduledState {
             algorithm,
             algorithm_version,
-            parameter_set_id: row.get(5)?,
-            difficulty: row.get(6)?,
-            stability: row.get(7)?,
+            difficulty: row.get(5)?,
+            stability: row.get(6)?,
             last_review_at,
             due_at,
-            scheduled_interval_seconds: row.get(10)?,
-            lapse_count: row.get::<_, Option<u32>>(11)?.unwrap_or(0),
-            review_count: row.get::<_, Option<u32>>(12)?.unwrap_or(0),
-            state_version: row.get::<_, Option<u32>>(13)?.unwrap_or(1),
+            scheduled_interval_seconds: row.get(9)?,
+            lapse_count: row.get::<_, Option<u32>>(10)?.unwrap_or(0),
+            review_count: row.get::<_, Option<u32>>(11)?.unwrap_or(0),
+            state_version: row.get::<_, Option<u32>>(12)?.unwrap_or(1),
         },
         state_hash,
     )))
@@ -495,8 +483,7 @@ fn load_payload(database: &rusqlite::Connection, card_id: &str) -> Result<serde_
             "SELECT c.id,c.intent,c.status,c.prompt,c.prompt_language,c.answer,
                     c.accepted_answers_json,c.explanation,
                     c.pronunciation_note,
-                    s.algorithm,s.algorithm_version,s.parameter_set_id,s.difficulty,
-                    s.stability,s.last_review_at,s.due_at,s.scheduled_interval_seconds,
+                    s.algorithm,s.algorithm_version,s.difficulty,s.stability,s.last_review_at,s.due_at,s.scheduled_interval_seconds,
                     s.lapse_count,s.review_count,s.state_version,s.state_hash
              FROM cards c
              LEFT JOIN card_schedule_state s ON s.card_id=c.id
@@ -513,14 +500,13 @@ fn load_payload(database: &rusqlite::Connection, card_id: &str) -> Result<serde_
                         let algorithm_version: String = row
                             .get::<_, Option<String>>(10)?
                             .ok_or(rusqlite::Error::InvalidQuery)?;
-                        let last_review_at: Option<String> = row.get(14)?;
-                        let due_at: Option<String> = row.get(15)?;
+                        let last_review_at: Option<String> = row.get(13)?;
+                        let due_at: Option<String> = row.get(14)?;
                         Some(ScheduledState {
                             algorithm,
                             algorithm_version,
-                            parameter_set_id: row.get(11)?,
-                            difficulty: row.get(12)?,
-                            stability: row.get(13)?,
+                            difficulty: row.get(11)?,
+                            stability: row.get(12)?,
                             last_review_at: last_review_at
                                 .as_deref()
                                 .and_then(|value| from_rfc3339(value).ok())
@@ -529,10 +515,10 @@ fn load_payload(database: &rusqlite::Connection, card_id: &str) -> Result<serde_
                                 .as_deref()
                                 .and_then(|value| from_rfc3339(value).ok())
                                 .map(|value| review_engine::Timestamp(value.0)),
-                            scheduled_interval_seconds: row.get(16)?,
-                            lapse_count: row.get::<_, Option<u32>>(17)?.unwrap_or(0),
-                            review_count: row.get::<_, Option<u32>>(18)?.unwrap_or(0),
-                            state_version: row.get::<_, Option<u32>>(19)?.unwrap_or(1),
+                            scheduled_interval_seconds: row.get(15)?,
+                            lapse_count: row.get::<_, Option<u32>>(16)?.unwrap_or(0),
+                            review_count: row.get::<_, Option<u32>>(17)?.unwrap_or(0),
+                            state_version: row.get::<_, Option<u32>>(18)?.unwrap_or(1),
                         })
                     } else {
                         None
@@ -722,11 +708,10 @@ mod tests {
                 let id = format!("card-{index:03}");
                 insert_card(&db, &id, "review", "2020-01-01T00:00:00Z");
                 let state = ScheduledState {
-                    algorithm: "fallback".to_owned(),
-                    algorithm_version: "fallback-1".to_owned(),
-                    parameter_set_id: None,
-                    difficulty: None,
-                    stability: None,
+                    algorithm: review_engine::ALGORITHM.to_owned(),
+                    algorithm_version: review_engine::ALGORITHM_VERSION.to_owned(),
+                    difficulty: Some(5.0),
+                    stability: Some(2.0),
                     last_review_at: Some(review_engine::Timestamp(if index == 500 {
                         now.0 - 3 * 86_400
                     } else {
@@ -742,28 +727,27 @@ mod tests {
                     review_count: 1,
                     state_version: 2,
                 };
-                db.execute(
-                    review::UPSERT_SCHEDULE_STATE,
-                    params![
-                        id,
-                        state.algorithm,
-                        state.algorithm_version,
-                        Option::<String>::None,
-                        state.difficulty,
-                        state.stability,
-                        state
-                            .last_review_at
-                            .map(|value| to_rfc3339(learning_core::Timestamp(value.0))),
-                        state
-                            .due_at
-                            .map(|value| to_rfc3339(learning_core::Timestamp(value.0))),
-                        state.scheduled_interval_seconds,
-                        state.lapse_count,
-                        state.review_count,
-                        state.state_version,
-                        review_engine::state_hash(&state),
-                        to_rfc3339(now)
-                    ],
+                let last_review_at = state
+                    .last_review_at
+                    .map(|value| to_rfc3339(learning_core::Timestamp(value.0)));
+                let due_at = state
+                    .due_at
+                    .map(|value| to_rfc3339(learning_core::Timestamp(value.0)));
+                upsert_schedule_state(
+                    &db,
+                    &id,
+                    &state.algorithm,
+                    &state.algorithm_version,
+                    state.difficulty,
+                    state.stability,
+                    last_review_at.as_deref(),
+                    due_at.as_deref(),
+                    state.scheduled_interval_seconds,
+                    state.lapse_count,
+                    state.review_count,
+                    state.state_version,
+                    &review_engine::state_hash(&state),
+                    &to_rfc3339(now),
                 )
                 .unwrap();
             }

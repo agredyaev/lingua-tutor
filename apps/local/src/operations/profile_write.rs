@@ -121,107 +121,30 @@ mod tests {
         );
         let _ = std::fs::remove_file(path);
     }
-
-    fn seed_profile(env: &Env) {
-        let db = env.connection().unwrap();
-        db.execute_batch(
-            r#"
-               INSERT INTO learner_profile(id,created_at,updated_at) VALUES('learner-1','a','a');
-               INSERT INTO learner_language_profiles
-                (id,learner_id,source_language,target_locale,estimated_level,
-                 current_lesson_number,status,is_default,preferences_json,created_at,updated_at)
-               VALUES('llp-1','learner-1', 'ru','es-ES','A1',7,'active',1,'{"x":1}','a','a');"#,
-        )
-        .unwrap();
-    }
-
-    fn patch_snapshot(env: &Env) -> (Option<String>, String, u8, String, u32) {
-        let db = env.connection().unwrap();
-        db.query_row(
-            "SELECT estimated_level,status,is_default,preferences_json,current_lesson_number
-             FROM learner_language_profiles WHERE id='llp-1'",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn patch_updates_requested_fields_and_preserves_lesson_counter() {
-        let (path, env) = create_env("patch");
-        seed_profile(&env);
-
-        patch_profile(
-            &env,
-            "llp-1",
-            PatchProfileInput {
-                estimated_level: Some("A2"),
-                status: Some("paused"),
-                is_default: Some(false),
-                preferences: Some(&serde_json::json!({"mode":"fast"})),
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            patch_snapshot(&env),
-            (
-                Some("A2".to_owned()),
-                "paused".to_owned(),
-                0,
-                r#"{"mode":"fast"}"#.to_owned(),
-                7,
-            )
-        );
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn patch_response_repairs_stale_lesson_counter_projection() {
-        let (path, env) = create_env("patch-stale-counter");
-        seed_profile(&env);
-        env.connection()
-            .unwrap()
-            .execute(
-                "INSERT INTO lessons
-                 (id,learner_language_profile_id,
-                  lesson_number,status,scenario,planned_goal,source,started_at,completed_at,
-                  created_at,updated_at)
-                 VALUES
-                 ('lesson-8','llp-1',8,'completed','seed','','import',
-                  'a','a','a','a')",
-                [],
-            )
-            .unwrap();
-
-        let response = patch_profile(
-            &env,
-            "llp-1",
-            PatchProfileInput {
-                estimated_level: Some("A2"),
-                status: None,
-                is_default: None,
-                preferences: None,
-            },
-        )
-        .unwrap();
-
-        assert_eq!(response["current_lesson_number"], 8);
-        assert_eq!(patch_snapshot(&env).4, 7);
-        let _ = std::fs::remove_file(path);
-    }
 }
 
-use crate::repositories::{profiles, to_rfc3339};
+use crate::sqlite::to_rfc3339;
 use crate::{Env, Result};
 use rusqlite::{TransactionBehavior, params};
 
-pub(crate) struct PatchProfileInput<'a> {
-    pub estimated_level: Option<&'a str>,
-    pub status: Option<&'a str>,
-    pub is_default: Option<bool>,
-    pub preferences: Option<&'a serde_json::Value>,
-}
+const UPSERT_LEARNER: &str = "INSERT INTO learner_profile
+    (id, timezone, daily_session_target, session_minutes_target, max_new_cards,
+     desired_retention, max_review_minutes, created_at, updated_at)
+ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+ ON CONFLICT(id) DO UPDATE SET
+    timezone = excluded.timezone,
+    daily_session_target = excluded.daily_session_target,
+    session_minutes_target = excluded.session_minutes_target,
+    max_new_cards = excluded.max_new_cards,
+    desired_retention = excluded.desired_retention,
+    max_review_minutes = excluded.max_review_minutes,
+    updated_at = excluded.updated_at";
+
+const INSERT_LANGUAGE_PROFILE: &str = "INSERT INTO learner_language_profiles
+    (id, learner_id, source_language, target_locale,
+     estimated_level, current_lesson_number, status, is_default,
+     preferences_json, created_at, updated_at)
+ VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)";
 
 pub(crate) fn create_profile(
     env: &Env,
@@ -244,11 +167,11 @@ pub(crate) fn create_profile(
 
     let result = (|| -> rusqlite::Result<()> {
         transaction.execute(
-            profiles::UPSERT_LEARNER,
+            UPSERT_LEARNER,
             params!["learner-1", "Europe/Madrid", 2, 20, 8, 0.90, 12, at],
         )?;
         transaction.execute(
-            profiles::INSERT_LANGUAGE_PROFILE,
+            INSERT_LANGUAGE_PROFILE,
             params![
                 profile_id,
                 "learner-1",
@@ -278,98 +201,4 @@ pub(crate) fn create_profile(
 
     transaction.commit()?;
     crate::json(&serde_json::json!({"id":profile_id}))
-}
-
-pub(crate) fn patch_profile(
-    env: &Env,
-    profile_id: &str,
-    input: PatchProfileInput<'_>,
-) -> Result<serde_json::Value> {
-    if let Some(status) = input.status
-        && !matches!(status, "active" | "paused" | "archived")
-    {
-        return crate::api::operation_error(400, "invalid_field", "status outside closed set");
-    }
-
-    let preferences_json = input.preferences.map(serde_json::to_string).transpose()?;
-    let is_default = input.is_default.map(u8::from);
-    let at = to_rfc3339(crate::api::now());
-
-    let mut database = env.connection()?;
-    let transaction = database.transaction_with_behavior(TransactionBehavior::Immediate)?;
-
-    let changed = transaction.execute(
-        "UPDATE learner_language_profiles SET
-            estimated_level = COALESCE(?2, estimated_level),
-            status = COALESCE(?3, status),
-            is_default = COALESCE(?4, is_default),
-            preferences_json = COALESCE(?5, preferences_json),
-            updated_at = ?6
-         WHERE id = ?1",
-        params![
-            profile_id,
-            input.estimated_level,
-            input.status,
-            is_default,
-            preferences_json,
-            at,
-        ],
-    )?;
-    if changed == 0 {
-        return crate::api::operation_error(404, "not_found", "unknown profile");
-    }
-
-    let (
-        learner_id,
-        source_language,
-        target_locale,
-        estimated_level,
-        current_lesson_number,
-        status,
-        is_default,
-        preferences_json,
-    ) = transaction.query_row(
-        "SELECT learner_id,source_language,target_locale,
-                estimated_level,
-                MAX(
-                    current_lesson_number,
-                    COALESCE(
-                        (SELECT MAX(l.lesson_number)
-                         FROM lessons l
-                         WHERE l.learner_language_profile_id = learner_language_profiles.id
-                           AND l.status = 'completed'),
-                        0
-                    )
-                ) AS current_lesson_number,
-                status,is_default,preferences_json
-         FROM learner_language_profiles WHERE id=?1",
-        params![profile_id],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, u32>(4)?,
-                row.get::<_, String>(5)?,
-                row.get::<_, u8>(6)?,
-                row.get::<_, String>(7)?,
-            ))
-        },
-    )?;
-
-    transaction.commit()?;
-
-    let preferences: serde_json::Value = serde_json::from_str(&preferences_json)?;
-    crate::json(&serde_json::json!({
-        "id": profile_id,
-        "learner_id": learner_id,
-        "source_language": source_language,
-        "target_locale": target_locale,
-        "estimated_level": estimated_level,
-        "current_lesson_number": current_lesson_number,
-        "status": status,
-        "is_default": is_default != 0,
-        "preferences": preferences,
-    }))
 }

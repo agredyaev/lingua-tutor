@@ -1,7 +1,7 @@
 //! Batch capability evidence scan shared by lesson and read-only tutor operations.
 //! SQLite is authoritative. One request-local scratch is reused for each item.
 use crate::Result;
-use crate::repositories::from_rfc3339;
+use crate::sqlite::from_rfc3339;
 use rusqlite::{Connection, params};
 
 const MAX_ITEMS: usize = 200;
@@ -134,6 +134,7 @@ fn append_evidence_row(data: &mut EvidenceColumns, row: &rusqlite::Row<'_>) -> R
         .as_ref()
         .and_then(|v| v.get("context_family"))
         .and_then(serde_json::Value::as_str)
+        .filter(|value| learning_core::stable_context_family_id(value))
     {
         data.context_family_present[i] = true;
         data.context_family[i] = push_text(&mut data.text, v);
@@ -220,7 +221,14 @@ pub(crate) fn visit_item_capabilities(
                          THEN CAST(json_extract(e.metadata_json,'$.assistance_level') AS INTEGER)>0
                        WHEN e.kind='transfer'
                          THEN CAST(json_extract(e.metadata_json,'$.assistance_level') AS INTEGER)=0
+                          AND json_type(e.metadata_json,'$.context_family')='text'
                           AND TRIM(COALESCE(json_extract(e.metadata_json,'$.context_family'),''))!=''
+                          AND json_extract(e.metadata_json,'$.context_family')
+                              NOT GLOB '*[^a-z0-9._-]*'
+                          AND SUBSTR(json_extract(e.metadata_json,'$.context_family'),1,1)
+                              GLOB '[a-z0-9]'
+                          AND SUBSTR(json_extract(e.metadata_json,'$.context_family'),-1,1)
+                              GLOB '[a-z0-9]'
                        ELSE 0
                      END,
                      0
@@ -1567,6 +1575,114 @@ mod tests {
         assert!(
             saw_freshest_unchecked,
             "the next not-yet-revalidated mastered item must receive the freed slot"
+        );
+    }
+
+    #[test]
+    fn noncanonical_transfer_family_keeps_mastered_revalidation_due_under_capacity() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE learning_items(
+                id TEXT PRIMARY KEY,
+                learner_language_profile_id TEXT NOT NULL,
+                target_text TEXT NOT NULL,
+                status TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+             );
+             CREATE TABLE learning_item_evidence(
+                id TEXT PRIMARY KEY,
+                learning_item_id TEXT NOT NULL,
+                lesson_id TEXT,
+                kind TEXT NOT NULL,
+                success INTEGER NOT NULL,
+                metadata_json TEXT,
+                recorded_at TEXT NOT NULL,
+                observation_order INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE INDEX ix_evidence_item ON learning_item_evidence(learning_item_id, kind);
+             CREATE TABLE listening_attempts(
+                id TEXT PRIMARY KEY,
+                learner_language_profile_id TEXT NOT NULL,
+                learning_item_id TEXT,
+                lesson_id TEXT,
+                source_reference TEXT,
+                source_variant_id TEXT,
+                talker_key TEXT,
+                context_tag TEXT,
+                transcript TEXT,
+                success INTEGER NOT NULL,
+                recorded_at TEXT NOT NULL
+             );
+             INSERT INTO learning_items VALUES
+                ('mastered-invalid-family','llp-1','invalid family','mastered','2025-01-01T00:00:00Z');
+             INSERT INTO learning_item_evidence VALUES
+                ('ev-listening','mastered-invalid-family','les-current','listening',1,
+                 json_object('assistance_level',0,'probe_phase','diagnostic'),
+                 '2026-11-06T00:00:00Z',0),
+                ('ev-spontaneous','mastered-invalid-family','les-current','spontaneous_production',1,
+                 json_object('assistance_level',0,'probe_phase','delayed_retrieval'),
+                 '2026-11-06T00:01:00Z',1),
+                ('ev-transfer','mastered-invalid-family','les-current','transfer',1,
+                 json_object('assistance_level',0,'probe_phase','transfer','context_family','Service.Ask_Help'),
+                 '2026-11-06T00:02:00Z',2);",
+        )
+        .unwrap();
+        for index in 0..184 {
+            db.execute(
+                "INSERT INTO learning_items
+                 VALUES(?1,'llp-1',?2,'learning','2026-11-06T00:00:00Z')",
+                params![format!("learning-{index:03}"), format!("item {index}")],
+            )
+            .unwrap();
+        }
+        for index in 0..16 {
+            db.execute(
+                "INSERT INTO learning_items
+                 VALUES(?1,'llp-1',?2,'mastered',?3)",
+                params![
+                    format!("mastered-new-{index:02}"),
+                    format!("new mastered {index}"),
+                    format!("2026-10-{:02}T00:00:00Z", index + 1),
+                ],
+            )
+            .unwrap();
+        }
+
+        let mut saw_target = false;
+        let count = visit_item_capabilities(&db, "llp-1", 1_762_435_200, |item| {
+            saw_target |= item.learning_item_id == "mastered-invalid-family";
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(count, MAX_ITEMS);
+        assert!(
+            saw_target,
+            "noncanonical transfer family must fail closed and keep mastered revalidation due"
+        );
+    }
+
+    #[test]
+    fn noncanonical_legacy_context_family_fails_closed_at_projection_boundary() {
+        let db = Connection::open_in_memory().unwrap();
+        let mut statement = db
+            .prepare("SELECT 0,0,0,0,'transfer',1,?1,'2026-10-18T10:00:00Z',?2")
+            .unwrap();
+        let mut scratch = empty_evidence_columns();
+        let mut rows = statement
+            .query([
+                Some(
+                    r#"{"assistance_level":0,"probe_phase":"transfer","context_family":"Service.Ask_Help"}"#,
+                ),
+                Some("les-1"),
+            ])
+            .unwrap();
+        append_evidence_row(&mut scratch, rows.next().unwrap().unwrap()).unwrap();
+
+        assert_eq!(scratch.len, 1);
+        assert!(
+            !scratch.context_family_present[0],
+            "noncanonical legacy family IDs must not reach capability diversity state"
         );
     }
 

@@ -1,9 +1,34 @@
 //! Shared daily card-budget calculations using the learner's IANA timezone.
 
 use crate::Result;
-use crate::repositories::{review, to_rfc3339};
+use crate::sqlite::to_rfc3339;
 use chrono::{Datelike as _, Duration, NaiveDate, Utc};
 use rusqlite::{OptionalExtension as _, params};
+
+const COUNT_ACTIVATED_TODAY: &str = "SELECT COUNT(*) FROM cards
+ WHERE learner_language_profile_id=?1 AND status!='candidate' AND created_at>=?2";
+
+const COUNT_NEW_CARDS_INTRODUCED_TODAY: &str = "SELECT COUNT(*) FROM review_events e
+ JOIN cards c ON c.id=e.card_id
+ JOIN card_schedule_state s ON s.card_id=e.card_id
+ WHERE c.learner_language_profile_id=?1 AND e.created_at>=?2
+   AND e.compensates_event_id IS NULL AND s.review_count=1";
+
+pub(crate) fn remaining_activation_budget(
+    database: &rusqlite::Connection,
+    profile_id: &str,
+    at: learning_core::Timestamp,
+) -> Result<u8> {
+    remaining_budget(database, profile_id, at, COUNT_ACTIVATED_TODAY)
+}
+
+pub(crate) fn remaining_session_budget(
+    database: &rusqlite::Connection,
+    profile_id: &str,
+    at: learning_core::Timestamp,
+) -> Result<u8> {
+    remaining_budget(database, profile_id, at, COUNT_NEW_CARDS_INTRODUCED_TODAY)
+}
 
 /// Start of the learner's current local calendar day, expressed in UTC.
 pub(crate) fn local_day_start_utc(
@@ -98,7 +123,7 @@ fn previous_two_study_days(
         ])?;
         while let Some(row) = rows.next()? {
             let completed_at: String = row.get(0)?;
-            let completed = crate::repositories::from_rfc3339(&completed_at)
+            let completed = crate::sqlite::from_rfc3339(&completed_at)
                 .map_err(|error| crate::Error::RustError(error.to_string()))?;
             let start = local_day_start_utc(completed, timezone)?.0;
             if day_starts[..day_len].contains(&start) {
@@ -178,7 +203,7 @@ fn daily_signal(
 ///
 /// The supplied SQL must accept profile_id and local-day-start as its two
 /// positional parameters.
-pub(crate) fn remaining_budget(
+fn remaining_budget(
     database: &rusqlite::Connection,
     profile_id: &str,
     at: learning_core::Timestamp,
@@ -194,7 +219,7 @@ pub(crate) fn remaining_budget(
     )?;
 
     let overdue: u32 = database.query_row(
-        review::COUNT_OVERDUE,
+        crate::sqlite::COUNT_OVERDUE,
         params![profile_id, to_rfc3339(at)],
         |row| row.get(0),
     )?;
@@ -273,6 +298,47 @@ mod tests {
         let autumn =
             local_day_start_utc(utc_timestamp("2026-10-25 12:00:00"), "Europe/Madrid").unwrap();
         assert_eq!(autumn, utc_timestamp("2026-10-24 22:00:00"));
+    }
+
+    #[test]
+    fn session_budget_counts_first_grade_not_card_creation() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE cards(
+                id TEXT PRIMARY KEY,
+                learner_language_profile_id TEXT NOT NULL
+             );
+             CREATE TABLE card_schedule_state(
+                card_id TEXT PRIMARY KEY,
+                review_count INTEGER NOT NULL
+             );
+             CREATE TABLE review_events(
+                id TEXT PRIMARY KEY,
+                card_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                compensates_event_id TEXT
+             );
+             INSERT INTO cards VALUES
+                ('first','llp-1'),
+                ('second','llp-1'),
+                ('ungraded','llp-1');
+             INSERT INTO card_schedule_state VALUES
+                ('first',1),
+                ('second',2);
+             INSERT INTO review_events VALUES
+                ('e1','first','2026-07-12T01:00:00Z',NULL),
+                ('e2','second','2026-07-12T01:00:00Z',NULL);",
+        )
+        .unwrap();
+
+        let count: u32 = db
+            .query_row(
+                COUNT_NEW_CARDS_INTRODUCED_TODAY,
+                ["llp-1", "2026-07-12T00:00:00Z"],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
     }
 
     #[test]

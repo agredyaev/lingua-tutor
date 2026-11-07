@@ -136,6 +136,18 @@ fn dispatch_rpc(call: RpcRequest, env: &Env) -> crate::Result<serde_json::Value>
                 )
             })
     };
+    let u8_param = |name: &str| {
+        u32_param(name).and_then(|value| {
+            u8::try_from(value).map_err(|_| {
+                crate::Error::operation(
+                    400,
+                    "invalid_params",
+                    format!("RPC param out of range: {name}"),
+                    serde_json::json!({}),
+                )
+            })
+        })
+    };
 
     match call.method.as_str() {
         "health" => handlers::records::health(env),
@@ -145,21 +157,6 @@ fn dispatch_rpc(call: RpcRequest, env: &Env) -> crate::Result<serde_json::Value>
             required("target_locale")?,
             required("source_language")?,
         ),
-        "update_profile" => {
-            let profile_id = required("language_profile_id")?.to_owned();
-            let patch: handlers::profiles::PatchProfileParams =
-                serde_json::from_value(params.clone())?;
-            crate::operations::profile_write::patch_profile(
-                env,
-                &profile_id,
-                crate::operations::profile_write::PatchProfileInput {
-                    estimated_level: patch.estimated_level.as_deref(),
-                    status: patch.status.as_deref(),
-                    is_default: patch.is_default,
-                    preferences: patch.preferences.as_ref(),
-                },
-            )
-        }
         "get_dashboard" => handlers::records::dashboard_for(env, required("language_profile_id")?),
         "get_learning_state" => {
             handlers::records::learning_state_for(env, required("language_profile_id")?)
@@ -167,37 +164,8 @@ fn dispatch_rpc(call: RpcRequest, env: &Env) -> crate::Result<serde_json::Value>
         "get_next_lesson" => {
             handlers::records::next_lesson_for(env, required("language_profile_id")?)
         }
-        "start_lesson" => crate::operations::start_lesson::start_lesson(
-            env,
-            required("language_profile_id")?,
-            required("scenario")?,
-            rpc_param(params, "planned_goal").unwrap_or_default(),
-            "pwa",
-        ),
         "list_lessons" => {
             handlers::lessons::list_lessons_for(env, required("language_profile_id")?)
-        }
-        "get_lesson" => handlers::lessons::get_lesson(env, required("lesson_id")?),
-        "complete_lesson" => {
-            let lesson_id = required("lesson_id")?.to_owned();
-            let document = params.get("lesson_result").ok_or_else(|| {
-                crate::Error::operation(
-                    400,
-                    "invalid_params",
-                    "missing RPC param: lesson_result",
-                    serde_json::json!({}),
-                )
-            })?;
-            let result: tutor_contract::LessonResult = serde_json::from_value(document.clone())
-                .map_err(|error| {
-                    crate::Error::operation(
-                        400,
-                        "parse_error",
-                        "not a valid lesson-result document",
-                        serde_json::json!({ "detail": error.to_string() }),
-                    )
-                })?;
-            handlers::lessons::complete_lesson_result(env, &lesson_id, result)
         }
         "validate_lesson_result" => handlers::lessons::validate_import_text(required("text")?, env),
         "apply_lesson_result" => handlers::lessons::apply_import_text(
@@ -210,36 +178,16 @@ fn dispatch_rpc(call: RpcRequest, env: &Env) -> crate::Result<serde_json::Value>
             required("language_profile_id")?,
             rpc_param(params, "status"),
         ),
-        "get_error_target" => {
-            handlers::records::get_error_target(env, required("error_target_id")?)
-        }
-        "complete_error_recheck" => crate::operations::records_write::complete_error_recheck(
+        "complete_error_recheck" => crate::operations::error::complete_error_recheck(
             env,
             required("error_target_id")?,
             required("recheck_id")?,
             bool_param("passed")?,
+            u8_param("assistance_level")?,
+            required("context")?,
+            bool_param("repair_applied")?,
+            rpc_param(params, "repair_action"),
         ),
-        "create_listening_attempt" => {
-            let attempt: handlers::records::ListeningAttemptParams =
-                serde_json::from_value(params.clone())?;
-            crate::operations::records_write::create_listening_attempt(
-                env,
-                crate::operations::records_write::ListeningAttemptInput {
-                    language_profile_id: &attempt.language_profile_id,
-                    learning_item_id: attempt.learning_item_id.as_deref(),
-                    lesson_id: attempt.lesson_id.as_deref(),
-                    source_reference: attempt.source_reference.as_deref(),
-                    source_variant_id: attempt.source_variant_id.as_deref(),
-                    talker_key: attempt.talker_key.as_deref(),
-                    context_tag: &attempt.context_tag,
-                    transcript: attempt.transcript.as_deref(),
-                    success: attempt.success,
-                    assistance_level: attempt.assistance_level,
-                    response_millis: attempt.response_millis,
-                    probe_phase: attempt.probe_phase,
-                },
-            )
-        }
         "get_tutor_context" => {
             handlers::records::tutor_context_for(env, required("language_profile_id")?)
         }
@@ -250,22 +198,6 @@ fn dispatch_rpc(call: RpcRequest, env: &Env) -> crate::Result<serde_json::Value>
             rpc_param(params, "intent"),
         ),
         "get_card" => handlers::cards::get(env, required("card_id")?),
-        "patch_card" => {
-            let card_id = required("card_id")?.to_owned();
-            let patch: handlers::cards::CardPatchParams = serde_json::from_value(params.clone())?;
-            crate::operations::card_direct::patch_card(
-                env,
-                &card_id,
-                crate::operations::card_direct::CardPatchInput {
-                    edit_class: &patch.edit_class,
-                    prompt: patch.prompt.as_deref(),
-                    answer: patch.answer.as_deref(),
-                    explanation: patch.explanation.as_deref(),
-                    pronunciation_note: patch.pronunciation_note.as_deref(),
-                    accepted_answers: patch.accepted_answers.as_deref(),
-                },
-            )
-        }
         "set_card_status" => {
             let status = match required("status")? {
                 "suspended" => learning_core::CardStatus::Suspended,
@@ -282,28 +214,6 @@ fn dispatch_rpc(call: RpcRequest, env: &Env) -> crate::Result<serde_json::Value>
                 rpc_param(params, "reason"),
             )
         }
-        "list_recommendations" => {
-            handlers::recommendations::list_for(env, required("language_profile_id")?)
-        }
-        "resolve_recommendation" => {
-            let status = required("status")?;
-            if !matches!(status, "accepted" | "dismissed") {
-                return api::operation_error(
-                    400,
-                    "invalid_field",
-                    "status must be accepted|dismissed",
-                );
-            }
-            crate::operations::recommendation_ops::resolve(
-                env,
-                required("recommendation_id")?,
-                status,
-            )
-        }
-        "get_card_redesign_candidates" => handlers::recommendations::redesign_candidates_for(
-            env,
-            required("language_profile_id")?,
-        ),
         "create_review_session" => crate::operations::review_ops::create_session(
             env,
             required("language_profile_id")?,
@@ -338,9 +248,6 @@ fn dispatch_rpc(call: RpcRequest, env: &Env) -> crate::Result<serde_json::Value>
             u32_param("card_count")?,
             u32_param("review_seconds")?,
         ),
-        "evaluate_review_answer" => {
-            handlers::review::evaluate(env, required("card_id")?, required("learner_answer")?)
-        }
         "get_review_summary" => {
             handlers::review::summary_for(env, required("language_profile_id")?)
         }
@@ -566,203 +473,6 @@ mod tests {
     }
 
     #[test]
-    fn lesson_review_next_lesson_rpc_cycle_works_on_fresh_sqlite() {
-        let dir = std::env::temp_dir().join(format!("lingua-rpc-cycle-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let db = dir.join("lingua.sqlite3");
-        let env = storage::environment(&db).unwrap();
-        let profile = call(
-            &env,
-            "create_language_profile",
-            serde_json::json!({
-                "target_locale": "es-ES",
-                "source_language": "ru"
-            }),
-        );
-        let profile_id = profile["id"].as_str().unwrap();
-
-        let before = call(
-            &env,
-            "get_next_lesson",
-            serde_json::json!({ "language_profile_id": profile_id }),
-        );
-        assert_eq!(before["lesson_number"], 1);
-
-        let started = call(
-            &env,
-            "start_lesson",
-            serde_json::json!({
-                "language_profile_id": profile_id,
-                "scenario": "restaurant",
-                "planned_goal": "order a simple meal"
-            }),
-        );
-        assert_eq!(started["lesson_number"], 1);
-        let lesson_id = started["id"].as_str().unwrap();
-
-        let completed = call(
-            &env,
-            "complete_lesson",
-            serde_json::json!({
-                "lesson_id": lesson_id,
-                "lesson_result": {
-                    "schema_version": "2",
-                    "client_operation_id": "op-rpc-cycle-lesson",
-                    "language_profile_id": profile_id,
-                    "lesson": {
-                        "scenario": "restaurant",
-                        "duration_seconds": 720,
-                        "tutor_summary": "Practised ordering a meal.",
-                        "next_goal": "ask for the bill"
-                    },
-                    "metrics": {
-                        "speaking_seconds": 300,
-                        "unaided_recall_count": 4,
-                        "aided_recall_count": 1,
-                        "listening_score": 0.8,
-                        "avg_answer_millis": 1800,
-                        "long_pause_count": 1,
-                        "confidence": 0.75
-                    },
-                    "new_learning_items": [{
-                        "client_item_key": "bill",
-                        "item_type": "phrase",
-                        "target_text": "La cuenta, por favor."
-                    }],
-                    "evidence": [
-                        {
-                            "client_item_key": "bill",
-                            "kind": "prompted_production",
-                            "success": true,
-                            "assistance_level": 1,
-                            "response_millis": 1800,
-                            "probe_phase": "diagnostic",
-                            "context": "restaurant:bill",
-                            "pronunciation_intelligible": true,
-                            "pronunciation_repeat_required": false
-                        },
-                        {
-                            "client_item_key": "bill",
-                            "kind": "recognition",
-                            "success": true,
-                            "assistance_level": 0,
-                            "response_millis": 900,
-                            "probe_phase": "diagnostic",
-                            "context": "restaurant:bill-recognition"
-                        },
-                        {
-                            "client_item_key": "bill",
-                            "kind": "prompted_production",
-                            "success": true,
-                            "assistance_level": 1,
-                            "response_millis": 1400,
-                            "probe_phase": "practice",
-                            "context": "restaurant:bill-post-guidance",
-                            "pronunciation_intelligible": true,
-                            "pronunciation_repeat_required": false
-                        }
-                    ],
-                    "interventions": [{
-                        "action": "guided_retrieval",
-                        "client_item_key": "bill",
-                        "target_capability": "prompted_production",
-                        "evidence_index": 2
-                    }],
-                    "card_mutations": [{
-                        "operation": "create",
-                        "client_operation_id": "op-rpc-cycle-card",
-                        "card": {
-                            "intent": "production",
-                            "prompt": "Попросите счёт",
-                            "answer": "La cuenta, por favor.",
-                            "prompt_language": "ru",
-                            "creation_reason": "rpc lifecycle test"
-                        }
-                    }]
-                }
-            }),
-        );
-        assert_eq!(completed["lesson_id"], lesson_id);
-
-        let cards = call(
-            &env,
-            "list_cards",
-            serde_json::json!({ "language_profile_id": profile_id }),
-        );
-        let cards = cards.as_array().unwrap();
-        assert_eq!(cards.len(), 1);
-        assert_eq!(cards[0]["answer"], "La cuenta, por favor.");
-
-        let session = call(
-            &env,
-            "create_review_session",
-            serde_json::json!({
-                "language_profile_id": profile_id,
-                "source": "online"
-            }),
-        );
-        let session_id = session["id"].as_str().unwrap();
-        let queue = call(
-            &env,
-            "get_review_queue",
-            serde_json::json!({ "session_id": session_id }),
-        );
-        let queued = queue["queue"].as_array().unwrap();
-        assert_eq!(queued.len(), 1);
-        assert_eq!(queued[0]["answer"], "La cuenta, por favor.");
-        let card_id = queued[0]["card_id"].as_str().unwrap();
-        let prior_state_hash = queued[0]["prior_state_hash"].as_str().unwrap();
-        let at = crate::repositories::to_rfc3339(crate::api::now());
-
-        let graded = call(
-            &env,
-            "review_card",
-            serde_json::json!({
-                "session_id": session_id,
-                "client_operation_id": "op-rpc-cycle-review",
-                "card_id": card_id,
-                "grade": 3,
-                "presented_at": at,
-                "answered_at": at,
-                "response_millis": 1500,
-                "answer_revealed": true,
-                "prior_state_hash": prior_state_hash,
-                "source": "online"
-            }),
-        );
-        assert_eq!(graded["card_id"], card_id);
-        assert_eq!(graded["duplicate"], serde_json::Value::Null);
-
-        call(
-            &env,
-            "complete_review_session",
-            serde_json::json!({
-                "session_id": session_id,
-                "card_count": 1,
-                "review_seconds": 20
-            }),
-        );
-
-        let next = call(
-            &env,
-            "get_next_lesson",
-            serde_json::json!({ "language_profile_id": profile_id }),
-        );
-        assert_eq!(next["lesson_number"], 2);
-        assert_eq!(next["previous_scenario"], "restaurant");
-
-        let dashboard = call(
-            &env,
-            "get_dashboard",
-            serde_json::json!({ "language_profile_id": profile_id }),
-        );
-        assert_eq!(dashboard["next_lesson_number"], 2);
-        assert_eq!(dashboard["reviews_today"], 1);
-
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
     #[ignore = "representative performance gate; run with --release --ignored --nocapture"]
     fn representative_single_learner_latency_stays_within_budget() {
         use std::time::{Duration, Instant};
@@ -793,7 +503,7 @@ mod tests {
             }),
         );
         let session_id = session["id"].as_str().unwrap().to_owned();
-        let at = crate::repositories::to_rfc3339(crate::api::now());
+        let at = crate::sqlite::to_rfc3339(crate::api::now());
         let due_at = "2000-01-01T00:00:00Z";
 
         {
@@ -973,34 +683,23 @@ pub(crate) fn fuzz_boundary(env: &Env, dir: &Path, args: &serde_json::Value, dat
             "health",
             "list_language_profiles",
             "create_language_profile",
-            "update_profile",
             "get_dashboard",
             "get_learning_state",
             "get_next_lesson",
-            "start_lesson",
             "list_lessons",
-            "get_lesson",
-            "complete_lesson",
             "validate_lesson_result",
             "apply_lesson_result",
             "list_error_targets",
-            "get_error_target",
             "complete_error_recheck",
-            "create_listening_attempt",
             "get_tutor_context",
             "list_cards",
             "get_card",
-            "patch_card",
             "set_card_status",
-            "list_recommendations",
-            "resolve_recommendation",
-            "get_card_redesign_candidates",
             "create_review_session",
             "get_review_queue",
             "review_card",
             "undo_review",
             "complete_review_session",
-            "evaluate_review_answer",
             "get_review_summary",
             "get_review_forecast",
             "get_review_retention",
