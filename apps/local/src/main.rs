@@ -2,9 +2,11 @@
 
 use lingua_tutor_local::{assets, server, storage, tunnel};
 #[cfg(unix)]
-use std::{fs::OpenOptions, io::Read};
 use std::{
-    io::Write,
+    fs::OpenOptions,
+    io::{Read, Write},
+};
+use std::{
     path::PathBuf,
     process::{Command, ExitCode, Stdio},
 };

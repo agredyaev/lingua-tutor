@@ -575,6 +575,7 @@ fn build_curl_config(
     Ok(config)
 }
 
+#[cfg(any(windows, target_os = "macos"))]
 fn require_system_curl(path: PathBuf) -> Result<PathBuf, String> {
     if path.is_file() {
         Ok(path)

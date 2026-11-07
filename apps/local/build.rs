@@ -5,6 +5,7 @@ use std::{env, fs, path::PathBuf};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?);
     let profile = env::var("PROFILE")?;
+    let fuzzing = env::var_os("CARGO_CFG_FUZZING").is_some();
     let dist = manifest.join("../web/dist");
     println!("cargo:rerun-if-changed={}", dist.display());
 
@@ -21,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     files.sort_by(|left, right| left.0.cmp(&right.0));
 
-    if profile == "release" {
+    if profile == "release" && !fuzzing {
         let has_index = files.iter().any(|(name, _)| name == "index.html");
         let has_wasm = files
             .iter()

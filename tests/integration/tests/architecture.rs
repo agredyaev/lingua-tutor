@@ -1809,6 +1809,14 @@ fn release_build_requires_complete_generated_web_bundle() {
         "native build script does not distinguish release packaging from test compilation"
     );
     assert!(
+        build.contains(r#"env::var_os("CARGO_CFG_FUZZING")"#),
+        "release web-bundle enforcement must exempt only Cargo fuzz instrumentation builds"
+    );
+    assert!(
+        build.contains(r#"profile == "release" && !fuzzing"#),
+        "ordinary release builds must still require the generated web bundle"
+    );
+    assert!(
         build.contains("release web bundle is incomplete"),
         "release packaging can still silently embed an incomplete generated web bundle"
     );
@@ -1821,6 +1829,36 @@ fn release_build_requires_complete_generated_web_bundle() {
         assert!(
             build.contains(extension),
             "release web-bundle validation is missing required asset check: {extension}"
+        );
+    }
+}
+
+#[test]
+fn platform_specific_release_helpers_are_cfg_scoped() {
+    let tunnel = include_str!("../../../apps/local/src/tunnel.rs");
+    let main = include_str!("../../../apps/local/src/main.rs");
+    assert!(
+        tunnel.contains("#[cfg(any(windows, target_os = \"macos\"))]\nfn require_system_curl"),
+        "curl existence helper must not compile on Linux where the Unix search path does not use it"
+    );
+    let unix_import = main
+        .split_once("#[cfg(unix)]")
+        .map_or("", |(_, tail)| tail)
+        .split_once("use std::{\n    path::PathBuf")
+        .map_or("", |(head, _)| head);
+    assert!(
+        unix_import.contains("io::{Read, Write}"),
+        "terminal Write import must stay Unix-scoped"
+    );
+}
+
+#[test]
+fn browser_e2e_uses_only_browser_rpc_surface() {
+    let e2e = include_str!("../../e2e/specs/core-loop.spec.ts");
+    for mcp_only in [r#""start_lesson""#, r#""complete_lesson""#] {
+        assert!(
+            !e2e.contains(mcp_only),
+            "browser E2E calls MCP-only method through /rpc: {mcp_only}"
         );
     }
 }
