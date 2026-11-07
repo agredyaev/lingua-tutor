@@ -124,8 +124,9 @@ fn native_llm_surface_preserves_authoritative_methodology_contract() {
     assert!(
         mcp.contains("Authoritative adaptive tutor context")
             && mcp.contains("Fetch this before every lesson")
-            && mcp.contains("final authoritative snapshot"),
-        "MCP tool descriptions no longer make the context-first LLM flow explicit"
+            && mcp.contains("ordered item-level execution queue")
+            && mcp.contains("final authoritative execution snapshot"),
+        "MCP tool descriptions no longer make the context-first executable LLM flow explicit"
     );
     for name in [
         "Partial inspection only: learning items",
@@ -175,11 +176,16 @@ fn native_llm_surface_preserves_authoritative_methodology_contract() {
 
     assert!(
         selection.contains("criterion_for_action(&action, entry.capability)")
+            && selection.contains("measurement_requirements_for_action(&action, entry.capability)")
             && queue.contains("pub fn criterion_for_action(")
+            && queue.contains("pub fn measurement_requirements_for_action(")
+            && queue.contains("pub measurement_requirements:")
+            && queue.contains("\"response_millis_if_instrumented\"")
+            && queue.contains("\"response_millis_required\"")
             && queue.contains("\"diagnostic_spontaneous\"")
             && queue.contains("\"listening_probe\"")
             && queue.contains("\"listening_repair\""),
-        "LLM task criteria can again collapse diagnostic and intervention semantics"
+        "LLM task execution criteria or task-local measurement contract drifted"
     );
 }
 
