@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.8](https://github.com/agredyaev/lingua-tutor/compare/v0.1.7...v0.1.8) (2026-11-07)
+
+
+### Features
+
+* **tutor:** close lesson tasks with card decisions ([6b54eea](https://github.com/agredyaev/lingua-tutor/commit/6b54eeaca16d88ce0da1da4917f96a44abc6469b))
+* **tutor:** close lesson tasks with card decisions ([1f6ecee](https://github.com/agredyaev/lingua-tutor/commit/1f6ecee93ba75d9e3278b4f09ad8c433ab7de2fa))
+
 ## [0.1.7](https://github.com/agredyaev/lingua-tutor/compare/v0.1.6...v0.1.7) (2026-11-07)
 
 
