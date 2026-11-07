@@ -30,7 +30,7 @@ There is no concrete-language source tree, language registry, plugin crate, or l
 | `learning-core` | language-neutral scalar contracts and pure rules | retained entity graphs, persistence, linguistic interpretation |
 | `review-engine` | scheduling calculations and replay | persistence, language rules, browser code |
 | `adaptation` | bounded adaptive passes over indexed data | persistence, linguistic interpretation |
-| `apps/local` | SQLite lifecycle/migrations, repositories, RPC/MCP boundaries, methodology assets | target-language correctness rules or alternate domain layers |
+| `apps/local` | SQLite lifecycle/migrations, direct read/write passes, minimal SQLite codec/shared-query boundary, RPC/MCP boundaries, methodology assets | target-language correctness rules or alternate domain layers |
 | `apps/web` | UI and local RPC client | direct SQLite, scheduling logic, secrets |
 | `tutor-contract` | structured tutor result contract and validation | persistence or target-language implementation |
 | `shared-schema` | transport data | domain behavior |

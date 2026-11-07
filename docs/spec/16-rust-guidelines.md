@@ -45,13 +45,13 @@ Rules:
 - Closed sets = enums, never stringly-typed. Strings only at serde/DB boundary, converted once.
 - `std::sync::OnceLock` over `lazy_static!`. No `unsafe` anywhere in this workspace; a need for `unsafe` = design error.
 
-## 4. Database (SQLite repositories)
+## 4. Database (SQLite boundary)
 
-- Repository layer (`apps/local/src/repositories/`) strictly separated from domain logic; SQL lives only there.
+- No generic repository/service layer. Single-consumer SQL stays with its owning read/write pass. Only scalar codecs, timestamp conversion, and SQL with multiple independent consumers belong in `apps/local/src/sqlite.rs`.
 - Transaction boundary = domain invariant: review event + schedule state one batch; lesson completion one batch ([01-architecture.md](01-architecture.md) §4). Short transactions; no network calls inside.
 - No N+1: queue fetch joins card + schedule state in one query.
 - Additive migrations preferred; destructive → backup first + phased ([04-database.md](04-database.md) §4, [11-infrastructure.md](11-infrastructure.md) §5).
-- Timezone/nullability handled once at repository boundary; domain types never hold raw TEXT timestamps.
+- Timestamp/closed-value conversion is centralized in `sqlite.rs`; processing passes do not invent alternate DB spellings.
 
 ## 5. Performance
 
@@ -67,9 +67,9 @@ Order of leverage: algorithm > data structure > allocations > micro. Work down, 
 
 ## 6. Testing
 
-- Unit tests: logic. Integration tests: contracts (repositories vs scratch SQLite, pack conformance). Property tests: invariants (scheduler intervals).
+- Unit tests: logic. Integration tests: wire/storage contracts against scratch SQLite. Property tests: invariants (scheduler intervals).
 - Deterministic: no sleeps, no wall-clock — inject `Timestamp`; fixed seeds. Flaky test = bug, fix root cause.
-- No over-mocking: repositories tested against real scratch SQLite, not mocked SQL.
+- No over-mocking: SQLite-backed passes are tested against real scratch SQLite, not mocked SQL.
 - Both paths: every feature tests success + failure ([00-overview.md](00-overview.md) §6).
 - Slow suites (Playwright, migration tests) out of default `cargo test` path; separate CI jobs.
 

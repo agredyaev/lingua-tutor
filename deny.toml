@@ -34,11 +34,7 @@ allow-wildcard-paths = true # workspace path deps carry no version
 skip = [
     { crate = "convert_case@0.6.0" },
     { crate = "cpufeatures@0.2.17" },
-    { crate = "getrandom@0.3.4" },
     { crate = "hashbrown@0.15.5" },
-    { crate = "r-efi@5.3.0" },
-    { crate = "rand@0.9.5" },
-    { crate = "rand_core@0.9.5" },
     { crate = "thiserror@1.0.69" },
     { crate = "thiserror-impl@1.0.69" },
 ]

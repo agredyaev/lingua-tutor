@@ -40,8 +40,8 @@ Mastery rules are deterministic methodology:
 
 - card review success alone does not prove mastery;
 - guided `probe_phase=practice` evidence is acquisition/repair performance and cannot grant provisional or full mastery;
-- provisional mastery requires fresh successful unaided productive evidence from a mastery-eligible non-practice probe in the current lesson;
-- full mastery requires at least two distinct successful transfer context families from at least two independent prior lesson episodes, at least three distinct successful semantic context families overall, and a fresh unaided `probe_phase=transfer` success with a non-empty `context_family` in the current lesson; an unresolved fresh spontaneous-production failure blocks full mastery even if transfer later succeeds, while a later qualifying spontaneous success may resolve that capability failure;
+- provisional mastery requires the latest mastery-eligible non-practice productive exit-observation in the current lesson to be a successful unaided production; an earlier failure may be superseded by a later qualifying success, while a later failure blocks promotion;
+- full mastery requires at least two distinct successful transfer context families from at least two temporally distributed prior lesson episodes, at least three distinct successful semantic context families overall, and a fresh unaided `probe_phase=transfer` success with a non-empty `context_family` in the current lesson; distinct lesson IDs inside the anti-massing gap do not count as separate mastery confirmations; an unresolved fresh spontaneous-production failure blocks full mastery even if transfer later succeeds, while a later qualifying spontaneous success may resolve that capability failure;
 - prior transfer history used for full mastery is bounded to the current 84-day revalidation window, excludes `probe_phase=practice`, and uses the latest eligible transfer exit-observation per prior lesson episode; a later failed/unqualified transfer invalidates an earlier success from that episode, and older context diversity must be revalidated;
 - multiple fresh context families inside one current lesson cannot replace distributed historical transfer evidence;
 - a newer failed transfer blocks promotion until later qualifying evidence supersedes it.
@@ -52,9 +52,13 @@ An error target belongs to one profile. Core owns only the closed `CoreErrorCate
 
 Deterministic escalation rules use occurrence/evidence counts, not language-specific heuristics:
 
-- three occurrences create focused recheck pressure;
-- five unresolved occurrences require method change;
-- rechecks are scheduled at +1, +3 and +7 days.
+- recurrence advances at most once per lesson episode for one error target; repeated raw sightings inside the same lesson remain observable but do not manufacture extra recurrence;
+- focused recheck pressure is impact-aware: high-impact errors after 2 unresolved lesson episodes, medium after 3, low after 4;
+- method change is impact-aware: high-impact errors after 4 unresolved lesson episodes, medium after 5, low after 6;
+- rechecks use +1/+3/+7-day stages, but stages are sequential actual retrievals: only the next unfinished stage is actionable, and after a late successful check later stages shift forward to preserve their elapsed gaps rather than being completed back-to-back;
+- reaching the recurrence/escalation threshold opens an active repair obligation first; the initial 1/3/7-day retention cycle starts only after the corresponding repair recommendation is explicitly accepted as actually applied. Any ordinary recurrence while a target is in `recheck` invalidates the pending cycle and reopens active repair;
+- a failed unaided recheck returns the target to active practice and closes that recheck cycle; a fresh 1/3/7-day cycle starts only after corrective repair is explicitly applied in the same lesson result;
+- once `method_change_required` becomes true for an unresolved target it is sticky across later recurrences; only full successful 1/3/7 recheck resolution clears it.
 
 ## 6. Cards and review
 

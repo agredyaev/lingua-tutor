@@ -29,9 +29,12 @@ pub fn validate(result: &LessonResult) -> Vec<ValidationIssue> {
     header(result, &mut issues);
     collections(result, &mut issues);
     texts(result, &mut issues);
-    item_references(result, &mut issues);
-    measurement_coverage(result, &mut issues);
-    interventions(result, &mut issues);
+    let item_keys = collect_item_keys(result, &mut issues);
+    item_references(result, &item_keys, &mut issues);
+    mastery_changes(result, &mut issues);
+    error_rechecks(result, &mut issues);
+    recommendation_resolutions(result, &mut issues);
+    interventions(result, &item_keys, &mut issues);
     mutations(&result.card_mutations, &mut issues);
     metrics(result, &mut issues);
     issues
@@ -94,6 +97,16 @@ fn collections(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
             "error_occurrences",
             r.error_occurrences.len(),
             bounds::MAX_ERROR_OCCURRENCES,
+        ),
+        (
+            "error_rechecks",
+            r.error_rechecks.len(),
+            bounds::MAX_ERROR_RECHECKS,
+        ),
+        (
+            "recommendation_resolutions",
+            r.recommendation_resolutions.len(),
+            bounds::MAX_RECOMMENDATION_RESOLUTIONS,
         ),
         (
             "listening_attempts",
@@ -168,6 +181,225 @@ fn texts(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
     }
 }
 
+fn mastery_changes(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
+    for (i, change) in r.mastery_changes.iter().enumerate() {
+        if change.new_status == learning_core::LearningItemStatus::Candidate {
+            issue(
+                issues,
+                "invalid_status_transition",
+                format!("mastery_changes/{i}/new_status"),
+                "candidate is a creation-only state and cannot be assigned to an existing learning item"
+                    .to_owned(),
+            );
+        }
+    }
+
+    let mut references: Vec<(usize, &str)> = r
+        .mastery_changes
+        .iter()
+        .enumerate()
+        .map(|(i, change)| (i, change.learning_item_id.as_str()))
+        .collect();
+    references
+        .sort_unstable_by(|left, right| left.1.cmp(right.1).then_with(|| left.0.cmp(&right.0)));
+    for pair in references.windows(2) {
+        if pair[0].1 == pair[1].1 {
+            issue(
+                issues,
+                "duplicate_reference",
+                format!("mastery_changes/{}/learning_item_id", pair[1].0),
+                "one learning item may have at most one mastery change per lesson result"
+                    .to_owned(),
+            );
+        }
+    }
+}
+
+fn error_rechecks(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
+    for (i, recheck) in r.error_rechecks.iter().enumerate() {
+        for (field, value) in [
+            ("error_target_id", recheck.error_target_id.as_str()),
+            ("recheck_id", recheck.recheck_id.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                issue(
+                    issues,
+                    "missing_field",
+                    format!("error_rechecks/{i}/{field}"),
+                    "must be non-empty".to_owned(),
+                );
+            } else if value.len() > bounds::MAX_ID {
+                issue(
+                    issues,
+                    "too_long",
+                    format!("error_rechecks/{i}/{field}"),
+                    format!("over {} chars", bounds::MAX_ID),
+                );
+            }
+        }
+        if recheck.assistance_level != 0 {
+            issue(
+                issues,
+                "inconsistent_evidence",
+                format!("error_rechecks/{i}/assistance_level"),
+                "scheduled error rechecks must be elicited unaided".to_owned(),
+            );
+        }
+        if recheck.context.trim().is_empty() {
+            issue(
+                issues,
+                "missing_field",
+                format!("error_rechecks/{i}/context"),
+                "scheduled error rechecks require a concrete communicative context".to_owned(),
+            );
+        } else {
+            short(
+                issues,
+                format!("error_rechecks/{i}/context"),
+                &recheck.context,
+            );
+        }
+        if recheck.passed && recheck.repair_applied {
+            issue(
+                issues,
+                "inconsistent_repair",
+                format!("error_rechecks/{i}/repair_applied"),
+                "passed rechecks must remain pure retention measurements without corrective repair"
+                    .to_owned(),
+            );
+        }
+        if !recheck.passed && !recheck.repair_applied {
+            issue(
+                issues,
+                "missing_repair",
+                format!("error_rechecks/{i}/repair_applied"),
+                "failed rechecks require corrective repair before a fresh spaced cycle".to_owned(),
+            );
+        }
+        match recheck.repair_action.as_deref() {
+            Some(_) if !recheck.repair_applied => issue(
+                issues,
+                "inconsistent_repair",
+                format!("error_rechecks/{i}/repair_action"),
+                "repair_action is valid only when repair_applied=true".to_owned(),
+            ),
+            Some(action) if action.trim().is_empty() => issue(
+                issues,
+                "missing_field",
+                format!("error_rechecks/{i}/repair_action"),
+                "applied repair requires a stable non-empty action code".to_owned(),
+            ),
+            Some(action) if action.len() > bounds::MAX_ID => issue(
+                issues,
+                "too_long",
+                format!("error_rechecks/{i}/repair_action"),
+                format!("over {} chars", bounds::MAX_ID),
+            ),
+            Some(action) if !learning_core::stable_context_family_id(action) => issue(
+                issues,
+                "invalid_field",
+                format!("error_rechecks/{i}/repair_action"),
+                "must use canonical lowercase a-z/0-9 with '.', '_' or '-' separators".to_owned(),
+            ),
+            None if !recheck.passed && recheck.repair_applied => issue(
+                issues,
+                "missing_field",
+                format!("error_rechecks/{i}/repair_action"),
+                "failed recheck repair must name the applied repair action".to_owned(),
+            ),
+            _ => {}
+        }
+    }
+
+    let mut references: Vec<(usize, &str)> = r
+        .error_rechecks
+        .iter()
+        .enumerate()
+        .map(|(i, recheck)| (i, recheck.recheck_id.as_str()))
+        .collect();
+    references
+        .sort_unstable_by(|left, right| left.1.cmp(right.1).then_with(|| left.0.cmp(&right.0)));
+    for pair in references.windows(2) {
+        if pair[0].1 == pair[1].1 {
+            issue(
+                issues,
+                "duplicate_reference",
+                format!("error_rechecks/{}/recheck_id", pair[1].0),
+                format!("duplicate recheck_id '{}'", pair[1].1),
+            );
+        }
+    }
+}
+
+fn recommendation_resolutions(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
+    for (i, resolution) in r.recommendation_resolutions.iter().enumerate() {
+        let id = resolution.recommendation_id.trim();
+        if id.is_empty() {
+            issue(
+                issues,
+                "missing_field",
+                format!("recommendation_resolutions/{i}/recommendation_id"),
+                "must be non-empty".to_owned(),
+            );
+        } else if id.len() > bounds::MAX_ID {
+            issue(
+                issues,
+                "too_long",
+                format!("recommendation_resolutions/{i}/recommendation_id"),
+                format!("over {} chars", bounds::MAX_ID),
+            );
+        }
+        match resolution.repair_action.as_deref() {
+            Some(_) if resolution.status == crate::RecommendationResolutionStatus::Dismissed => {
+                issue(
+                    issues,
+                    "inconsistent_repair",
+                    format!("recommendation_resolutions/{i}/repair_action"),
+                    "dismissed recommendations cannot claim an applied repair".to_owned(),
+                );
+            }
+            Some(action) if action.trim().is_empty() => issue(
+                issues,
+                "missing_field",
+                format!("recommendation_resolutions/{i}/repair_action"),
+                "repair_action must be a stable non-empty action code".to_owned(),
+            ),
+            Some(action) if action.len() > bounds::MAX_ID => issue(
+                issues,
+                "too_long",
+                format!("recommendation_resolutions/{i}/repair_action"),
+                format!("over {} chars", bounds::MAX_ID),
+            ),
+            Some(action) if !learning_core::stable_context_family_id(action) => issue(
+                issues,
+                "invalid_field",
+                format!("recommendation_resolutions/{i}/repair_action"),
+                "must use canonical lowercase a-z/0-9 with '.', '_' or '-' separators".to_owned(),
+            ),
+            _ => {}
+        }
+    }
+
+    let mut references: Vec<(usize, &str)> = r
+        .recommendation_resolutions
+        .iter()
+        .enumerate()
+        .map(|(i, resolution)| (i, resolution.recommendation_id.trim()))
+        .collect();
+    references
+        .sort_unstable_by(|left, right| left.1.cmp(right.1).then_with(|| left.0.cmp(&right.0)));
+    for pair in references.windows(2) {
+        if pair[0].1 == pair[1].1 {
+            issue(
+                issues,
+                "duplicate_reference",
+                format!("recommendation_resolutions/{}/recommendation_id", pair[1].0),
+                format!("duplicate recommendation_id '{}'", pair[1].1),
+            );
+        }
+    }
+}
+
 fn short(issues: &mut Vec<ValidationIssue>, path: String, text: &str) {
     if text.len() > bounds::MAX_SHORT_TEXT {
         issue(
@@ -184,6 +416,26 @@ fn listening_metadata(
     attempt: &crate::ListeningAttemptEntry,
     issues: &mut Vec<ValidationIssue>,
 ) {
+    if attempt
+        .source_reference
+        .as_deref()
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        issue(
+            issues,
+            "missing_field",
+            format!("listening_attempts/{index}/source_reference"),
+            "listening probes require a reference to the audio/live source actually presented"
+                .to_owned(),
+        );
+    } else if let Some(value) = attempt.source_reference.as_deref() {
+        short(
+            issues,
+            format!("listening_attempts/{index}/source_reference"),
+            value,
+        );
+    }
+
     for (field, value) in [
         ("source_variant_id", attempt.source_variant_id.as_deref()),
         ("talker_key", attempt.talker_key.as_deref()),
@@ -202,22 +454,24 @@ fn listening_metadata(
     }
 }
 
-fn item_references(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
-    let keys = collect_item_keys(r, issues);
+fn item_references(r: &LessonResult, keys: &[(usize, &str)], issues: &mut Vec<ValidationIssue>) {
     for (i, evidence) in r.evidence.iter().enumerate() {
-        evidence_reference(i, evidence, &keys, issues);
+        evidence_reference(i, evidence, keys, issues);
         evidence_semantics(i, evidence, issues);
         evidence_measurements(i, evidence, issues);
     }
     for (i, attempt) in r.listening_attempts.iter().enumerate() {
         listening_metadata(i, attempt, issues);
-        listening_reference(i, attempt, &keys, issues);
+        listening_reference(i, attempt, keys, issues);
         listening_measurements(i, attempt, issues);
     }
 }
 
-fn collect_item_keys<'a>(r: &'a LessonResult, issues: &mut Vec<ValidationIssue>) -> Vec<&'a str> {
-    let mut keys = Vec::new();
+fn collect_item_keys<'a>(
+    r: &'a LessonResult,
+    issues: &mut Vec<ValidationIssue>,
+) -> Vec<(usize, &'a str)> {
+    let mut keys = Vec::with_capacity(r.new_learning_items.len());
     for (i, item) in r.new_learning_items.iter().enumerate() {
         let Some(key) = item.client_item_key.as_deref() else {
             continue;
@@ -230,24 +484,33 @@ fn collect_item_keys<'a>(r: &'a LessonResult, issues: &mut Vec<ValidationIssue>)
                 format!("new_learning_items/{i}/client_item_key"),
                 "must be non-empty and bounded".to_owned(),
             );
-        } else if keys.contains(&key) {
+        } else {
+            keys.push((i, key));
+        }
+    }
+    keys.sort_unstable_by(|left, right| left.1.cmp(right.1).then_with(|| left.0.cmp(&right.0)));
+    for pair in keys.windows(2) {
+        if pair[0].1 == pair[1].1 {
             issue(
                 issues,
                 "duplicate_reference",
-                format!("new_learning_items/{i}/client_item_key"),
-                format!("duplicate client_item_key '{key}'"),
+                format!("new_learning_items/{}/client_item_key", pair[1].0),
+                format!("duplicate client_item_key '{}'", pair[1].1),
             );
-        } else {
-            keys.push(key);
         }
     }
     keys
 }
 
+fn has_item_key(keys: &[(usize, &str)], key: &str) -> bool {
+    keys.binary_search_by(|(_, candidate)| candidate.cmp(&key))
+        .is_ok()
+}
+
 fn evidence_reference(
     i: usize,
     evidence: &crate::EvidenceEntry,
-    keys: &[&str],
+    keys: &[(usize, &str)],
     issues: &mut Vec<ValidationIssue>,
 ) {
     let id = evidence
@@ -284,7 +547,7 @@ fn evidence_reference(
                 format!("evidence/{i}/client_item_key"),
                 format!("over {} chars", bounds::MAX_ID),
             );
-        } else if !keys.contains(&key) {
+        } else if !has_item_key(keys, key) {
             issue(
                 issues,
                 "unknown_reference",
@@ -310,6 +573,13 @@ fn evidence_semantics(
                 "invalid_field",
                 format!("evidence/{i}/context_family"),
                 "must be non-empty when provided".to_owned(),
+            );
+        } else if !learning_core::stable_context_family_id(family) {
+            issue(
+                issues,
+                "invalid_field",
+                format!("evidence/{i}/context_family"),
+                "must be a stable lowercase identifier using only a-z, 0-9, '.', '_' or '-', with an alphanumeric first and last character".to_owned(),
             );
         }
         short(issues, format!("evidence/{i}/context_family"), family);
@@ -373,14 +643,6 @@ fn evidence_measurements(
             "selected probes require observed assistance_level".to_owned(),
         );
     }
-    if measured_probe && evidence.response_millis.is_none() {
-        issue(
-            issues,
-            "missing_metric",
-            format!("evidence/{i}/response_millis"),
-            "selected probes require observed response_millis".to_owned(),
-        );
-    }
     if measured_probe && evidence.probe_phase.is_none() {
         issue(
             issues,
@@ -427,21 +689,25 @@ fn pronunciation_measurements(
             | crate::EvidenceKind::SpontaneousProduction
             | crate::EvidenceKind::Transfer
     );
-    if production_probe && evidence.pronunciation_intelligible.is_none() {
-        issue(
-            issues,
-            "missing_metric",
-            format!("evidence/{i}/pronunciation_intelligible"),
-            "production probes require pronunciation intelligibility".to_owned(),
-        );
-    }
-    if production_probe && evidence.pronunciation_repeat_required.is_none() {
-        issue(
-            issues,
-            "missing_metric",
-            format!("evidence/{i}/pronunciation_repeat_required"),
-            "production probes require whether pronunciation caused a repeat".to_owned(),
-        );
+    if production_probe {
+        match (
+            evidence.pronunciation_intelligible,
+            evidence.pronunciation_repeat_required,
+        ) {
+            (Some(_), None) => issue(
+                issues,
+                "incomplete_metric",
+                format!("evidence/{i}/pronunciation_repeat_required"),
+                "when pronunciation is observed, both pronunciation fields are required".to_owned(),
+            ),
+            (None, Some(_)) => issue(
+                issues,
+                "incomplete_metric",
+                format!("evidence/{i}/pronunciation_intelligible"),
+                "when pronunciation is observed, both pronunciation fields are required".to_owned(),
+            ),
+            _ => {}
+        }
     }
     if evidence.pronunciation_intelligible == Some(true)
         && evidence.pronunciation_repeat_required == Some(true)
@@ -458,7 +724,7 @@ fn pronunciation_measurements(
 fn listening_reference(
     i: usize,
     attempt: &crate::ListeningAttemptEntry,
-    keys: &[&str],
+    keys: &[(usize, &str)],
     issues: &mut Vec<ValidationIssue>,
 ) {
     let id = attempt
@@ -469,16 +735,16 @@ fn listening_reference(
         .client_item_key
         .as_deref()
         .filter(|value| !value.trim().is_empty());
-    if id.is_some() && key.is_some() {
+    if id.is_some() == key.is_some() {
         issue(
             issues,
             "invalid_reference",
             format!("listening_attempts/{i}"),
-            "use learning_item_id or client_item_key, not both".to_owned(),
+            "exactly one of learning_item_id or client_item_key is required".to_owned(),
         );
     }
     if let Some(key) = key
-        && !keys.contains(&key)
+        && !has_item_key(keys, key)
     {
         issue(
             issues,
@@ -508,14 +774,6 @@ fn listening_measurements(
             "invalid_field",
             format!("listening_attempts/{i}/assistance_level"),
             "must be 0..=3".to_owned(),
-        );
-    }
-    if attempt.response_millis.is_none() {
-        issue(
-            issues,
-            "missing_metric",
-            format!("listening_attempts/{i}/response_millis"),
-            "listening probes require response_millis".to_owned(),
         );
     }
     if attempt
@@ -551,28 +809,38 @@ fn listening_measurements(
     }
 }
 
-fn measurement_coverage(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
+/// Return canonical lesson measurement counts used by validation and calibration.
+///
+/// The first value is the number of diagnostic baselines. The second is the
+/// number of measurement-eligible probes: diagnostic, delayed retrieval, or transfer.
+/// This is lesson-level coverage, not a count of independent learning episodes.
+#[must_use]
+pub fn measurement_coverage_counts(r: &LessonResult) -> (usize, usize) {
     let diagnostic_count = r
         .evidence
         .iter()
-        .filter(|entry| entry.probe_phase == Some(crate::ProbePhase::Diagnostic))
+        .filter(|entry| {
+            !matches!(entry.kind, crate::EvidenceKind::Correction)
+                && entry.probe_phase == Some(crate::ProbePhase::Diagnostic)
+        })
         .count()
         + r.listening_attempts
             .iter()
             .filter(|entry| entry.probe_phase == Some(crate::ProbePhase::Diagnostic))
             .count();
-    let independent_measurement_count = r
+    let eligible_probe_count = r
         .evidence
         .iter()
         .filter(|entry| {
-            matches!(
-                entry.probe_phase,
-                Some(
-                    crate::ProbePhase::Diagnostic
-                        | crate::ProbePhase::DelayedRetrieval
-                        | crate::ProbePhase::Transfer
+            !matches!(entry.kind, crate::EvidenceKind::Correction)
+                && matches!(
+                    entry.probe_phase,
+                    Some(
+                        crate::ProbePhase::Diagnostic
+                            | crate::ProbePhase::DelayedRetrieval
+                            | crate::ProbePhase::Transfer
+                    )
                 )
-            )
         })
         .count()
         + r.listening_attempts
@@ -588,25 +856,14 @@ fn measurement_coverage(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
                 )
             })
             .count();
-    if diagnostic_count < 1 || independent_measurement_count < 2 {
-        issue(
-            issues,
-            "insufficient_measurement_coverage",
-            "evidence".to_owned(),
-            format!(
-                "lesson completion requires at least 1 diagnostic baseline and 2 independent measured probes overall; got {diagnostic_count} diagnostic and {independent_measurement_count} independent"
-            ),
-        );
-    }
+    (diagnostic_count, eligible_probe_count)
 }
 
-fn interventions(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
-    let known_keys: Vec<&str> = r
-        .new_learning_items
-        .iter()
-        .filter_map(|item| item.client_item_key.as_deref())
-        .collect();
-
+fn interventions(
+    r: &LessonResult,
+    known_keys: &[(usize, &str)],
+    issues: &mut Vec<ValidationIssue>,
+) {
     for (i, intervention) in r.interventions.iter().enumerate() {
         let base = format!("interventions/{i}");
         let id = intervention
@@ -652,7 +909,7 @@ fn interventions(r: &LessonResult, issues: &mut Vec<ValidationIssue>) {
                     format!("{base}/client_item_key"),
                     format!("over {} chars", bounds::MAX_ID),
                 );
-            } else if !known_keys.contains(&key) {
+            } else if !has_item_key(known_keys, key) {
                 issue(
                     issues,
                     "unknown_reference",

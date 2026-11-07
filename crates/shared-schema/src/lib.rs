@@ -327,26 +327,6 @@ pub struct GradeDistributionDto {
     pub easy: u32,
 }
 
-/// Due forecast.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ForecastDto {
-    /// Horizon in days.
-    pub days: i64,
-    /// Due count per day, index 0 = today.
-    pub due_per_day: Vec<u32>,
-}
-
-/// Answer evaluation verdict.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EvaluationDto {
-    /// `correct` | `acceptable_variant` | `incorrect`.
-    pub verdict: String,
-    /// Which accepted answer matched.
-    pub matched_answer: Option<String>,
-    /// Optional evaluation feedback.
-    pub feedback: Option<String>,
-}
-
 /// Error target exposed to the UI.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ErrorTargetDto {

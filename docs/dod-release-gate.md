@@ -1,5 +1,7 @@
 # DOD/PWP release gate — 2026-10-23
 
+> Historical audit snapshot. It records the 2026-10-23 checkpoint and is not the current release status; current release gates are enforced by `.github/workflows/ci.yml`, `e2e.yml`, `fuzz.yml`, and `release.yml`.
+
 ## Decision
 
 **DOD/PWP structural gate: APPROVED. Production release gate: PENDING environment-dependent evidence.**

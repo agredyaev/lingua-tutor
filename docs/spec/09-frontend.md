@@ -21,7 +21,7 @@ Depends on: [08-local-rpc.md](08-local-rpc.md), [05-review-engine.md](05-review-
 | API reads | `LocalResource` (CSR; browser fetch futures are `!Send`). Wrap in `<Suspense>`/`<Transition>` with fallback. `<Transition>` on review queue to avoid flicker between cards. |
 | API writes | `Action` for every mutation: grade submit, lesson import apply, card mutations. Pending state from `action.pending()` disables the trigger control — this is the double-submit guard. |
 | Errors | Typed API error enum in `shared-schema`; `<ErrorBoundary>` around each page; render error + retry, never blank screen. |
-| Global state | `provide_context`/`use_context` for: active language profile, learner settings, offline queue handle. No global mutable statics. |
+| Global state | `provide_context`/`use_context` only for active language-profile selection. Bounded offline state stays explicit in `offline.rs`/browser storage. No global mutable statics. |
 | Routing | `leptos_router`. Routes = §3. |
 | Components | Props typed; children composition per book conventions; components small, one responsibility. |
 
@@ -46,17 +46,10 @@ The following routes are implementation, diagnostic, recovery, or advanced inspe
 ```text
 /learn
 /learning-items
-/learning-items/:id
 /errors
-/errors/:id
-/listening
 /import
 /export
-/settings
 /system
-/cards/redesign
-/lessons/:id
-/languages/:profile_id
 ```
 
 Normal lesson persistence is MCP-owned: Tutor fetches context, starts the lesson, and submits completion. The learner must not copy tutor context or lesson-result JSON during the normal flow.

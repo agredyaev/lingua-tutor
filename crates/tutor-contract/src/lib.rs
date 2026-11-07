@@ -7,7 +7,7 @@
 
 mod validate;
 
-pub use validate::{ValidationIssue, validate};
+pub use validate::{ValidationIssue, measurement_coverage_counts, validate};
 
 use learning_core::{
     CardIntent, CoreErrorCategory, EvidenceKind, LearningItemStatus, LearningItemType,
@@ -54,6 +54,10 @@ pub mod bounds {
     pub const MAX_INTERVENTIONS: usize = 100;
     /// Max error occurrences.
     pub const MAX_ERROR_OCCURRENCES: usize = 50;
+    /// Max due error-recheck outcomes returned with one lesson.
+    pub const MAX_ERROR_RECHECKS: usize = 20;
+    /// Max recommendation resolutions returned with one lesson.
+    pub const MAX_RECOMMENDATION_RESOLUTIONS: usize = 20;
     /// Max listening attempts.
     pub const MAX_LISTENING_ATTEMPTS: usize = 100;
     /// Max mastery changes.
@@ -111,6 +115,12 @@ pub struct LessonResult {
     /// Errors observed this lesson.
     #[serde(default)]
     pub error_occurrences: Vec<ErrorOccurrenceEntry>,
+    /// Outcomes of due 1/3/7-day error rechecks performed this lesson.
+    #[serde(default)]
+    pub error_rechecks: Vec<ErrorRecheckResult>,
+    /// Open recommendations explicitly acted on or dismissed this lesson.
+    #[serde(default)]
+    pub recommendation_resolutions: Vec<RecommendationResolution>,
     /// Listening attempts (no audio, references only).
     #[serde(default)]
     pub listening_attempts: Vec<ListeningAttemptEntry>,
@@ -245,7 +255,7 @@ pub struct EvidenceEntry {
     /// Assistance level: 0 = unaided, 1 = generic cue, 2 = targeted cue, 3 = model/reveal.
     #[serde(default)]
     pub assistance_level: Option<u8>,
-    /// Observed response latency in milliseconds.
+    /// Retrieval latency in milliseconds: from probe readiness to response onset/first committed response, not total utterance/composition duration.
     #[serde(default)]
     pub response_millis: Option<u32>,
     /// Where this probe occurred in the learning cycle.
@@ -286,6 +296,61 @@ pub struct ErrorOccurrenceEntry {
     pub explanation: Option<String>,
 }
 
+/// Outcome of one scheduled error recheck.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ErrorRecheckResult {
+    /// Error target being rechecked.
+    pub error_target_id: String,
+    /// Due recheck row from tutor context.
+    pub recheck_id: String,
+    /// Whether the learner passed the unaided recheck.
+    pub passed: bool,
+    /// Observed assistance level. A scheduled recheck must be unaided (0).
+    pub assistance_level: u8,
+    /// Concrete communicative context in which the recheck was elicited.
+    pub context: String,
+    /// Whether corrective repair was applied after a failed recheck.
+    pub repair_applied: bool,
+    /// Stable short code naming the repair actually applied after a failed recheck.
+    #[serde(default)]
+    pub repair_action: Option<String>,
+}
+
+/// Tutor disposition for one open recommendation addressed in this lesson.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecommendationResolutionStatus {
+    /// The recommendation was actually followed/addressed.
+    Accepted,
+    /// The recommendation was explicitly judged inapplicable and dismissed.
+    Dismissed,
+}
+
+/// Stable database encoding for recommendation disposition.
+#[must_use]
+pub const fn recommendation_resolution_status_id(
+    value: RecommendationResolutionStatus,
+) -> &'static str {
+    match value {
+        RecommendationResolutionStatus::Accepted => "accepted",
+        RecommendationResolutionStatus::Dismissed => "dismissed",
+    }
+}
+
+/// Resolution of one recommendation supplied in tutor context.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecommendationResolution {
+    /// Open recommendation ID from tutor context.
+    pub recommendation_id: String,
+    /// How the tutor resolved it this lesson.
+    pub status: RecommendationResolutionStatus,
+    /// Stable short code naming the repair actually applied for an accepted error repair.
+    #[serde(default)]
+    pub repair_action: Option<String>,
+}
+
 /// One listening attempt; never audio, references only (00-overview.md §3).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -301,7 +366,7 @@ pub struct ListeningAttemptEntry {
     /// Assistance level: 0 = unaided, 1 = generic cue, 2 = targeted cue, 3 = model/reveal.
     #[serde(default)]
     pub assistance_level: Option<u8>,
-    /// Observed comprehension/response latency in milliseconds.
+    /// Comprehension/retrieval latency in milliseconds to response onset/first committed response, not total response duration.
     #[serde(default)]
     pub response_millis: Option<u32>,
     /// Where this listening probe occurred in the learning cycle.
@@ -364,10 +429,6 @@ pub enum MutationOperation {
     Create,
     /// Edit existing card (edit class decided server-side).
     Update,
-    /// Split into smaller cards.
-    Split,
-    /// Merge into a survivor.
-    Merge,
     /// Pause reviews.
     Suspend,
     /// Resume reviews.
@@ -378,10 +439,6 @@ pub enum MutationOperation {
     AddAcceptedAnswer,
     /// Remove an accepted alternative.
     RemoveAcceptedAnswer,
-    /// Add a listening variant.
-    AddListeningVariant,
-    /// Link to phrase / error target / listening item / scenario.
-    Link,
 }
 
 /// One proposed mutation. Field requirements per operation enforced by
@@ -396,7 +453,7 @@ pub struct CardMutation {
     /// Target card for non-create operations.
     #[serde(default)]
     pub card_id: Option<String>,
-    /// Card payload for `create`/`update`/`split`.
+    /// Card payload for `create`/`update`.
     #[serde(default)]
     pub card: Option<CardPayload>,
     /// Accepted answer for add/remove operations.

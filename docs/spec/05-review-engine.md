@@ -5,34 +5,27 @@ Depends on: [03-domain-model.md](03-domain-model.md), [04-database.md](04-databa
 
 ## 1. Processing model
 
-Scheduling behavior is implemented as explicit functions over persisted scalar state. There is no scheduler behavior trait or retained scheduler object graph.
-
-Stable request-local algorithm IDs:
-
-- `FSRS_ID = 0`;
-- `FALLBACK_ID = 1`.
+Scheduling behavior is implemented as explicit functions over persisted scalar state. There is no scheduler behavior trait, algorithm registry, fallback scheduler, or retained scheduler object graph.
 
 Core passes:
 
 ```rust
-initial_state(id, at)
-apply_review(id, scratch, state, event, settings)
-predicted_retrievability(id, state, at)
-replay(id, activated_at, events, settings)
+initial_state(at)
+apply_review(scratch, state, event, settings)
+predicted_retrievability(state, at)
+replay(activated_at, events, settings)
 state_hash(state)
 ```
 
 The FSRS crate is a request-local computation resource inside `review-engine`; its types never cross the crate boundary. Persisted state remains application-owned scalars.
 
-## 2. Algorithm selection
+## 2. Algorithm policy
 
-- Preferred algorithm: FSRS-6 via pinned `fsrs = 6.6.1`.
-- Persist `algorithm` and exact `algorithm_version`; unavailable persisted versions fail closed rather than silently changing schedules.
-- Deterministic fallback remains available under its own stable integer ID.
+- The single supported scheduler is FSRS-6 via pinned `fsrs = 6.6.1`.
+- Persist `algorithm = "fsrs"` and exact `algorithm_version`; unknown or unavailable persisted values fail closed rather than silently changing schedules.
 - Invalid, non-finite, negative, or zero intervals are rejected/clamped by the shared interval pass.
 - Golden/property/replay tests are the algorithm migration gate.
-
-v1 uses the reviewed FSRS default parameter vector. `parameter_set_id` is retained in storage for future validated optimization, but v1 does **not** claim personalized FSRS parameters.
+- v1 uses the reviewed FSRS default parameter vector. No unused optimizer/parameter-set persistence is retained.
 
 ## 3. Card states
 
@@ -122,22 +115,10 @@ The effective daily new-card budget is derived from real persisted history:
 - both pressure rules may stack;
 - after throttling/pausing, recovery is gradual: at most yesterday's effective budget + 1.
 
-Review time comes from completed `review_sessions`; recall comes from effective non-undone `review_events`. `review_daily_budget` persists one scalar effective budget per profile/local day solely to preserve recovery hysteresis. The remaining budget subtracts the appropriate same-day consumption counter.
+Review time comes from completed `review_sessions`; recall comes from effective non-undone `review_events`. `review_daily_budget` persists one scalar effective budget per profile/local day solely to preserve recovery hysteresis. The remaining budget subtracts the appropriate same-day consumption counter. The `>50` backlog pause, `<70%` recall floor, two-day persistence requirement, and `+1/day` recovery step are explicit v1 workload heuristics for calibration rather than universal learning constants; the review-time limit itself is a profile preference.
 
 ## 10. Ineffective-card detection
 
 A card becomes a redesign candidate on evidence such as repeated `Again`, repeated high-latency `Hard`, or strong review performance with real-life production failure.
 
 Actions are recommendations, not silent semantic mutations: clarify prompt, add context/accepted answer, split, switch modality, suspend, or replace repeated card drilling with live transfer practice.
-
-## 11. Parameter sets
-
-`scheduler_parameter_sets` is a forward-compatible persistence boundary.
-
-Current v1 behavior:
-
-- FSRS uses `fsrs::DEFAULT_PARAMETERS`;
-- schedule state normally has no active optimized `parameter_set_id`;
-- no personalized-parameter claim is made.
-
-A future optimizer must have its own acceptance gate: minimum history threshold, corrected/invalid event exclusion, off-request execution, dry-run comparison, retained previous set, explicit activation, rollback, and no automatic mass rescheduling.

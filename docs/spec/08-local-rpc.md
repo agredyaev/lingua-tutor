@@ -27,7 +27,7 @@ Rules:
 - request body is bounded to 256 KiB;
 - components name application operations; they do not encode use cases as REST URL paths;
 - `apps/local/src/server.rs` is a transport boundary only and calls the same handlers used by MCP;
-- handlers own application-facing orchestration and repository calls, not HTTP concerns;
+- read projections and write passes own application semantics; transport code does not own SQLite policy;
 - write idempotency remains domain/application behavior through `client_operation_id`;
 - no synthetic internal HTTP request/response round-trip is permitted.
 
@@ -40,7 +40,6 @@ The active browser RPC operations are grouped by capability.
 ```text
 list_language_profiles
 create_language_profile
-update_profile
 ```
 
 ### Learning and lessons
@@ -49,10 +48,7 @@ update_profile
 get_dashboard
 get_learning_state
 get_next_lesson
-start_lesson
 list_lessons
-get_lesson
-complete_lesson
 validate_lesson_result
 apply_lesson_result
 ```
@@ -61,22 +57,16 @@ apply_lesson_result
 
 ```text
 list_error_targets
-get_error_target
 complete_error_recheck
-create_listening_attempt
 get_tutor_context
 ```
 
-### Cards and recommendations
+### Cards
 
 ```text
 list_cards
 get_card
-patch_card
 set_card_status
-list_recommendations
-resolve_recommendation
-get_card_redesign_candidates
 ```
 
 ### Review
@@ -87,7 +77,6 @@ get_review_queue
 review_card
 undo_review
 complete_review_session
-evaluate_review_answer
 get_review_summary
 get_review_forecast
 get_review_retention
@@ -99,7 +88,7 @@ get_review_retention
 health
 ```
 
-The method list above is a compatibility surface. Renaming/removing methods requires a conscious contract change and matching PWA/e2e updates.
+The method list above is the active browser surface. Methods without a current PWA workflow are not retained speculatively.
 
 ## 3. File downloads
 
@@ -116,7 +105,7 @@ They return attachments. Tutor context is an RPC operation (`get_tutor_context`)
 
 `shared-schema` contains transport-neutral UI/application DTOs and the stable error body used by the browser boundary. It does not define a REST resource model.
 
-Domain types stay in domain crates; persistence rows stay in `apps/local::repositories`; transport envelopes stay at the transport boundary.
+Domain types stay in domain crates. Single-consumer SQL stays with its owning read/write pass; only reused SQLite codecs and multi-consumer queries live in crate-private `apps/local::sqlite`. Transport envelopes stay at the transport boundary.
 
 ## 5. MCP relationship
 
@@ -126,13 +115,13 @@ Therefore:
 
 ```text
 PWA -> POST /rpc ----┐
-                     ├-> handlers -> repositories -> SQLite
+                     ├-> read projections / write passes -> SQLite
 MCP -> mcp_tools ----┘
 ```
 
 There is one application execution path and one SQLite system of record.
 
-For chat tutoring, `get_tutor_context` is the authoritative pre-lesson read surface. The narrower MCP read tools remain useful for inspection, but they are not substitutes for lesson context because they do not carry the complete methodology, ranked tutor tasks, learner history, and completion contract together. The native flow is:
+For chat tutoring, `get_tutor_context` is the single authoritative pre-lesson read surface. Narrow inspection operations such as `get_learning_state`, `get_next_lesson`, `get_review_summary`, and redesign/error projections remain available to the browser through local RPC, but are deliberately not duplicated as MCP tools. The native tutor flow is:
 
 ```text
 get_tutor_context
@@ -143,4 +132,4 @@ get_tutor_context
     -> complete_lesson using lesson_result_contract
 ```
 
-`start_lesson` recomputes and persists the final planner snapshot so a state change between the context read and lesson opening cannot make calibration refer to a different plan than the one returned to the chat model.
+`start_lesson` recomputes and persists the final planner snapshot so a state change between the context read and lesson opening cannot make calibration refer to a different plan than the one returned to the chat model. Live MCP completion must pass that call's returned `id` explicitly as the top-level `lesson_id` to `complete_lesson`; the runtime never guesses a lesson from the latest open row. Due error-recheck outcomes are returned inside `lesson_result.error_rechecks` and recommendation dispositions inside `lesson_result.recommendation_resolutions`; both are applied in the same transaction as lesson completion, so canonical MCP does not need separate recheck or recommendation-maintenance write tools. The local browser RPC `complete_error_recheck` remains a direct compatibility/inspection write surface, but it enforces the same measurement contract: `assistance_level=0`, a concrete `context`, and after a failed recheck both `repair_applied=true` and a stable non-empty `repair_action` before a fresh cycle may be scheduled. A lesson-result document with `lesson.lesson_id = null` is reserved for the validated import flow that creates a completed lesson.

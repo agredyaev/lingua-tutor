@@ -7,6 +7,7 @@
 - Repeated runs in the same directory reuse the same SQLite database.
 - Tunnel ID and Runtime API key are hidden-input, session-only values and are never persisted.
 - `lingua-tutor run --no-tunnel`: browser UI/RPC only.
+- Tunnel mode uses the OS-provided curl executable. macOS uses `/usr/bin/curl`, Linux accepts `/usr/bin/curl` or `/bin/curl`, and Windows uses `%SystemRoot%\\System32\\curl.exe`. Hidden credential input uses the controlling TTY plus `stty` on Unix and Windows PowerShell on Windows.
 - Runtime-owned migrations live under `apps/local/migrations/`.
 
 ## CI gate
@@ -23,7 +24,7 @@
 
 ## Installation
 
-Install from source with `cargo install --path apps/local --bin lingua-tutor --locked`, or use a verified release binary. No service manager, installer wrapper, or separate tunnel executable is required.
+Use a verified release binary, or for a source install build `apps/web` with Trunk before running `cargo install --path apps/local --bin lingua-tutor --locked`. Release-profile native builds reject a missing/incomplete generated web bundle. No service manager, installer wrapper, or separate tunnel executable is required.
 
 ## Backup and health
 
