@@ -54,7 +54,7 @@ const lessonResult = (profileId: string) =>
         client_operation_id: `op-e2e-card-${Date.now()}`,
         card: {
           intent: "production",
-          prompt: "Спросите что-нибудь от кашля",
+          prompt: "Ask for something for a cough",
           answer: "¿Tiene algo para la tos?",
           prompt_language: "ru",
           creation_reason: "e2e",
@@ -187,7 +187,7 @@ test("browser lesson import creates a review card and advances the next lesson",
         client_operation_id: `op-e2e-cycle-card-${op}`,
         card: {
           intent: "production",
-          prompt: "Попросите счёт",
+          prompt: "Ask for the bill",
           answer: "La cuenta, por favor.",
           prompt_language: "ru",
           creation_reason: "e2e browser lesson import",
@@ -220,7 +220,7 @@ test("browser lesson import creates a review card and advances the next lesson",
 
   await page.goto("/review");
   await expect(page.getByText("1 / 1")).toBeVisible();
-  await expect(page.getByText("Попросите счёт")).toBeVisible();
+  await expect(page.getByText("Ask for the bill")).toBeVisible();
   await page.getByRole("button", { name: /Reveal/ }).click();
   await expect(page.getByText("La cuenta, por favor.")).toBeVisible();
   await page.getByRole("button", { name: /3 Good/ }).click();
@@ -244,8 +244,8 @@ test("browser lesson import creates a review card and advances the next lesson",
 
 test("card can be suspended and restored through the browser", async ({ page }) => {
   await page.goto("/cards");
-  await page.getByText("Попросите счёт").click();
-  await expect(page.getByRole("heading", { name: "Попросите счёт" })).toBeVisible();
+  await page.getByText("Ask for the bill").click();
+  await expect(page.getByRole("heading", { name: "Ask for the bill" })).toBeVisible();
 
   await page.getByRole("button", { name: "Suspend" }).click();
   await expect(page.getByText("suspended", { exact: true })).toBeVisible();
@@ -307,7 +307,7 @@ test("offline review grade is queued and replayed after reconnect", async ({ pag
         client_operation_id: `op-e2e-offline-card-${op}`,
         card: {
           intent: "production",
-          prompt: "Попросите воды",
+          prompt: "Ask for water",
           answer: "Agua, por favor.",
           prompt_language: "ru",
           creation_reason: "offline replay e2e",
@@ -331,12 +331,12 @@ test("offline review grade is queued and replayed after reconnect", async ({ pag
 
   // Online visit creates a real session and caches its prefetched queue.
   await page.goto("/review");
-  await expect(page.getByText("Попросите воды")).toBeVisible();
+  await expect(page.getByText("Ask for water")).toBeVisible();
 
   // Simulate loss of the local runtime only after the queue is cached.
   await page.route("**/rpc", (route) => route.abort());
   await page.reload();
-  await expect(page.getByText("Попросите воды")).toBeVisible();
+  await expect(page.getByText("Ask for water")).toBeVisible();
   await page.getByRole("button", { name: /Reveal/ }).click();
   await page.getByRole("button", { name: /3 Good/ }).click();
   await expect(page.getByText(/Session done/)).toBeVisible();
@@ -399,6 +399,6 @@ test("full export contains the current profile state", async ({ page }) => {
   expect(exported.schema_version).toBe("1");
   expect(exported.language_profile_id).toBe(profileId);
   expect(exported.lessons.length).toBeGreaterThan(0);
-  expect(exported.cards.some((card) => card.prompt === "Попросите счёт")).toBeTruthy();
+  expect(exported.cards.some((card) => card.prompt === "Ask for the bill")).toBeTruthy();
   expect(exported.review_events.length).toBeGreaterThan(0);
 });

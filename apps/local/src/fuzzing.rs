@@ -1483,6 +1483,50 @@ pub fn exercise_adaptation_model(data: &[u8]) {
         }
     }
 
+    for (action, kind, required) in [
+        (
+            "diagnostic_spontaneous",
+            CapabilityKind::SpontaneousProduction,
+            "probe_phase=diagnostic",
+        ),
+        (
+            "listening_probe",
+            CapabilityKind::Listening,
+            "source_reference",
+        ),
+        (
+            "automaticity_drill",
+            CapabilityKind::SpontaneousProduction,
+            "response_millis_required",
+        ),
+        (
+            "transfer_practice",
+            CapabilityKind::Transfer,
+            "context_family",
+        ),
+        (
+            "listening_repair",
+            CapabilityKind::Listening,
+            "response_millis_if_instrumented",
+        ),
+        (
+            "guided_retrieval",
+            CapabilityKind::PromptedProduction,
+            "context",
+        ),
+        ("recognition_probe", CapabilityKind::Recognition, "context"),
+        (
+            "spontaneous_retrieval",
+            CapabilityKind::SpontaneousProduction,
+            "context",
+        ),
+    ] {
+        let measurements = adaptation::measurement_requirements_for_action(action, kind);
+        assert!(!measurements.is_empty());
+        assert!(measurements.contains(&required));
+        assert!(!adaptation::criterion_for_action(action, kind).is_empty());
+    }
+
     const BEFORE: &str = r#"[{"learning_item_id":"li-1","recognition":{},"listening":{},"prompted_production":{},"spontaneous_production":{"unaided_success_rate":0.4,"last_observed_at_unix":10},"transfer":{}}]"#;
     const AFTER: &str = r#"[{"learning_item_id":"li-1","recognition":{},"listening":{},"prompted_production":{},"spontaneous_production":{"unaided_success_rate":0.8,"last_observed_at_unix":30},"transfer":{}}]"#;
     const OUTCOME: &str = r#"{"calibration_valid":true,"interventions":[{"action":"fade_prompts","learning_item_id":"li-1","target_capability":"spontaneous_production"}]}"#;

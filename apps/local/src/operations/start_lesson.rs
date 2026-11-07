@@ -23,7 +23,7 @@ mod tests {
                 (id,learner_id,source_language,target_locale,
                  estimated_level,current_lesson_number,status,is_default,preferences_json,
                  created_at,updated_at)
-               VALUES('llp-1','learner-1', 'ru','es-ES','A1',4,'active',1,
+               VALUES('llp-1','learner-1', 'en','es-ES','A1',4,'active',1,
                  '{"max_new_items_per_lesson":2,"preferred_difficulty":"balanced"}',
                  '2026-10-10T00:00:00Z','2026-10-10T00:00:00Z');
 
@@ -44,7 +44,7 @@ mod tests {
                  normalized_target_text,prompt_text,prompt_language,status,
                  introduced_lesson_id,created_at,updated_at)
                VALUES('li-1','llp-1', 'phrase','¿Dónde está?','¿dónde está?',
-                 'Где находится?','ru','learning','done-1',
+                 'Where is it?','en','learning','done-1',
                  '2026-10-15T10:00:00Z','2026-10-16T10:00:00Z');
 
                INSERT INTO learning_item_evidence
@@ -83,7 +83,7 @@ mod tests {
                  accepted_answers_json,creation_reason,content_hash,
                  content_version,created_by,created_at,updated_at)
                VALUES('card-1','llp-1','production','review',
-                 'p','ru','a','es-ES','[]','seed','hash',1,'tutor',
+                 'p','en','a','es-ES','[]','seed','hash',1,'tutor',
                  '2026-10-15T00:00:00Z','2026-10-15T00:00:00Z');
                INSERT INTO card_schedule_state
                 (card_id,algorithm,algorithm_version,due_at,lapse_count,review_count,
@@ -385,16 +385,16 @@ mod tests {
             .unwrap();
         assert!(
             contract_instructions.contains(
-                "Для calibration-eligible outcome нужен минимум 1 diagnostic baseline и минимум 2 measurement-eligible probes overall"
+                "A calibration-eligible outcome requires at least 1 diagnostic baseline and at least 2 measurement-eligible probes overall"
             ),
             "LLM-facing lesson contract drifted from runtime validator"
         );
         assert!(
-            !contract_instructions.contains("минимум 2 полностью измеренных diagnostic probes"),
+            !contract_instructions.contains("at least 2 fully measured diagnostic probes"),
             "stale duplicate-diagnostic rule leaked into LLM context"
         );
         assert!(
-            contract_instructions.contains("outcome в error_rechecks"),
+            contract_instructions.contains("outcome in error_rechecks"),
             "LLM-facing contract must explain how due error rechecks are persisted"
         );
         assert!(

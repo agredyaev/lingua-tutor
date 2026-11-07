@@ -625,6 +625,8 @@ pub(crate) fn selection_tutor_tasks(
             };
         let success_criterion =
             adaptation::criterion_for_action(&action, entry.capability).to_owned();
+        let measurement_requirements =
+            adaptation::measurement_requirements_for_action(&action, entry.capability).to_vec();
         output.push(adaptation::TutorTask {
             action,
             learning_item_id: id,
@@ -639,6 +641,7 @@ pub(crate) fn selection_tutor_tasks(
             next_context_policy: policy,
             rationale,
             success_criterion,
+            measurement_requirements,
         });
     }
     output

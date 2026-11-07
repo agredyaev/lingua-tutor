@@ -24,12 +24,12 @@ pub(crate) const TOOLS: &[ToolDef] = &[
     },
     ToolDef {
         name: "get_tutor_context",
-        description: "Authoritative adaptive tutor context: methodology, ranked plan/tasks, persisted learner state, recent signals, preferences, errors, review/redesign evidence, planner history, and lesson-result contract. Fetch this before every lesson.",
+        description: "Authoritative adaptive tutor context: methodology, ranked plan/tasks, persisted learner state, recent signals, preferences, errors, review/redesign evidence, planner history, and lesson-result contract. tutor_tasks is the ordered item-level execution queue; each task carries success_criterion and measurement_requirements. Fetch this before every lesson.",
         required: &["language_profile_id"],
     },
     ToolDef {
         name: "start_lesson",
-        description: "After get_tutor_context, open the lesson record before teaching with an explicit scenario and planned goal fixed before instruction. Use the adaptive_lesson_plan and tutor_tasks returned by start_lesson as the final authoritative snapshot for this lesson.",
+        description: "After get_tutor_context, open the lesson record before teaching with an explicit scenario and planned goal fixed before instruction. Use the adaptive_lesson_plan and the ordered tutor_tasks returned by start_lesson as the final authoritative execution snapshot for this lesson; consume selected tasks in returned order and instrument them from measurement_requirements before teaching.",
         required: &["language_profile_id", "scenario", "planned_goal"],
     },
     ToolDef {
@@ -248,8 +248,14 @@ mod tests {
         assert!(context.description.contains("before every lesson"));
         assert!(
             start.description.contains("get_tutor_context")
-                && start.description.contains("final authoritative snapshot"),
-            "start_lesson must bind the chat LLM to context-first flow and its persisted final plan"
+                && start
+                    .description
+                    .contains("final authoritative execution snapshot")
+                && start.description.contains("measurement_requirements")
+                && context
+                    .description
+                    .contains("ordered item-level execution queue"),
+            "start_lesson must bind the chat LLM to context-first flow and its persisted executable plan"
         );
     }
 

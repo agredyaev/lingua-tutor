@@ -31,6 +31,10 @@ pub struct TutorTask {
     pub rationale: String,
     /// Observable condition for marking this task successful.
     pub success_criterion: String,
+    /// Task-local instrumentation contract. This keeps measurement requirements
+    /// next to the executable task instead of forcing the tutor to infer them
+    /// from the global lesson-result contract.
+    pub measurement_requirements: Vec<&'static str>,
 }
 
 #[must_use]
@@ -86,6 +90,78 @@ pub fn criterion(capability: CapabilityKind) -> &'static str {
     }
 }
 
+const PRODUCTION_MEASUREMENTS: &[&str] = &[
+    "assistance_level",
+    "probe_phase",
+    "context",
+    "success",
+    "response_millis_if_instrumented",
+];
+const DIAGNOSTIC_PRODUCTION_MEASUREMENTS: &[&str] = &[
+    "assistance_level=0_on_initial_probe",
+    "probe_phase=diagnostic",
+    "context",
+    "success",
+    "response_millis_if_instrumented",
+];
+const LISTENING_MEASUREMENTS: &[&str] = &[
+    "assistance_level",
+    "probe_phase",
+    "context_tag",
+    "source_reference",
+    "success",
+    "response_millis_if_instrumented",
+];
+const DIAGNOSTIC_LISTENING_MEASUREMENTS: &[&str] = &[
+    "assistance_level=0_on_initial_probe",
+    "probe_phase=diagnostic",
+    "context_tag",
+    "source_reference",
+    "success",
+    "response_millis_if_instrumented",
+];
+const TRANSFER_MEASUREMENTS: &[&str] = &[
+    "assistance_level=0",
+    "probe_phase=transfer",
+    "context",
+    "context_family",
+    "success",
+    "response_millis_if_instrumented",
+];
+const AUTOMATICITY_MEASUREMENTS: &[&str] = &[
+    "assistance_level=0",
+    "probe_phase",
+    "context",
+    "success",
+    "response_millis_required",
+];
+
+#[must_use]
+/// Return the task-local measurement contract for one executable tutor action.
+///
+/// The strings intentionally use the same field names as the lesson-result
+/// contract. `response_millis_if_instrumented` means measure prompt-ready to
+/// first committed response when a timing instrument is actually available;
+/// never synthesize a latency value. `response_millis_required` means the
+/// action cannot produce automaticity evidence without an actual timer.
+pub fn measurement_requirements_for_action(
+    action: &str,
+    capability: CapabilityKind,
+) -> &'static [&'static str] {
+    match action {
+        "diagnostic_spontaneous" => DIAGNOSTIC_PRODUCTION_MEASUREMENTS,
+        "listening_probe" => DIAGNOSTIC_LISTENING_MEASUREMENTS,
+        "automaticity_drill" => AUTOMATICITY_MEASUREMENTS,
+        "transfer_practice" => TRANSFER_MEASUREMENTS,
+        _ => match capability {
+            CapabilityKind::Listening => LISTENING_MEASUREMENTS,
+            CapabilityKind::Transfer => TRANSFER_MEASUREMENTS,
+            CapabilityKind::Recognition
+            | CapabilityKind::PromptedProduction
+            | CapabilityKind::SpontaneousProduction => PRODUCTION_MEASUREMENTS,
+        },
+    }
+}
 #[must_use]
 /// Return the LLM-facing observable criterion for one concrete tutor action.
 pub fn criterion_for_action(action: &str, capability: CapabilityKind) -> &'static str {
@@ -112,5 +188,30 @@ pub fn criterion_for_action(action: &str, capability: CapabilityKind) -> &'stati
             "retain unaided accuracy while retrieval latency improves across measured independent attempts"
         }
         _ => criterion(capability),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_measurements_are_task_local() {
+        let requirements = measurement_requirements_for_action(
+            "diagnostic_spontaneous",
+            CapabilityKind::SpontaneousProduction,
+        );
+        assert!(requirements.contains(&"probe_phase=diagnostic"));
+        assert!(requirements.contains(&"response_millis_if_instrumented"));
+    }
+
+    #[test]
+    fn automaticity_requires_real_latency_measurement() {
+        let requirements = measurement_requirements_for_action(
+            "automaticity_drill",
+            CapabilityKind::SpontaneousProduction,
+        );
+        assert!(requirements.contains(&"response_millis_required"));
+        assert!(!requirements.contains(&"response_millis_if_instrumented"));
     }
 }

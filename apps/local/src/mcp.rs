@@ -150,7 +150,7 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains(
-                    "Для calibration-eligible outcome нужен минимум 1 diagnostic baseline и минимум 2 measurement-eligible probes overall"
+                    "A calibration-eligible outcome requires at least 1 diagnostic baseline and at least 2 measurement-eligible probes overall"
                 )
         );
 
