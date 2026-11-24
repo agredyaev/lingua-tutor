@@ -1,4 +1,5 @@
 /target
+/dist-wasi
 /apps/web/dist
 /fuzz/target
 node_modules/

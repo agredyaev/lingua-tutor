@@ -542,7 +542,7 @@ pub fn backup(path: &Path) -> Result<PathBuf, String> {
     );
     let target = dir.join(name);
     open_private_new(&target).map_err(|e| e.to_string())?;
-    if let Err(error) = source.backup(MAIN_DB, &target, None) {
+    if let Err(error) = source.backup(MAIN_DB, &target, None::<fn(rusqlite::backup::Progress)>) {
         let _ = fs::remove_file(&target);
         return Err(error.to_string());
     }

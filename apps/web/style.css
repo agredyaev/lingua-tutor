@@ -542,6 +542,27 @@ textarea {
   background: transparent;
 }
 
+.tunnel-setup {
+  max-width: var(--reading-width);
+  display: grid;
+  gap: var(--space-4);
+}
+
+.tunnel-steps {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+  padding-inline-start: 1.4em;
+}
+
+.tunnel-connect {
+  margin-block: var(--space-3);
+}
+
+.tunnel-submit {
+  justify-self: start;
+}
+
 /* Generic states and callouts */
 
 .error {
