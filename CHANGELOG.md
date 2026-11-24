@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.10](https://github.com/agredyaev/lingua-tutor/compare/v0.1.9...v0.1.10) (2026-11-24)
+
+
+### Features
+
+* replace WASI distribution with native Android APK ([eff4c28](https://github.com/agredyaev/lingua-tutor/commit/eff4c2806dc7c2072158c14d76915867b3ca0ebb))
+* replace WASI distribution with native Android APK ([9348481](https://github.com/agredyaev/lingua-tutor/commit/9348481a8da176bf6734c8fe4e9a8a9f7626c4ce))
+
+
+### Bug Fixes
+
+* **android:** compile Java with SDK lambda stubs before native build ([e1beab5](https://github.com/agredyaev/lingua-tutor/commit/e1beab59d088856954c21186a7c88dc0ad37f676))
+* **ci:** provision Android SDK command-line tools ([297a26f](https://github.com/agredyaev/lingua-tutor/commit/297a26fcda3b2e9e003a535539c2045b9e9d1fa4))
+
 ## [0.1.9](https://github.com/agredyaev/lingua-tutor/compare/v0.1.8...v0.1.9) (2026-11-24)
 
 
