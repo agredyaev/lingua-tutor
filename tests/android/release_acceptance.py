@@ -176,7 +176,7 @@ def launch():
 
 def export(label, filename):
     tap(label, scroll=True)
-    tap("Save")
+    tap("Save", "SAVE", "button1", clickable=True)
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:
