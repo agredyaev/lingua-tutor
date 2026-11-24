@@ -310,6 +310,7 @@ pub(crate) fn LanguagesPage() -> impl IntoView {
                 <div>
                     <p class="eyebrow">"Profiles"</p>
                     <h1>"Languages"</h1>
+                    <a class="btn" href="/export">"Export data"</a>
                     <p class="page-description">
                         "Each profile keeps its own learning history while the engine stays language-neutral."
                     </p>

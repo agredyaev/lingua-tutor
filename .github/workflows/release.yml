@@ -381,3 +381,10 @@ jobs:
             printf 'Expected:\n%s\nActual:\n%s\n' "$expected" "$published"
             exit 1
           fi
+
+  android-acceptance:
+    needs: [resolve, publish]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.resolve.outputs.build_android == 'true' && (needs.publish.result == 'success' || needs.resolve.outputs.build_needed == 'false') }}
+    uses: ./.github/workflows/android-release-acceptance.yml
+    with:
+      tag: ${{ needs.resolve.outputs.tag }}

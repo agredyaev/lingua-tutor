@@ -37,7 +37,7 @@ Install `lingua-tutor-v<VERSION>-android.apk` from a release containing Android 
 
 - Launch **Lingua Tutor**. Android starts the Rust library on a background thread and opens the setup page in WebView.
 - Database: `<app-private files>/.lingua-tutor/lingua.sqlite3`. Updates signed with the same certificate retain it. Uninstalling or clearing app data deletes it, including local backups. Android system backup is disabled.
-- JSON/CSV exports use Android's document picker. Desktop databases are not imported automatically.
+- From releases after v0.1.10, open Languages → Export data. JSON/CSV exports use Android's document picker. v0.1.10 has no navigation link to its export route. Desktop databases are not imported automatically.
 - Android can terminate the app process while it is in the background. Reopen the app and reconnect the tunnel if that occurs. There is no foreground service guaranteeing tunnel availability.
 - A new process uses a new loopback port. WebView storage is origin-scoped; pending browser-only offline review events are not guaranteed to survive a port change. Committed SQLite records are unaffected.
 

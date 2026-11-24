@@ -1,0 +1,84 @@
+name: Android release acceptance
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published Android release tag (empty selects latest)
+        type: string
+        required: false
+  pull_request:
+    paths:
+      - .github/workflows/android-release-acceptance.yml
+      - tests/android/**
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Download published APK and verify SHA256
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$TAG" ]]; then
+            TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          fi
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          mkdir -p "$RUNNER_TEMP/release-apk"
+          cd "$RUNNER_TEMP/release-apk"
+          apk="lingua-tutor-$TAG-android.apk"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$apk" --pattern SHA256SUMS
+          awk -v name="$apk" '$2 == name {print; count++} END {if (count != 1) exit 1}' SHA256SUMS > apk.sha256
+          sha256sum --strict -c apk.sha256
+          echo "APK=$PWD/$apk" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Verify APK signature and start emulator
+        run: |
+          set -euo pipefail
+          sudo chmod a+rw /dev/kvm
+          sdkmanager --install "build-tools;35.0.0" "emulator" "system-images;android-35;google_apis;x86_64"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" > "$RUNNER_TEMP/badging.txt"
+          grep -F "package: name='io.linguatutor'" "$RUNNER_TEMP/badging.txt"
+          grep -F "versionName='${RELEASE_TAG#v}'" "$RUNNER_TEMP/badging.txt"
+          echo no | avdmanager create avd --force --name lingua-acceptance --package "system-images;android-35;google_apis;x86_64"
+          "$ANDROID_HOME/emulator/emulator" -avd lingua-acceptance -no-window -no-audio -no-boot-anim \
+            -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          timeout 180 adb wait-for-device
+          timeout 180 bash -c 'until [[ "$(adb shell getprop sys.boot_completed | tr -d "\r")" == 1 ]]; do sleep 2; done'
+          adb shell input keyevent 82
+          adb shell wm size 1080x1920
+          adb shell wm density 180
+          adb install "$APK"
+          python3 tests/android/release_acceptance.py "$RELEASE_TAG"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ always() }}
+        with:
+          name: android-release-acceptance-evidence
+          path: |
+            ${{ runner.temp }}/emulator.log
+            ${{ runner.temp }}/android-evidence/
+            ${{ runner.temp }}/badging.txt
+          if-no-files-found: warn
