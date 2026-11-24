@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.11](https://github.com/agredyaev/lingua-tutor/compare/v0.1.10...v0.1.11) (2026-11-24)
+
+
+### Bug Fixes
+
+* **android:** expose exports and keep WebView inside system bars ([2ff9aaf](https://github.com/agredyaev/lingua-tutor/commit/2ff9aaf3d457c0ee8efdbe656e3e43993ca26be2))
+
 ## [0.1.10](https://github.com/agredyaev/lingua-tutor/compare/v0.1.9...v0.1.10) (2026-11-24)
 
 
