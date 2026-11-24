@@ -177,10 +177,12 @@ def launch():
 def export(label, filename):
     tap(label, scroll=True)
     tap("Save", "SAVE", "button1", clickable=True)
+    find(label)
+    path = shlex.quote("/sdcard/Download/" + filename)
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:
-            data = adb("exec-out", "cat", "/sdcard/Download/" + filename)
+            data = adb("shell", "-T", f"test -s {path} && cat {path}")
             if data:
                 (EVIDENCE / filename).write_bytes(data)
                 return data
