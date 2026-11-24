@@ -9,3 +9,4 @@ pub(crate) mod lessons;
 pub(crate) mod misc;
 pub(crate) mod records;
 pub(crate) mod review;
+pub(crate) mod tunnel;

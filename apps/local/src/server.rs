@@ -4,7 +4,7 @@
 //! Full JSON/CSV exports remain direct download endpoints because their
 //! response semantics are files, not application command/query calls.
 
-use crate::{Env, Error, api, handlers};
+use crate::{Env, Error, api, handlers, tunnel};
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::State;
@@ -12,12 +12,79 @@ use axum::http::{Method as HttpMethod, Request as HttpRequest, Response as HttpR
 use axum::routing::any;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use tokio::sync::{Mutex, oneshot};
+use tokio::task::JoinSet;
 
 #[derive(Clone)]
 struct AppState {
     env: Env,
     assets: PathBuf,
     port: u16,
+    tunnel: Option<Arc<BrowserTunnel>>,
+}
+
+#[derive(Default)]
+struct BrowserTunnel {
+    tasks: Mutex<JoinSet<Result<(), String>>>,
+    ready: Arc<AtomicBool>,
+}
+
+impl BrowserTunnel {
+    fn status(&self) -> &'static str {
+        let Ok(mut tasks) = self.tasks.try_lock() else {
+            return "connecting";
+        };
+        let _ = tasks.try_join_next();
+        if tasks.is_empty() {
+            "disconnected"
+        } else if self.ready.load(Ordering::Relaxed) {
+            "connected"
+        } else {
+            "connecting"
+        }
+    }
+
+    async fn connect(&self, env: Env, config: tunnel::TunnelConfig) -> Result<(), String> {
+        let mut tasks = self
+            .tasks
+            .try_lock()
+            .map_err(|_| "A tunnel connection is already in progress.")?;
+        let _ = tasks.try_join_next();
+        if !tasks.is_empty() {
+            return Err("A tunnel connection is already active.".to_owned());
+        }
+
+        let (ready_tx, ready_rx) = oneshot::channel();
+        self.ready.store(false, Ordering::Relaxed);
+        let ready = Arc::clone(&self.ready);
+        tasks.spawn(async move {
+            let result = tunnel::run_with_ready(
+                env,
+                config,
+                Some(Box::new(move || {
+                    ready.store(true, Ordering::Relaxed);
+                    let _ = ready_tx.send(());
+                })),
+            )
+            .await;
+            if let Err(error) = &result {
+                eprintln!("Tunnel stopped: {error}");
+            }
+            result
+        });
+
+        tokio::select! {
+            Ok(()) = ready_rx => Ok(()),
+            result = tasks.join_next() => match result {
+                Some(Ok(Err(error))) => Err(error),
+                _ => Err("The tunnel stopped before it was ready.".to_owned()),
+            },
+        }
+    }
 }
 
 fn reply(status: u16, content_type: &str, body: impl Into<Body>) -> HttpResponse<Body> {
@@ -95,6 +162,33 @@ fn rpc_error(id: serde_json::Value, code: i64, message: &str) -> HttpResponse<Bo
         })
         .to_string(),
     )
+}
+
+async fn connect_tunnel(state: &AppState, call: RpcRequest) -> HttpResponse<Body> {
+    let fail = |code, message: &str| rpc_error(call.id.clone(), code, message);
+    let Some(session) = &state.tunnel else {
+        return fail(-32000, "Browser tunnel setup is disabled for this run.");
+    };
+    let (Some(tunnel_id), Some(api_key)) = (
+        rpc_param(&call.params, "tunnel_id"),
+        rpc_param(&call.params, "api_key"),
+    ) else {
+        return fail(-32602, "Enter the tunnel ID and runtime API key.");
+    };
+    if api_key.len() > 16 * 1024 || api_key.chars().any(char::is_control) {
+        return fail(-32602, "Invalid runtime API key.");
+    }
+    let config = match tunnel::TunnelConfig::production(
+        tunnel_id.trim().to_owned(),
+        api_key.trim().to_owned(),
+    ) {
+        Ok(config) => config,
+        Err(error) => return fail(-32602, &error),
+    };
+    match session.connect(state.env.clone(), config).await {
+        Ok(()) => rpc_response(call.id, serde_json::json!({ "connected": true })),
+        Err(error) => fail(-32000, &error),
+    }
 }
 
 fn dispatch_rpc(call: RpcRequest, env: &Env) -> crate::Result<serde_json::Value> {
@@ -329,12 +423,12 @@ async fn handle(State(state): State<AppState>, request: HttpRequest<Body>) -> Ht
     if host != expected && host != alternate {
         return reply(403, "text/plain", "forbidden host");
     }
-    if let Some(origin) = head
+    let origin = head
         .headers
         .get("origin")
-        .and_then(|value| value.to_str().ok())
-        && origin != format!("http://{host}")
-    {
+        .and_then(|value| value.to_str().ok());
+    let same_origin = origin == Some(format!("http://{host}").as_str());
+    if origin.is_some() && !same_origin {
         return reply(403, "text/plain", "forbidden origin");
     }
 
@@ -358,6 +452,27 @@ async fn handle(State(state): State<AppState>, request: HttpRequest<Body>) -> Ht
         };
         if call.jsonrpc != "2.0" || call.method.is_empty() {
             return rpc_error(call.id, -32600, "invalid request");
+        }
+        match call.method.as_str() {
+            "tunnel_status" => {
+                let status = state
+                    .tunnel
+                    .as_ref()
+                    .map_or("disabled", |tunnel| tunnel.status());
+                return rpc_response(call.id, serde_json::json!({ "status": status }));
+            }
+            "connect_tunnel" => {
+                if !same_origin {
+                    return reply(403, "text/plain", "same-origin request required");
+                }
+                let mut response = connect_tunnel(&state, call).await;
+                response.headers_mut().insert(
+                    axum::http::header::CACHE_CONTROL,
+                    axum::http::HeaderValue::from_static("no-store"),
+                );
+                return response;
+            }
+            _ => {}
         }
         let id = call.id.clone();
         return match dispatch_rpc(call, &state.env) {
@@ -412,18 +527,51 @@ async fn handle(State(state): State<AppState>, request: HttpRequest<Body>) -> Ht
 
 /// Serve the PWA and JSON-RPC boundary on a loopback socket.
 pub async fn serve(env: Env, assets: &Path, port: u16) -> Result<(), String> {
+    serve_runtime(env, assets, port, None).await
+}
+
+/// Serve the PWA with browser tunnel setup and open its setup page on startup.
+pub async fn serve_browser(
+    env: Env,
+    assets: &Path,
+    port: u16,
+    open_browser: fn(&str),
+) -> Result<(), String> {
+    serve_runtime(env, assets, port, Some(open_browser)).await
+}
+
+async fn serve_runtime(
+    env: Env,
+    assets: &Path,
+    port: u16,
+    open_browser: Option<fn(&str)>,
+) -> Result<(), String> {
     let assets = assets
         .canonicalize()
         .map_err(|error| format!("assets: {error}"))?;
     if !assets.join("index.html").is_file() {
         return Err("assets directory lacks index.html".into());
     }
-    let state = AppState { env, assets, port };
-    let app = Router::new().fallback(any(handle)).with_state(state);
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
         .map_err(|error| error.to_string())?;
-    eprintln!("Lingua Tutor: http://127.0.0.1:{port}");
+    let port = listener
+        .local_addr()
+        .map_err(|error| error.to_string())?
+        .port();
+    let state = AppState {
+        env,
+        assets,
+        port,
+        tunnel: open_browser.map(|_| Arc::new(BrowserTunnel::default())),
+    };
+    let app = Router::new().fallback(any(handle)).with_state(state);
+    let mut url = format!("http://127.0.0.1:{port}");
+    if let Some(open_browser) = open_browser {
+        url.push_str("/setup");
+        open_browser(&url);
+    }
+    eprintln!("Lingua Tutor: {url}");
     axum::serve(listener, app)
         .await
         .map_err(|error| error.to_string())
@@ -469,6 +617,65 @@ mod tests {
         assert_eq!(result["status"], "ok");
         assert_eq!(result["sqlite_connected"], true);
 
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn browser_connect_waits_for_poll_and_allows_retry() {
+        use axum::http::StatusCode;
+
+        let dir = std::env::temp_dir().join(format!("lingua-connect-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let env = storage::environment(&dir.join("lingua.sqlite3")).unwrap();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let peer_url = format!("http://{}", listener.local_addr().unwrap());
+        let peer = tokio::spawn(async move {
+            let app = Router::new().fallback(|request: HttpRequest<Body>| async move {
+                if !request.uri().path().ends_with("/poll") {
+                    return StatusCode::OK;
+                }
+                if request
+                    .headers()
+                    .get("authorization")
+                    .is_some_and(|value| value == "Bearer read-use")
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    StatusCode::NO_CONTENT
+                } else {
+                    StatusCode::FORBIDDEN
+                }
+            });
+            axum::serve(listener, app).await.unwrap();
+        });
+        let config = |key: &str| {
+            tunnel::TunnelConfig::new(
+                format!("tunnel_{}", "a".repeat(32)),
+                key.to_owned(),
+                peer_url.clone(),
+            )
+            .unwrap()
+        };
+        let session = BrowserTunnel::default();
+
+        let error = session
+            .connect(env.clone(), config("read-only"))
+            .await
+            .unwrap_err();
+        assert!(error.contains("poll authorization"));
+        assert_eq!(session.status(), "disconnected");
+        assert_eq!(call(&env, "health", serde_json::json!({}))["status"], "ok");
+
+        session
+            .connect(env.clone(), config("read-use"))
+            .await
+            .unwrap();
+        assert_eq!(session.status(), "connected");
+        assert!(session.connect(env, config("read-use")).await.is_err());
+
+        drop(session);
+        peer.abort();
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -673,6 +880,7 @@ pub(crate) fn fuzz_boundary(env: &Env, dir: &Path, args: &serde_json::Value, dat
         env: env.clone(),
         assets: assets.canonicalize().expect("assets path"),
         port: 7777,
+        tunnel: None,
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

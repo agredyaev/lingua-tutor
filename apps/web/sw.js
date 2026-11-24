@@ -9,7 +9,7 @@ self.addEventListener("activate", (event) => event.waitUntil(clients.claim()));
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== location.origin) return;
-  if (url.pathname.startsWith("/api/") || url.pathname === "/rpc") return;
+  if (url.pathname.startsWith("/api/") || ["/rpc", "/setup"].includes(url.pathname)) return;
   event.respondWith(cacheFirst(event.request));
 });
 

@@ -115,6 +115,7 @@ pub(crate) fn App() -> impl IntoView {
                 <Routes fallback=|| view! { <p>"Not found."</p> }>
                     <Route path=path!("/") view=pages::dashboard::DashboardPage />
                     <Route path=path!("/dashboard") view=pages::dashboard::DashboardPage />
+                    <Route path=path!("/setup") view=pages::tunnel::TunnelSetupPage />
                     <Route path=path!("/languages") view=pages::languages::LanguagesPage />
                     <Route path=path!("/learn") view=pages::misc::LearnPage />
                     <Route path=path!("/review") view=pages::review::ReviewPage />

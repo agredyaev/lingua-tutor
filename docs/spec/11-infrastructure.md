@@ -5,7 +5,8 @@
 - `lingua-tutor run`: materializes embedded UI assets, opens or creates `.lingua-tutor/lingua.sqlite3`, serves loopback static assets + `POST /rpc` + export downloads, and connects the in-process MCP service to OpenAI Secure MCP Tunnel.
 - The current working directory identifies the workspace.
 - Repeated runs in the same directory reuse the same SQLite database.
-- Tunnel ID and Runtime API key are hidden-input, session-only values and are never persisted.
+- Tunnel ID and Runtime API key are supplied through local browser setup by default and are never persisted.
+- `lingua-tutor run --terminal-tunnel`: prompt for tunnel credentials with hidden terminal input.
 - `lingua-tutor run --no-tunnel`: browser UI/RPC only.
 - Tunnel mode uses the OS-provided curl executable. macOS uses `/usr/bin/curl`, Linux accepts `/usr/bin/curl` or `/bin/curl`, and Windows uses `%SystemRoot%\\System32\\curl.exe`. Hidden credential input uses the controlling TTY plus `stty` on Unix and Windows PowerShell on Windows.
 - Runtime-owned migrations live under `apps/local/migrations/`.

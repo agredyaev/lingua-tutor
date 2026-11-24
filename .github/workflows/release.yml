@@ -184,6 +184,8 @@ jobs:
           file target/x86_64-unknown-linux-gnu/release/lingua-tutor | grep -Eq 'ELF 64-bit.*x86-64'
           file target/aarch64-unknown-linux-gnu/release/lingua-tutor | grep -Eq 'ELF 64-bit.*ARM aarch64'
           target/x86_64-unknown-linux-gnu/release/lingua-tutor --help
+          install -Dm755 target/aarch64-unknown-linux-gnu/release/lingua-tutor staged-linux-arm64/lingua-tutor
+          install -Dm755 scripts/termux-launcher.sh staged-linux-arm64/termux-launcher.sh
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -194,7 +196,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-linux-arm64
-          path: target/aarch64-unknown-linux-gnu/release/lingua-tutor
+          path: staged-linux-arm64/
           if-no-files-found: error
 
   macos:
@@ -315,20 +317,24 @@ jobs:
           mkdir -p dist
 
           package() {
-            binary="$1"
-            entry="$2"
-            asset="$3"
+            local binary="$1" entry="$2" asset="$3" package_dir
+            local entries=("$entry")
             package_dir="$(mktemp -d)"
             cp "$binary" "$package_dir/$entry"
             if [[ "$entry" != *.exe ]]; then
               chmod +x "$package_dir/$entry"
             fi
-            (cd "$package_dir" && zip -q "$GITHUB_WORKSPACE/dist/$asset" "$entry")
-            test "$(unzip -Z1 "dist/$asset")" = "$entry"
+            if [[ -n "${4:-}" ]]; then
+              install -m755 "$4" "$package_dir/termux-launcher.sh"
+              entries+=(termux-launcher.sh)
+            fi
+            (cd "$package_dir" && zip -q "$GITHUB_WORKSPACE/dist/$asset" "${entries[@]}")
+            test "$(unzip -Z1 "dist/$asset")" = "$(printf '%s\n' "${entries[@]}")"
           }
 
           package staged/linux-x64/lingua-tutor lingua-tutor "lingua-tutor-v$VERSION-linux-x64.zip"
-          package staged/linux-arm64/lingua-tutor lingua-tutor "lingua-tutor-v$VERSION-linux-aarch64.zip"
+          package staged/linux-arm64/lingua-tutor lingua-tutor "lingua-tutor-v$VERSION-linux-aarch64.zip" \
+            staged/linux-arm64/termux-launcher.sh
           package staged/macos/lingua-tutor lingua-tutor "lingua-tutor-v$VERSION-darwin-arm64.zip"
           package staged/windows/lingua-tutor.exe lingua-tutor.exe "lingua-tutor-v$VERSION-windows-x64.zip"
 

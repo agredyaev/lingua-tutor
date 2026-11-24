@@ -6,7 +6,7 @@ Local-first adaptive language tutor with one SQLite source of truth.
 - project-local SQLite;
 - 15 MCP tools over the same native processing logic;
 - built-in OpenAI Secure MCP Tunnel protocol adapted from Rivet;
-- tunnel ID and Runtime API key are requested with hidden terminal input on every run and are never written to disk.
+- browser setup for the tunnel ID and Runtime API key. Both stay in memory for the session.
 
 ## Install
 
@@ -63,14 +63,11 @@ The first run creates:
 
 More precisely, state is always under `<current-directory>/.lingua-tutor/`. Running `lingua-tutor run` again from the same directory reuses the same database.
 
-The CLI securely prompts for:
+The runtime starts the web server and opens the tunnel setup in your browser. If no browser opens, use the URL printed by the CLI (normally `http://127.0.0.1:8787/setup`). Follow the instructions on that page to create the tunnel and a restricted runtime key. Choose **Continue locally** to open the dashboard without connecting a tunnel.
 
-```text
-Tunnel ID:
-Runtime API key:
-```
+Use `lingua-tutor run --terminal-tunnel` for hidden terminal input.
 
-Input is not echoed. Credentials live only in process memory for that run.
+On Android, [add a home-screen shortcut](docs/local-runtime.md#android-home-screen-shortcut) to start Lingua Tutor and open the browser with one tap.
 
 For UI-only local testing:
 

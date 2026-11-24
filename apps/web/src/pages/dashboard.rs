@@ -28,6 +28,7 @@ pub(crate) fn DashboardPage() -> impl IntoView {
         <Page>
             <header class="page-header">
                 <h1>"Home"</h1>
+                <a class="btn" href="/setup">"ChatGPT setup"</a>
             </header>
 
             <Suspense fallback=|| view! { <p class="loading">"Loading…"</p> }>

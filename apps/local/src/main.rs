@@ -62,6 +62,7 @@ async fn run() -> Result<(), String> {
 async fn run_project(args: Vec<String>) -> Result<(), String> {
     let mut port = 8787_u16;
     let mut no_tunnel = false;
+    let mut terminal_tunnel = false;
     let mut iter = args.into_iter();
     while let Some(option) = iter.next() {
         match option.as_str() {
@@ -70,8 +71,12 @@ async fn run_project(args: Vec<String>) -> Result<(), String> {
                 port = value.parse().map_err(|_| "invalid port")?;
             }
             "--no-tunnel" => no_tunnel = true,
+            "--terminal-tunnel" => terminal_tunnel = true,
             _ => return Err(format!("unknown run option: {option}")),
         }
+    }
+    if no_tunnel && terminal_tunnel {
+        return Err("--no-tunnel and --terminal-tunnel cannot be used together".to_owned());
     }
 
     let paths = ProjectPaths::from_current_dir()?;
@@ -84,7 +89,6 @@ async fn run_project(args: Vec<String>) -> Result<(), String> {
     println!("Lingua Tutor");
     println!("  project: {}", paths.root.display());
     println!("  database: {}", paths.db.display());
-    println!("  UI: http://127.0.0.1:{port}");
     if first_run {
         println!("  initialized new project state");
     } else {
@@ -95,6 +99,9 @@ async fn run_project(args: Vec<String>) -> Result<(), String> {
         println!("  tunnel: disabled for this session");
         return server::serve(env, &paths.web, port).await;
     }
+    if !terminal_tunnel {
+        return server::serve_browser(env, &paths.web, port, open_browser).await;
+    }
 
     let tunnel_id = prompt_secret("Tunnel ID: ")?;
     let api_key = prompt_secret("Runtime API key: ")?;
@@ -104,6 +111,27 @@ async fn run_project(args: Vec<String>) -> Result<(), String> {
         result = server::serve(env.clone(), &paths.web, port) => result,
         result = tunnel::run(env, config) => result,
     }
+}
+
+fn open_browser(url: &str) {
+    #[cfg(target_os = "macos")]
+    let mut opener = Command::new("open");
+    #[cfg(windows)]
+    let mut opener = Command::new("explorer.exe");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut opener = Command::new("xdg-open");
+
+    #[cfg(any(unix, windows))]
+    {
+        opener
+            .arg(url)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        drop(tokio::task::spawn_blocking(move || opener.status()));
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = url;
 }
 
 fn ensure_initialized(paths: &ProjectPaths) -> Result<(), String> {
@@ -259,15 +287,16 @@ fn print_help() {
         "Lingua Tutor\n\
          \n\
          Usage:\n\
-           lingua-tutor run [--port N] [--no-tunnel]\n\
+           lingua-tutor run [--port N] [--no-tunnel | --terminal-tunnel]\n\
            lingua-tutor check\n\
            lingua-tutor backup\n\
            lingua-tutor where\n\
          \n\
          Project state:\n\
            The current directory is the project. Persistent state lives only in\n\
-           .lingua-tutor/ (SQLite + web assets). Tunnel ID and Runtime API key are\n\
-           requested with hidden terminal input on every run and are never saved.\n\
+           .lingua-tutor/ (SQLite + web assets). Enter the Tunnel ID and Runtime API key\n\
+           in the local browser setup or use --terminal-tunnel for hidden terminal input.\n\
+           Tunnel credentials are never saved.\n\
          \n\
          Examples:\n\
            mkdir ~/spanish && cd ~/spanish\n\

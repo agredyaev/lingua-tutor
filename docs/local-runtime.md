@@ -46,7 +46,9 @@ The built-in client implements the base OpenAI tunnel wire contract on `/v1/tunn
 
 ## Tunnel credentials
 
-Every `lingua-tutor run` prompts with terminal echo disabled:
+By default, `lingua-tutor run` starts the local HTTP listener and opens `/setup`. The setup page walks through tunnel registration and restricted runtime key creation. A successful initial poll advances to the dashboard. Tunnel errors leave the local UI available. Browser submission uses a same-origin JSON-RPC POST.
+
+Use `lingua-tutor run --terminal-tunnel` to enter the credentials with terminal echo disabled:
 
 ```text
 Tunnel ID:
@@ -62,6 +64,19 @@ lingua-tutor run --no-tunnel
 ```
 
 Then open `http://127.0.0.1:8787`.
+
+## Android home-screen shortcut
+
+On an ARM64 tablet, use Termux, Debian via PRoot-Distro, and the Linux ARM64 release archive. Install [Termux:Widget](https://github.com/termux/termux-widget) from the same source as Termux. Run `termux-setup-storage` and grant access to Downloads. Extract the executable to `~/lingua/lingua-tutor` and `termux-launcher.sh` to Downloads, then set up the shortcut once in Termux.
+
+```sh
+pkg install proot-distro
+proot-distro install debian
+proot-distro login debian -- sh -c 'apt-get update && apt-get install -y curl ca-certificates'
+install -Dm700 ~/storage/downloads/termux-launcher.sh ~/.shortcuts/Lingua\ Tutor
+```
+
+Reuse the existing Debian installation if you already have one. On Android 10 or later, allow Termux to appear over other apps in Android settings so the widget can open its foreground session. Add **Termux:Widget** to the home screen and select **Lingua Tutor**. Tapping the shortcut starts the local server and opens the setup page. Later taps reopen the running session.
 
 ## Maintenance
 

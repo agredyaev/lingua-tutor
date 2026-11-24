@@ -32,12 +32,13 @@ const POLL_TIMEOUT_MS: u64 = 15_000;
 const MAX_POLL_BODY_BYTES: usize = 10 * 1024 * 1024;
 const MAX_IN_FLIGHT: usize = 16;
 const CURL_META_MARKER: &str = "__LINGUA_TUNNEL_HTTP_META__:";
+type Ready = Option<Box<dyn FnOnce() + Send>>;
 
 /// Native tunnel connection settings.
 ///
 /// The runtime API key is only held in process memory. The CLI never persists
 /// tunnel credentials.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TunnelConfig {
     /// OpenAI tunnel ID.
     pub tunnel_id: String,
@@ -53,7 +54,11 @@ impl TunnelConfig {
         Self::new(tunnel_id, api_key, DEFAULT_BASE_URL.to_owned())
     }
 
-    fn new(tunnel_id: String, api_key: String, base_url: String) -> Result<Self, String> {
+    pub(crate) fn new(
+        tunnel_id: String,
+        api_key: String,
+        base_url: String,
+    ) -> Result<Self, String> {
         if !valid_tunnel_id(&tunnel_id) {
             return Err("invalid tunnel ID format".to_owned());
         }
@@ -145,7 +150,8 @@ impl Client {
                 None,
                 Duration::from_secs(10),
             )
-            .await?;
+            .await
+            .map_err(|_| "could not reach the tunnel service".to_owned())?;
         match response.status {
             200 => Ok(()),
             401 | 403 => Err("tunnel authentication or authorization failed".to_owned()),
@@ -153,7 +159,7 @@ impl Client {
         }
     }
 
-    async fn poll_loop(self: &Arc<Self>, env: Env) -> Result<(), String> {
+    async fn poll_loop(self: &Arc<Self>, env: Env, mut ready: Ready) -> Result<(), String> {
         let mut in_flight = JoinSet::new();
         let mut failures = 0_u32;
         let poll_url = format!("{}/poll", self.endpoint);
@@ -181,6 +187,9 @@ impl Client {
                 .await
             {
                 Ok(response) => response,
+                Err(_) if ready.is_some() => {
+                    return Err("could not reach the tunnel service".to_owned());
+                }
                 Err(error) => {
                     failures = failures.saturating_add(1);
                     eprintln!("Tunnel poll transport error: {error}");
@@ -192,6 +201,7 @@ impl Client {
 
             match response.status {
                 204 => {
+                    signal_ready(&mut ready);
                     failures = 0;
                     continue;
                 }
@@ -201,7 +211,7 @@ impl Client {
                         response.status
                     ));
                 }
-                429 | 500..=599 => {
+                429 | 500..=599 if ready.is_none() => {
                     failures = failures.saturating_add(1);
                     sleep(retry_backoff(failures, response.retry_after_ms)).await;
                     continue;
@@ -218,6 +228,7 @@ impl Client {
             failures = 0;
             let envelope = parse_poll(&response.body)
                 .map_err(|error| format!("invalid tunnel poll JSON: {error}"))?;
+            signal_ready(&mut ready);
 
             for raw in envelope.commands {
                 let client = Arc::clone(self);
@@ -779,12 +790,29 @@ fn new_instance_id() -> String {
 
 /// Connect Lingua Tutor's in-process MCP service to OpenAI Secure MCP Tunnel.
 pub async fn run(env: Env, config: TunnelConfig) -> Result<(), String> {
+    run_with_ready(env, config, None).await
+}
+
+pub(crate) async fn run_with_ready(
+    env: Env,
+    config: TunnelConfig,
+    ready: Ready,
+) -> Result<(), String> {
     let client = Client::new(config)?;
     println!("  tunnel: connecting");
     client.validate().await?;
-    println!("  tunnel: connected");
 
-    client.poll_loop(env).await
+    if ready.is_none() {
+        println!("  tunnel: connected");
+    }
+    client.poll_loop(env, ready).await
+}
+
+fn signal_ready(ready: &mut Ready) {
+    if let Some(notify) = ready.take() {
+        println!("  tunnel: connected");
+        notify();
+    }
 }
 
 #[cfg(test)]
@@ -875,7 +903,7 @@ pub(crate) fn fuzz_transport(env: &Env, data: &[u8]) {
         .expect("runtime");
     runtime.block_on(async {
         let _=client.validate().await;
-        assert!(client.poll_loop(env.clone()).await.is_err());
+        assert!(client.poll_loop(env.clone(), None).await.is_err());
         let base=serde_json::json!({"request_id":"r","shard_token":"s","command_type":"jsonrpc","jsonrpc":{"jsonrpc":"2.0","id":1,"method":"ping"}});
         for variant in 0..10 {
             let mut command=base.clone();

@@ -125,6 +125,7 @@ pub(crate) fn SystemPage() -> impl IntoView {
                     <p class="eyebrow">"Runtime"</p>
                     <h1>"System"</h1>
                 </div>
+                <a class="btn" href="/setup">"Tunnel setup"</a>
             </header>
             <Suspense fallback=|| view! { <p class="loading">"Checking runtime…"</p> }>
                 {move || {
