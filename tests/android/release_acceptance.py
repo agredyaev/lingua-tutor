@@ -1,6 +1,8 @@
 """Exercise an unmodified release APK through the Android accessibility UI."""
-import os
+import csv
+import io
 import json
+import os
 import shlex
 from pathlib import Path
 import re
@@ -121,7 +123,7 @@ def find_profile(locale="es-ES", language="en", timeout=60):
                     continue
                 names = " ".join(n.get(k, "") for n in node.iter("node")
                                  for k in ("text", "content-desc"))
-                if locale in names and f"{language} explanations" in names:
+                if locale.casefold() in names.casefold().split() and f"{language} explanations" in names:
                     return node
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ET.ParseError):
             pass
@@ -224,6 +226,7 @@ def empty_state_checks(prefix):
 
 
 def main(tag):
+    print(f"Checking Android local workflow for {tag}", flush=True)
     shell("logcat", "-c")
     try:
         launch()
@@ -238,9 +241,7 @@ def main(tag):
         snapshot("dashboard")
         empty_state_checks("spanish")
         navigate("Languages")
-        # Reopen the form to clear the prior inputs before creating another profile.
-        navigate("Home")
-        navigate("Languages")
+        find("Active profiles")
         create_profile("fr-FR", "en")
         select_profile("fr-FR", "en")
         empty_state_checks("french")
@@ -270,28 +271,23 @@ def main(tag):
         navigate("Languages")
         select_profile("es-ES", "en")
 
-        # v0.1.10 has no navigable export entry in its WebView.
-        if tag == "v0.1.10":
-            print("BLOCKED: v0.1.10 has no UI route to export; live MCP lesson not exercised", flush=True)
-        else:
-            import csv
-            import io
-            tap("Export data", scroll=True)
-            find("Full JSON export")
-            # Select Downloads in the system picker if necessary.
-            data = json.loads(export("Full JSON export", "lingua-export.json"))
-            assert data["schema_version"] == "1" and data["language_profile_id"]
-            rows = list(csv.reader(io.StringIO(export("Cards CSV", "cards.csv").decode())))
-            assert rows[0] == ["id", "intent", "status", "prompt", "answer",
-                               "accepted_answers", "creation_reason"]
-            print("PASS: JSON and CSV saved via Android document picker", flush=True)
-            print("BLOCKED: live MCP lesson requires a connected test learner", flush=True)
+        navigate("Home")
+        tap("Export data", scroll=True, clickable=True)
+        find("Full JSON export")
+        data = json.loads(export("Full JSON export", "lingua-export.json"))
+        assert data["schema_version"] == "1" and data["language_profile_id"]
+        assert data["lessons"] == [] and data["cards"] == []
+        rows = list(csv.reader(io.StringIO(export("Cards CSV", "cards.csv").decode())))
+        assert rows == [["id", "intent", "status", "prompt", "answer",
+                         "accepted_answers", "creation_reason"]]
+        print("PASS: JSON and CSV saved via Android document picker", flush=True)
 
         crashes = read_adb("logcat", "-b", "crash", "-d").decode(errors="replace")
         (EVIDENCE / "crash-logcat.txt").write_text(crashes)
         if PACKAGE in crashes:
             raise AssertionError(crashes)
         print("PASS: no application crash in Logcat")
+        print("BLOCKED: live MCP lesson requires a connected test learner", flush=True)
         print("SCOPE: local release acceptance only; live MCP lesson and physical ARM64 NOT VERIFIED")
     finally:
         # Capture independently; a diagnostic failure must not mask the test failure.
