@@ -21,6 +21,19 @@ def shell(*args):
     return adb("shell", *args)
 
 
+def read_adb(*args, timeout=20, attempts=4):
+    # Read-only commands can safely be repeated after transient ADB disconnects.
+    for attempt in range(attempts):
+        try:
+            return adb(*args, timeout=timeout)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            if attempt == attempts - 1:
+                raise
+            print(f"Retrying read-only ADB command: {args}", flush=True)
+            adb("wait-for-device", timeout=45)
+            time.sleep(2)
+
+
 def dump():
     shell("rm", "-f", REMOTE_XML)
     shell("uiautomator", "dump", REMOTE_XML)
@@ -93,6 +106,24 @@ def tap(*labels, scroll=False, field_label=None, clickable=False):
     shell("input", "tap", str((left + right) // 2), str((top + bottom) // 2))
 
 
+def find_profile(timeout=60):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            tree = dump()
+            for node in tree.iter("node"):
+                if node.get("class") != "android.widget.Button" or not bounds(node):
+                    continue
+                names = " ".join(n.get(k, "") for n in node.iter("node")
+                                 for k in ("text", "content-desc"))
+                if "es-ES" in names and "en explanations" in names:
+                    return node
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ET.ParseError):
+            pass
+        time.sleep(1)
+    raise AssertionError("Persisted Spanish profile row not found")
+
+
 def snapshot(name):
     (EVIDENCE / f"{name}.png").write_bytes(adb("exec-out", "screencap", "-p"))
     dump()
@@ -100,14 +131,26 @@ def snapshot(name):
 
 
 def hide_keyboard():
-    state = shell("dumpsys", "input_method").decode(errors="replace")
-    if re.search(r"\b(?:mInputShown|mIsInputViewShown)=true\b", state):
+    state = read_adb("shell", "dumpsys", "input_method").decode(errors="replace")
+    if re.search(r"\b(?:mInputShown|mIsInputViewShown|mShowRequested)=true\b", state):
         shell("input", "keyevent", "4")
 
 
 def enter(field_label, label, placeholder, value):
     tap(label, placeholder, field_label=field_label, scroll=True)
     shell("input", "text", value)
+    # Check the actual input value before proceeding, not just ADB exit status.
+    node, _ = find(value, field_label=field_label)
+    if not matches(node, (value,)):
+        # Some WebViews expose the value only after focus settles.
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            node, _ = find(value, field_label=field_label)
+            if matches(node, (value,)):
+                break
+            time.sleep(1)
+        else:
+            raise AssertionError(f"Input value not confirmed: {field_label}={value}")
     hide_keyboard()
     # Blur the input and close suggestions before resolving the next field.
     tap("Add a language", scroll=True)
@@ -149,8 +192,9 @@ def main(tag):
         enter("Target locale", "target-locale", "Search language or BCP 47 locale", "es-ES")
         enter("Explanation language", "source-language", "Search explanation language", "en")
         tap("Create profile", scroll=True)
-        find("es-ES")
-        tap("es-ES")
+        profile = find_profile()
+        left, top, right, bottom = bounds(profile)
+        shell("input", "tap", str((left + right) // 2), str((top + bottom) // 2))
         tap("Home", "Lingua Tutor home")
         find("Due for review")
         find("Next lesson")
@@ -159,7 +203,7 @@ def main(tag):
         launch()
         find("Due for review")
         tap("Languages", clickable=True)
-        find("es-ES")
+        find_profile()
         snapshot("persisted-profile")
         print("PASS: install, UI, profile write, dashboard read, process restart, persisted profile")
 
@@ -180,7 +224,7 @@ def main(tag):
                                "accepted_answers", "creation_reason"]
             print("PASS: JSON and CSV saved via Android document picker")
 
-        crashes = adb("logcat", "-b", "crash", "-d").decode(errors="replace")
+        crashes = read_adb("logcat", "-b", "crash", "-d").decode(errors="replace")
         (EVIDENCE / "crash-logcat.txt").write_text(crashes)
         if PACKAGE in crashes:
             raise AssertionError(crashes)
