@@ -1,17 +1,21 @@
 package io.linguatutor;
 
 import android.app.Activity;
+import android.graphics.Insets;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.content.Intent;
 import android.net.Uri;
 import android.util.Log;
+import android.view.WindowInsets;
 import android.webkit.WebView;
 import android.webkit.CookieManager;
 import java.util.UUID;
 import android.webkit.WebViewClient;
 import android.webkit.WebResourceRequest;
+import android.widget.FrameLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 import java.io.InputStream;
@@ -27,6 +31,7 @@ public final class MainActivity extends Activity {
     private static volatile String failure;
     private static volatile String session;
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private FrameLayout content;
     private WebView web;
     private String origin;
     private String exportUrl;
@@ -50,10 +55,21 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        content = new FrameLayout(this);
+        if (Build.VERSION.SDK_INT >= 35) {
+            // Keep the WebView viewport inside system bars, cutouts, and the keyboard.
+            content.setOnApplyWindowInsetsListener((view, insets) -> {
+                Insets padding = insets.getInsets(WindowInsets.Type.systemBars()
+                    | WindowInsets.Type.displayCutout() | WindowInsets.Type.ime());
+                view.setPadding(padding.left, padding.top, padding.right, padding.bottom);
+                return WindowInsets.CONSUMED;
+            });
+        }
         TextView loading = new TextView(this);
         loading.setText("Starting Lingua Tutor…");
         loading.setPadding(24, 48, 24, 24);
-        setContentView(loading);
+        content.addView(loading);
+        setContentView(content);
         ensureRuntime(getFilesDir().getAbsolutePath());
         awaitRuntime(loading, 0);
     }
@@ -106,7 +122,8 @@ public final class MainActivity extends Activity {
             save.putExtra(Intent.EXTRA_TITLE, csv ? "cards.csv" : "lingua-export.json");
             startActivityForResult(save, EXPORT);
         });
-        setContentView(web);
+        content.removeAllViews();
+        content.addView(web);
         CookieManager.getInstance().setCookie(origin, "lingua_session=" + session + "; Path=/; HttpOnly; SameSite=Strict", accepted -> {
             if (Boolean.TRUE.equals(accepted) && !isDestroyed()) {
                 web.loadUrl(origin + "/setup");
