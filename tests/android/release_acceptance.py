@@ -1,5 +1,7 @@
 """Exercise an unmodified release APK through the Android accessibility UI."""
 import os
+import json
+import shlex
 from pathlib import Path
 import re
 import subprocess
@@ -95,7 +97,10 @@ def find(*labels, timeout=60, scroll=False, field_label=None, clickable=False):
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ET.ParseError):
             pass
         if scroll:
-            shell("input", "swipe", "850", "1450", "850", "650", "350")
+            try:
+                shell("input", "swipe", "850", "1450", "850", "650", "350")
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                pass
         time.sleep(1)
     raise AssertionError(f"UI element not found: {labels}")
 
@@ -106,7 +111,7 @@ def tap(*labels, scroll=False, field_label=None, clickable=False):
     shell("input", "tap", str((left + right) // 2), str((top + bottom) // 2))
 
 
-def find_profile(timeout=60):
+def find_profile(locale="es-ES", language="en", timeout=60):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -116,12 +121,12 @@ def find_profile(timeout=60):
                     continue
                 names = " ".join(n.get(k, "") for n in node.iter("node")
                                  for k in ("text", "content-desc"))
-                if "es-ES" in names and "en explanations" in names:
+                if locale in names and f"{language} explanations" in names:
                     return node
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, ET.ParseError):
             pass
         time.sleep(1)
-    raise AssertionError("Persisted Spanish profile row not found")
+    raise AssertionError(f"Profile row not found: {locale}, {language}")
 
 
 def snapshot(name):
@@ -132,25 +137,16 @@ def snapshot(name):
 
 def hide_keyboard():
     state = read_adb("shell", "dumpsys", "input_method").decode(errors="replace")
-    if re.search(r"\b(?:mInputShown|mIsInputViewShown|mShowRequested)=true\b", state):
+    if re.search(r"\b(?:mInputShown|mIsInputViewShown)=true\b", state):
         shell("input", "keyevent", "4")
 
 
 def enter(field_label, label, placeholder, value):
     tap(label, placeholder, field_label=field_label, scroll=True)
-    shell("input", "text", value)
+    adb("shell", "input text " + shlex.quote(value.replace(" ", "%s")), timeout=90)
     # Check the actual input value before proceeding, not just ADB exit status.
-    node, _ = find(value, field_label=field_label)
-    if not matches(node, (value,)):
-        # Some WebViews expose the value only after focus settles.
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline:
-            node, _ = find(value, field_label=field_label)
-            if matches(node, (value,)):
-                break
-            time.sleep(1)
-        else:
-            raise AssertionError(f"Input value not confirmed: {field_label}={value}")
+    # The app's persisted result is the definitive value assertion.
+    # WebView does not consistently expose the entered value while IME is open.
     hide_keyboard()
     # Blur the input and close suggestions before resolving the next field.
     tap("Add a language", scroll=True)
@@ -182,6 +178,115 @@ def export(label, filename):
     raise AssertionError(f"Export not saved: {filename}")
 
 
+def select_profile(locale, language):
+    node = find_profile(locale, language)
+    left, top, right, bottom = bounds(node)
+    shell("input", "tap", str((left + right) // 2), str((top + bottom) // 2))
+
+
+def create_profile(locale, language):
+    enter("Target locale", "target-locale", "Search language or BCP 47 locale", locale)
+    enter("Explanation language", "source-language", "Search explanation language", language)
+    tap("Create profile", scroll=True, clickable=True)
+    find_profile(locale, language)
+    print(f"PASS: created {locale}/{language} through UI", flush=True)
+
+
+def navigate(label):
+    tap(label, clickable=True)
+
+
+def empty_state_checks(prefix):
+    navigate("Review")
+    find("Session done — reviewed 0 cards.")
+    snapshot(prefix + "-review")
+    navigate("Library")
+    find("No cards in this view")
+    snapshot(prefix + "-library")
+    navigate("Progress")
+    find("No reviews yet.")
+    find("Due next 7 days")
+    snapshot(prefix + "-progress")
+    navigate("History")
+    find("No lessons yet")
+    snapshot(prefix + "-history")
+    print(f"PASS: {prefix} review, library, progress and history return empty learner data", flush=True)
+
+
+def lesson_cycle(profile_id):
+    # The import page is reachable from Home in releases after v0.1.10.
+    payload = {
+        "schema_version": "2",
+        "client_operation_id": "android-acceptance-lesson-1",
+        "language_profile_id": profile_id,
+        "lesson": {"scenario": "restaurant", "duration_seconds": 720,
+                   "next_goal": "ask for the bill"},
+        "new_learning_items": [{"client_item_key": "bill", "item_type": "phrase",
+                                "target_text": "La cuenta, por favor."}],
+        "evidence": [
+            {"client_item_key": "bill", "kind": "recognition", "success": True,
+             "assistance_level": 0, "response_millis": 900, "probe_phase": "diagnostic",
+             "context": "restaurant:bill-1"},
+            {"client_item_key": "bill", "kind": "recognition", "success": True,
+             "assistance_level": 0, "response_millis": 1100, "probe_phase": "diagnostic",
+             "context": "restaurant:bill-2"},
+        ],
+        "card_mutations": [{"operation": "create", "client_operation_id": "android-acceptance-card-1",
+                            "card": {"intent": "production", "prompt": "Ask for the bill",
+                                     "answer": "La cuenta, por favor.", "prompt_language": "en",
+                                     "creation_reason": "Android release acceptance"}}],
+    }
+    navigate("Home")
+    tap("Next lesson", "Open next lesson", clickable=True)
+    tap("Import the result", scroll=True, clickable=True)
+    find("Import lesson result")
+    tap("import-paste", "Lesson-result JSON", field_label="Lesson-result JSON", scroll=True)
+    text = json.dumps(payload, separators=(",", ":"))
+    adb("shell", "input text " + shlex.quote(text.replace(" ", "%s")), timeout=120)
+    hide_keyboard()
+    tap("Validate result", scroll=True, clickable=True)
+    find("Validated preview", scroll=True)
+    find("restaurant", scroll=True)
+    snapshot("lesson-preview")
+    tap("Apply to learner state", scroll=True, clickable=True)
+    find("Applied", scroll=True)
+    snapshot("lesson-applied")
+    navigate("Review")
+    find("1 / 1")
+    find("Ask for the bill")
+    tap("Reveal (space) — say it out loud first", scroll=True)
+    find("La cuenta, por favor.")
+    tap("3 Good", scroll=True)
+    find("Session done — reviewed 1 cards.")
+    tap("Undo last grade", scroll=True)
+    find("1 / 1")
+    tap("Reveal (space) — say it out loud first", scroll=True)
+    tap("4 Easy", scroll=True)
+    find("Session done — reviewed 1 cards.")
+    snapshot("review-complete")
+    navigate("Library")
+    tap("Ask for the bill", scroll=True)
+    find("La cuenta, por favor.")
+    tap("Suspend", scroll=True)
+    find("suspended", scroll=True)
+    tap("Restore", scroll=True)
+    find("review", scroll=True)
+    snapshot("card-restored")
+    navigate("History")
+    find("restaurant")
+    snapshot("lesson-history")
+    shell("am", "force-stop", PACKAGE)
+    launch()
+    navigate("Languages")
+    select_profile("es-ES", "en")
+    navigate("Library")
+    find("Ask for the bill")
+    navigate("History")
+    find("restaurant")
+    snapshot("lesson-persisted")
+    print("PASS: import, validate, apply, review, undo, suspend, restore and persisted lesson/card", flush=True)
+
+
 def main(tag):
     shell("logcat", "-c")
     try:
@@ -189,31 +294,52 @@ def main(tag):
         tap("Create or select a language profile")
         find("No profiles yet")
         snapshot("profile-form")
-        enter("Target locale", "target-locale", "Search language or BCP 47 locale", "es-ES")
-        enter("Explanation language", "source-language", "Search explanation language", "en")
-        tap("Create profile", scroll=True)
-        profile = find_profile()
-        left, top, right, bottom = bounds(profile)
-        shell("input", "tap", str((left + right) // 2), str((top + bottom) // 2))
-        tap("Home", "Lingua Tutor home")
+        create_profile("es-ES", "en")
+        select_profile("es-ES", "en")
+        navigate("Home")
         find("Due for review")
         find("Next lesson")
         snapshot("dashboard")
+        empty_state_checks("spanish")
+        navigate("Languages")
+        # Reopen the form to clear the prior inputs before creating another profile.
+        navigate("Home")
+        navigate("Languages")
+        create_profile("fr-FR", "en")
+        select_profile("fr-FR", "en")
+        empty_state_checks("french")
+        navigate("Languages")
+        find_profile("es-ES", "en")
+        find_profile("fr-FR", "en")
+        select_profile("es-ES", "en")
         shell("am", "force-stop", PACKAGE)
         launch()
         find("Due for review")
         tap("Languages", clickable=True)
-        find_profile()
+        find_profile("es-ES", "en")
+        find_profile("fr-FR", "en")
+        select_profile("es-ES", "en")
         snapshot("persisted-profile")
-        print("PASS: install, UI, profile write, dashboard read, process restart, persisted profile")
+        print("PASS: two profiles persisted after process restart", flush=True)
+        # Loopback runtime must remain usable without internet.
+        shell("svc", "wifi", "disable")
+        shell("svc", "data", "disable")
+        try:
+            navigate("Home")
+            find("Due for review")
+            empty_state_checks("offline")
+        finally:
+            shell("svc", "wifi", "enable")
+            shell("svc", "data", "enable")
+        navigate("Languages")
+        select_profile("es-ES", "en")
 
         # v0.1.10 has no navigable export entry in its WebView.
         if tag == "v0.1.10":
-            print("NOT TESTED: export entry is absent in v0.1.10")
+            print("BLOCKED: v0.1.10 has no UI route to lesson import or export", flush=True)
         else:
             import csv
             import io
-            import json
             tap("Export data", scroll=True)
             find("Full JSON export")
             # Select Downloads in the system picker if necessary.
@@ -222,7 +348,8 @@ def main(tag):
             rows = list(csv.reader(io.StringIO(export("Cards CSV", "cards.csv").decode())))
             assert rows[0] == ["id", "intent", "status", "prompt", "answer",
                                "accepted_answers", "creation_reason"]
-            print("PASS: JSON and CSV saved via Android document picker")
+            print("PASS: JSON and CSV saved via Android document picker", flush=True)
+            lesson_cycle(data["language_profile_id"])
 
         crashes = read_adb("logcat", "-b", "crash", "-d").decode(errors="replace")
         (EVIDENCE / "crash-logcat.txt").write_text(crashes)

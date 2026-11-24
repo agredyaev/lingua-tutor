@@ -35,7 +35,7 @@ Scratch SQLite tests validate current table/index shape, foreign keys and constr
 
 Browser and RPC/MCP flows cover lesson completion, review, dashboard updates, card changes, backup/restore and shared persistence. The Android CI job is configured to install a test-signed x86-64 APK, launch the setup page, check the SQLite file and relaunch after a force-stop. This does not establish ARM64 physical-device compatibility or live OpenAI tunnel connectivity.
 
-The release acceptance workflow downloads the published APK and SHA256SUMS, verifies the digest and signature, installs without modification, creates a language profile, reads the dashboard, force-stops and relaunches the app, and checks the saved profile and crash log. It uses Android 35 x86-64 and synthetic data only. v0.1.10 has no accessible export link; export testing applies to later releases with the link. This does not verify physical ARM64 devices or a live OpenAI tunnel.
+The release acceptance workflow downloads the published APK and SHA256SUMS, verifies the digest and signature, installs without modification, creates two language profiles, checks dashboard, review, library, progress and history, verifies persistence after force-stop, checks the local runtime without network connectivity and captures crash and UI evidence. Later releases exercise native JSON/CSV export, lesson import and validation, review/undo, card suspend/restore and persisted lesson/card data through the UI. v0.1.10 lacks accessible import/export routes: the workflow reports that scope as blocked, not passed. The test uses Android 35 x86-64 and synthetic data only. Physical ARM64 and a live OpenAI tunnel remain unverified.
 
 ## 7. Performance
 
