@@ -5,6 +5,7 @@ exclude = ["fuzz"]
 members = [
     "apps/web",
     "apps/local",
+    "apps/android",
     "crates/adaptation",
     "crates/learning-core",
     "crates/review-engine",

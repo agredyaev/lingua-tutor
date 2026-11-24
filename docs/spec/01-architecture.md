@@ -8,8 +8,8 @@ Scope: active localhost architecture and binding boundaries.
 flowchart LR
     U[Learner]
     C[ChatGPT Tutor]
-    P[Leptos PWA]
-    L[lingua-tutor]
+    P[Browser or Android WebView]
+    L[Native Rust runtime]
     D[(SQLite)]
     T[OpenAI Secure MCP Tunnel]
     CORE[learning-core]
@@ -32,7 +32,7 @@ One local application owns the PWA assets, browser JSON-RPC boundary, in-process
 
 | # | Boundary | Rule |
 |---|---|---|
-| 1 | Browser | UI talks only to loopback HTTP. No secrets in WASM. |
+| 1 | Browser | Application RPC uses loopback HTTP. Android additionally requires an app-private session cookie. Tunnel credentials are not persisted in browser storage. |
 | 2 | Local runtime | Validates schemas, idempotency, limits, profile ownership and all writes. |
 | 3 | Database | One local SQLite database; only the local runtime opens it for application traffic. |
 | 4 | Review/adaptation | Deterministic processing has no network or language-specific behavior. |
@@ -43,7 +43,7 @@ One local application owns the PWA assets, browser JSON-RPC boundary, in-process
 ## 3. Binding decisions
 
 - Frontend: Leptos CSR PWA served by the local runtime.
-- Runtime: native Rust executable; loopback HTTP serves static assets, `POST /rpc`, and explicit file downloads only.
+- Runtime: desktop executable or Android JNI library; loopback HTTP serves static assets, `POST /rpc`, and file downloads.
 - Persistence: one SQLite database with WAL and foreign keys enabled.
 - PWA operations: JSON-RPC 2.0 over `POST /rpc`; no REST resource layer for application commands/queries.
 - MCP: one in-process tool dispatcher calling the same operations directly; no secondary MCP server, synthetic HTTP, or stdio transport.

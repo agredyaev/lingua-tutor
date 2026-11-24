@@ -1,118 +1,75 @@
 # Local runtime
 
-## One-command workspace
+## Desktop
 
-```text
-chosen directory
-└── .lingua-tutor/
-    ├── lingua.sqlite3
-    └── web/
-```
-
-Run from the directory whose learning state you want to use:
+Run from the directory that owns the learning state:
 
 ```sh
+mkdir -p ~/spanish
 cd ~/spanish
 lingua-tutor run
 ```
 
-The current directory is the workspace identity. Re-running the command from the same directory reuses the same SQLite database.
-
-## Runtime
+On Windows invoke `lingua-tutor.exe`. The runtime creates or reopens:
 
 ```text
-Browser
-  │
-  │ HTTP 127.0.0.1:8787
-  ▼
-lingua-tutor
-  ├─ UI + /rpc + downloads
-  ├─ SQLite: .lingua-tutor/lingua.sqlite3
-  └─ in-process MCP
-          │
-          │ outbound Secure MCP Tunnel
-          ▼
-       OpenAI
-          │
-          ▼
-       ChatGPT
+<workspace>/.lingua-tutor/
+├── lingua.sqlite3
+├── web/
+└── backups/          # created when a backup is written
 ```
 
-There is no public application listener. The UI stays loopback-only.
+The working directory selects the database. Multiple directories have independent learning state. The runtime writes embedded web assets on startup.
 
-The tunnel wire/policy implementation is adapted from Rivet. No `tunnel-client`, cloudflared, LaunchAgent, or second MCP process is required.
+| Command | Behavior |
+|---|---|
+| `run` | Start loopback HTTP; open browser tunnel setup. |
+| `run --port N` | Select the loopback port (default 8787). |
+| `run --no-tunnel` | Start UI and RPC without the MCP tunnel. |
+| `run --terminal-tunnel` | Enter tunnel credentials with terminal echo disabled. |
+| `check` | Validate the existing database and web asset directory. |
+| `backup` | Write a verified SQLite snapshot; print its path. |
+| `where` | Print workspace, state directory and database paths. |
 
-The built-in client implements the base OpenAI tunnel wire contract on `/v1/tunnels/...`: wire version `2026-08-25`, process-stable client instance ID, bounded polling, response deadlines anchored at HTTP response start, bounded retry jitter with `Retry-After` handling, opaque command shard-token echo, and forward-compatible unknown-command dropping. It intentionally does **not** advertise optional `X-Tunnel-Client-Capabilities: wrong-cluster-v1`; routing correction requires additional poll-placement state and response-header handling and must not be claimed until that behavior is implemented end to end. Services therefore use the documented legacy polling behavior for this client.
+## Android
 
-## Tunnel credentials
+Install `lingua-tutor-v<VERSION>-android.apk` from a release containing Android assets. Minimum OS: Android 9 (API 28). Supported ABIs: `arm64-v8a`, `x86_64`. Package ID: `io.linguatutor`.
 
-By default, `lingua-tutor run` starts the local HTTP listener and opens `/setup`. The setup page walks through tunnel registration and restricted runtime key creation. A successful initial poll advances to the dashboard. Tunnel errors leave the local UI available. Browser submission uses a same-origin JSON-RPC POST.
+- Launch **Lingua Tutor**. Android starts the Rust library on a background thread and opens the setup page in WebView.
+- Database: `<app-private files>/.lingua-tutor/lingua.sqlite3`. Updates signed with the same certificate retain it. Uninstalling or clearing app data deletes it, including local backups. Android system backup is disabled.
+- JSON/CSV exports use Android's document picker. Desktop databases are not imported automatically.
+- Android can terminate the app process while it is in the background. Reopen the app and reconnect the tunnel if that occurs. There is no foreground service guaranteeing tunnel availability.
+- A new process uses a new loopback port. WebView storage is origin-scoped; pending browser-only offline review events are not guaranteed to survive a port change. Committed SQLite records are unaffected.
 
-Use `lingua-tutor run --terminal-tunnel` to enter the credentials with terminal echo disabled:
+## Network and credentials
 
-```text
-Tunnel ID:
-Runtime API key:
+```mermaid
+flowchart LR
+    U[Browser or Android WebView] -->|loopback HTTP| R[Rust runtime]
+    R --> D[(SQLite)]
+    R <-->|outbound HTTPS tunnel| O[OpenAI Secure MCP Tunnel]
+    O <-->|MCP| C[ChatGPT]
 ```
 
-Both values exist only in process memory. Lingua Tutor does not persist them in SQLite, files, environment configuration, or command-line arguments.
+Desktop binds `127.0.0.1:8787` by default. Android binds `127.0.0.1` on an OS-assigned port and requires the app's random session cookie on every HTTP request. Both validate the Host and any Origin header. The runtime has no public listener.
 
-## Local-only mode
+The setup page at `/setup` accepts a Tunnel ID and restricted Runtime API key through a same-origin JSON-RPC request. It opens the dashboard after an authorized initial poll. A failed connection leaves the local UI available. Select **Continue locally** to skip the tunnel.
 
-```sh
-lingua-tutor run --no-tunnel
-```
+Credentials remain in process memory; the application does not persist them or pass them in command-line arguments. Desktop terminal mode also accepts them through hidden input.
 
-Then open `http://127.0.0.1:8787`.
+Desktop HTTPS uses system curl: Linux `/usr/bin/curl` or `/bin/curl`, macOS `/usr/bin/curl`, Windows `%SystemRoot%\System32\curl.exe`. Android uses in-process Rustls with WebPKI roots. Neither requires a separate tunnel client.
 
-## Android home-screen shortcut
+The tunnel implements base wire version `2026-08-25`: process-stable instance ID, bounded polling and concurrency, response deadlines, retry backoff with `Retry-After`, shard-token echo and dropping unknown command types. The optional `wrong-cluster-v1` capability is not implemented or advertised.
 
-On an ARM64 tablet, use Termux, Debian via PRoot-Distro, and the Linux ARM64 release archive. Install [Termux:Widget](https://github.com/termux/termux-widget) from the same source as Termux. Run `termux-setup-storage` and grant access to Downloads. Extract the executable to `~/lingua/lingua-tutor` and `termux-launcher.sh` to Downloads, then set up the shortcut once in Termux.
+## Backup and update
 
-```sh
-pkg install proot-distro
-proot-distro install debian
-proot-distro login debian -- sh -c 'apt-get update && apt-get install -y curl ca-certificates'
-install -Dm700 ~/storage/downloads/termux-launcher.sh ~/.shortcuts/Lingua\ Tutor
-```
+On startup with an existing database, the runtime creates a SQLite online backup if no backup was written in the previous 24 hours. It checks integrity and foreign keys before retaining the copy. When writing a backup, it removes matching backup files older than 90 days.
 
-Reuse the existing Debian installation if you already have one. On Android 10 or later, allow Termux to appear over other apps in Android settings so the widget can open its foreground session. Add **Termux:Widget** to the home screen and select **Lingua Tutor**. Tapping the shortcut starts the local server and opens the setup page. Later taps reopen the running session.
+Desktop: run `lingua-tutor backup` before replacing the executable. Android: use the export page to save JSON/CSV outside app-private storage before uninstalling. Exports are not full SQLite backups.
 
-## WASI Preview 3
+## Build from source
 
-The `lingua-tutor-v<version>-wasi-p3.wasm` release asset is a single component with the web UI and SQLite built in. Use a WASI 0.3 host with networking and filesystem access. The build is verified with Wasmtime 51.0.0.
-
-Run from the directory where you want to keep the SQLite database. Replace `VERSION` with the release version and use the path to the downloaded component.
-
-```sh
-wasmtime run -S p3=y -S inherit-network=y -S allow-ip-name-lookup=y \
-  --dir "$PWD::." /path/to/lingua-tutor-vVERSION-wasi-p3.wasm run
-```
-
-Open `http://127.0.0.1:8787/setup` in your browser. Wasmtime exposes the local listener and lets the component dial OpenAI over HTTPS. Lingua Tutor writes its data under `.lingua-tutor/` in the directory passed to `--dir`. A tap-to-launch WASI installation on Android requires an Android app that hosts the component.
-
-To build from source, install [WASI SDK 34](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-34), build the web bundle as shown below, and then build the component.
-
-```sh
-rustup toolchain install 1.100.0 --target wasm32-wasip3
-WASI_SDK_PATH=/path/to/wasi-sdk scripts/build-wasi.sh
-```
-
-The script writes the component to `dist-wasi/`. Run it with `test` and Wasmtime on `PATH` to check browser tunnel connection and retry against a local test peer.
-
-## Maintenance
-
-```sh
-lingua-tutor check
-lingua-tutor backup
-lingua-tutor where
-```
-
-Backups are written next to the active project database under the project state directory and validated by SQLite integrity/foreign-key checks.
-
-## Install/update
-
-Prebuilt release archives are the simplest installation path. For a source install, prepare the web bundle before the native release build:
+The CI Rust toolchain is 1.98.1. Build the frontend before any release-profile native build:
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -121,4 +78,33 @@ cargo install trunk --version 0.21.14 --locked
 cargo install --path apps/local --bin lingua-tutor --locked
 ```
 
-The release-profile build rejects a missing or incomplete generated web bundle instead of producing a native binary with a broken UI. No installer script or service wrapper is required.
+Release builds reject missing or incomplete generated web assets. Browser WebAssembly is the UI only; SQLite and scheduling run in native Rust.
+
+### Android build
+
+Requirements: JDK 17 or later, Android SDK platform 35, build-tools 35.0.0, NDK 28.2.13676358, and the generated frontend above.
+
+```sh
+rustup target add aarch64-linux-android x86_64-linux-android
+```
+
+Set the following environment variables: `ANDROID_HOME`, `ANDROID_NDK_HOME`, `ANDROID_SIGNING_KEYSTORE`, `ANDROID_SIGNING_ALIAS`, `ANDROID_SIGNING_STORE_PASSWORD`, `ANDROID_SIGNING_KEY_PASSWORD`. Do not commit secret values.
+
+```sh
+bash scripts/build-android.sh
+```
+
+Output: `dist-android/lingua-tutor-v<VERSION>-android.apk`. The script builds both native libraries, compiles the Java activity and resources, aligns the package, signs it and verifies its signature and contents.
+
+### Release signing
+
+Run `bash scripts/setup-android-signing.sh` once with an authenticated GitHub CLI to configure the repository secrets:
+
+| Secret | Value |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | Base64-encoded private signing keystore |
+| `ANDROID_KEY_ALIAS` | Signing key alias |
+| `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
+| `ANDROID_KEY_PASSWORD` | Key password |
+
+Keep an offline backup of the signing key and password. CI test APKs use an ephemeral signing certificate and are not upgrade-compatible with release APKs. Only release-signed APKs are intended for persistent installations.

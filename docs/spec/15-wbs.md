@@ -2,9 +2,9 @@
 
 ## 1. Runtime foundation
 
-- Self-contained native `lingua-tutor` binary.
+- Desktop `lingua-tutor` executable and Android APK containing the Rust library.
 - Leptos PWA served on loopback.
-- One project-local SQLite database.
+- One SQLite database per desktop workspace or Android installation.
 - Browser RPC and in-process MCP share processing/persistence.
 - CI covers native runtime, web UI, migrations and end-to-end paths.
 
@@ -18,8 +18,8 @@
 
 ## 3. Local operations
 
-- release binary or direct Cargo installation;
-- current directory selects persistent `.lingua-tutor/` state;
+- desktop release binary or Cargo installation; Android signed APK;
+- current directory selects desktop state; Android uses app-private files;
 - verified SQLite backup with bounded retention;
 - health/integrity checks;
 - no remote application deployment layer.
@@ -32,4 +32,4 @@
 
 ## 5. Exit gate
 
-Cutover is complete only when formatting/lint/tests/web build/local smoke/MCP smoke pass, scratch SQLite initializes with FK/integrity checks, browser and MCP use the same database, and architecture gates reject target-language executable behavior or extra object/service layers.
+Release requires the checks in [11-infrastructure.md](11-infrastructure.md) and [12-testing.md](12-testing.md) to pass. Live authorized MCP and physical-device acceptance require separate execution evidence.

@@ -1,34 +1,24 @@
-# 11 — Local Runtime, CI, Backup, Operations
+# 11 — Runtime, CI and Release
 
-## Runtime layout
+## Runtime
 
-- `lingua-tutor run`: materializes embedded UI assets, opens or creates `.lingua-tutor/lingua.sqlite3`, serves loopback static assets + `POST /rpc` + export downloads, and connects the in-process MCP service to OpenAI Secure MCP Tunnel.
-- The current working directory identifies the workspace.
-- Repeated runs in the same directory reuse the same SQLite database.
-- Tunnel ID and Runtime API key are supplied through local browser setup by default and are never persisted.
-- `lingua-tutor run --terminal-tunnel`: prompt for tunnel credentials with hidden terminal input.
-- `lingua-tutor run --no-tunnel`: browser UI/RPC only.
-- Tunnel mode uses the OS-provided curl executable. macOS uses `/usr/bin/curl`, Linux accepts `/usr/bin/curl` or `/bin/curl`, and Windows uses `%SystemRoot%\\System32\\curl.exe`. Hidden credential input uses the controlling TTY plus `stty` on Unix and Windows PowerShell on Windows.
-- Runtime-owned migrations live under `apps/local/migrations/`.
+See [Local runtime](../local-runtime.md) for commands, supported platforms, state paths, transport, backups and Android signing. `apps/local` owns the database and migrations. `apps/android` only owns Android startup and WebView integration.
 
-## CI gate
+## CI and release
 
-1. `cargo fmt --check`
-2. strict workspace clippy
-3. workspace tests
-4. web build + WASM size budget
-5. cargo-deny
-6. native macOS/Linux build and smoke
-7. Linux x64/aarch64 cross-build verification
-8. Playwright e2e
-9. staged release assets + SHA256 verification
+| Workflow | Checks |
+|---|---|
+| `ci.yml` | Version consistency, format, strict Clippy, workspace tests, Cargo Deny, generated-output exclusion, Windows checks, Android APK build and emulator startup/restart checks. |
+| `e2e.yml` | Build frontend and native server; run Playwright in Chromium. |
+| `fuzz.yml` | Locked fuzz compilation, fuzz targets and minimum 86% executable-line coverage per included Rust file. |
+| `release-please.yml` | Run after successful main CI; create versioned release and invoke asset build. |
+| `release.yml` | Resolve tag and successful CI; build web bundle, Linux x64/ARM64, macOS ARM64, Windows x64 and Android for supported tags; run performance/packaging checks; verify SHA256 and publish asset set. |
+| `android.yml` | Install SDK/NDK, build ARM64/x86-64 libraries, package and verify APK; launch test APK in Android emulator; sign release APK with repository secrets. |
 
-## Installation
+Release artifacts are uploaded only after the required platform jobs succeed. A created release may have no binary assets until publication completes. CI test APKs use an ephemeral certificate, not the release key.
 
-Use a verified release binary, or for a source install build `apps/web` with Trunk before running `cargo install --path apps/local --bin lingua-tutor --locked`. Release-profile native builds reject a missing/incomplete generated web bundle. No service manager, installer wrapper, or separate tunnel executable is required.
+The release workflow checks CI for the exact tag commit. Do not treat a successful build of another commit as release evidence.
 
-## Backup and health
+## Health
 
-`lingua-tutor backup` uses SQLite online backup. `lingua-tutor check` validates the project database.
-
-Runtime health is the `health` JSON-RPC operation. It reports runtime/schema health without private learning content or secrets.
+The `health` JSON-RPC operation reports runtime/schema health without learning content or tunnel credentials. Desktop `lingua-tutor check` checks the project database. Backup and restore tests use the SQLite backup API and integrity/foreign-key validation.

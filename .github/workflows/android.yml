@@ -1,0 +1,128 @@
+name: Android APK
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      release_web_assets:
+        type: boolean
+        default: false
+      release_signed:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-linux-android,x86_64-linux-android,wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: android
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: ${{ inputs.release_web_assets }}
+        with:
+          name: release-web-assets
+          path: apps/web/dist
+      - uses: taiki-e/install-action@c509219cf42fba86913069efd0ade2458c59337b # v2
+        if: ${{ !inputs.release_web_assets }}
+        with:
+          tool: trunk@0.21.14
+      - name: Build embedded web assets
+        if: ${{ !inputs.release_web_assets }}
+        working-directory: apps/web
+        run: trunk build --release --cargo-profile wasm-release
+
+      - name: Set up Android SDK command-line tools
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+
+      - name: Install Android SDK and NDK
+        run: |
+          set -euo pipefail
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "ndk;28.2.13676358"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Build and sign test APK
+        if: ${{ !inputs.release_signed }}
+        run: |
+          set -euo pipefail
+          export ANDROID_TEST_BUILD=1
+          export ANDROID_SIGNING_KEYSTORE="$RUNNER_TEMP/android-ci.p12"
+          export ANDROID_SIGNING_ALIAS=android-ci
+          export ANDROID_SIGNING_STORE_PASSWORD=android-ci-test-only
+          export ANDROID_SIGNING_KEY_PASSWORD="$ANDROID_SIGNING_STORE_PASSWORD"
+          keytool -genkeypair -keystore "$ANDROID_SIGNING_KEYSTORE" -storetype PKCS12 \
+            -storepass "$ANDROID_SIGNING_STORE_PASSWORD" -alias "$ANDROID_SIGNING_ALIAS" \
+            -keyalg RSA -keysize 2048 -validity 365 -dname 'CN=Lingua Tutor CI test'
+          bash scripts/build-android.sh
+
+      - name: Build and sign release APK
+        if: ${{ inputs.release_signed }}
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_SIGNING_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${KEYSTORE_BASE64:?Configure the persistent Android release signing key}"
+          export ANDROID_SIGNING_KEYSTORE="$RUNNER_TEMP/android-release.keystore"
+          umask 077
+          trap 'rm -f "$ANDROID_SIGNING_KEYSTORE"' EXIT
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$ANDROID_SIGNING_KEYSTORE"
+          unset KEYSTORE_BASE64
+          bash scripts/build-android.sh
+
+      - name: Launch APK and verify persistent SQLite
+        if: ${{ !inputs.release_signed }}
+        run: |
+          set -euo pipefail
+          sudo chmod a+rw /dev/kvm
+          sdkmanager "emulator" "platform-tools" "system-images;android-35;google_apis;x86_64"
+          echo no | avdmanager create avd --force --name lingua-ci --package "system-images;android-35;google_apis;x86_64"
+          "$ANDROID_HOME/emulator/emulator" -avd lingua-ci -no-window -no-audio -no-boot-anim \
+            -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
+          timeout 180 adb wait-for-device
+          timeout 180 bash -c 'until [[ "$(adb shell getprop sys.boot_completed | tr -d "\r")" == 1 ]]; do sleep 2; done'
+          adb shell input keyevent 82
+          adb install dist-android/*.apk
+          launch_and_check() {
+            adb shell am start -W -n io.linguatutor/.MainActivity
+            for i in $(seq 1 30); do
+              adb shell uiautomator dump /sdcard/lingua-ui.xml >/dev/null 2>&1 || true
+              if adb shell cat /sdcard/lingua-ui.xml | grep -Fq 'Connect your OpenAI tunnel'; then
+                adb shell run-as io.linguatutor test -s files/.lingua-tutor/lingua.sqlite3
+                return 0
+              fi
+              sleep 2
+            done
+            adb logcat -d -s LinguaTutor AndroidRuntime chromium
+            return 1
+          }
+          launch_and_check
+          adb shell am force-stop io.linguatutor
+          adb shell run-as io.linguatutor test -s files/.lingua-tutor/lingua.sqlite3
+          launch_and_check
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-apk
+          path: dist-android/*.apk
+          if-no-files-found: error

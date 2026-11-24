@@ -1,7 +1,7 @@
 //! OpenAI Secure MCP Tunnel protocol adapted from Rivet.
 //!
 //! Wire parsing, backoff, and terminal-response semantics come from Rivet.
-//! HTTPS uses system curl on native targets and Rustls on WASI.
+//! HTTPS uses system curl on desktop targets and Rustls on Android.
 //! Native curl receives sensitive headers and response payloads through stdin.
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
 };
 use serde::Serialize;
 use serde_json::{Value, value::RawValue};
-#[cfg(not(target_os = "wasi"))]
+#[cfg(not(target_os = "android"))]
 use std::{
     io::Write,
     path::PathBuf,
@@ -27,8 +27,8 @@ use std::{
 };
 use tokio::{task::JoinSet, time::sleep};
 
-#[cfg(target_os = "wasi")]
-mod wasi;
+#[cfg(target_os = "android")]
+mod android;
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com";
 const SERVER_INFO: &str =
@@ -37,7 +37,7 @@ const WIRE_VERSION: &str = "2026-08-25";
 const POLL_TIMEOUT_MS: u64 = 15_000;
 const MAX_POLL_BODY_BYTES: usize = 10 * 1024 * 1024;
 const MAX_IN_FLIGHT: usize = 16;
-#[cfg(not(target_os = "wasi"))]
+#[cfg(not(target_os = "android"))]
 const CURL_META_MARKER: &str = "__LINGUA_TUNNEL_HTTP_META__:";
 type Ready = Option<Box<dyn FnOnce() + Send>>;
 
@@ -136,7 +136,7 @@ struct Client {
     config: TunnelConfig,
     endpoint: String,
     instance_id: String,
-    #[cfg(not(target_os = "wasi"))]
+    #[cfg(not(target_os = "android"))]
     curl_path: PathBuf,
     // FUZZ SUPPORT BEGIN
     #[cfg(fuzzing)]
@@ -152,7 +152,7 @@ impl Client {
             .scripted_peer
             .map(|seed| (seed, std::sync::atomic::AtomicUsize::new(0)));
         // FUZZ SUPPORT END
-        #[cfg(not(target_os = "wasi"))]
+        #[cfg(not(target_os = "android"))]
         let curl_path = system_curl_path()?;
         let endpoint = format!(
             "{}/v1/tunnels/{}",
@@ -163,7 +163,7 @@ impl Client {
             config,
             endpoint,
             instance_id: new_instance_id(),
-            #[cfg(not(target_os = "wasi"))]
+            #[cfg(not(target_os = "android"))]
             curl_path,
             // FUZZ SUPPORT BEGIN
             #[cfg(fuzzing)]
@@ -416,15 +416,15 @@ impl Client {
             body,
             timeout,
         };
-        #[cfg(not(target_os = "wasi"))]
+        #[cfg(not(target_os = "android"))]
         {
             let curl_path = self.curl_path.clone();
             tokio::task::spawn_blocking(move || curl_request(request, curl_path))
                 .await
                 .map_err(|error| format!("curl task failed: {error}"))?
         }
-        #[cfg(target_os = "wasi")]
-        wasi::request(request).await
+        #[cfg(target_os = "android")]
+        android::request(request).await
     }
 }
 
@@ -577,7 +577,7 @@ fn request_headers(
     .chain(has_body.then(|| ("Content-Type", "application/json".to_owned())))
 }
 
-#[cfg(not(target_os = "wasi"))]
+#[cfg(not(target_os = "android"))]
 fn build_curl_config(
     method: &str,
     url: &str,
@@ -626,7 +626,7 @@ fn require_system_curl(path: PathBuf) -> Result<PathBuf, String> {
     }
 }
 
-#[cfg(not(target_os = "wasi"))]
+#[cfg(not(target_os = "android"))]
 fn system_curl_path() -> Result<PathBuf, String> {
     #[cfg(windows)]
     {
@@ -656,7 +656,7 @@ fn system_curl_path() -> Result<PathBuf, String> {
     Err("system curl resolution is unsupported on this platform".to_owned())
 }
 
-#[cfg(not(target_os = "wasi"))]
+#[cfg(not(target_os = "android"))]
 fn curl_request(input: TunnelRequest, curl_path: PathBuf) -> Result<HttpResponse, String> {
     let config = build_curl_config(
         input.method,
@@ -695,7 +695,7 @@ fn curl_request(input: TunnelRequest, curl_path: PathBuf) -> Result<HttpResponse
     parse_curl_output(&output.stdout, CURL_META_MARKER, request_started)
 }
 
-#[cfg(not(target_os = "wasi"))]
+#[cfg(not(target_os = "android"))]
 fn parse_curl_output(
     output: &[u8],
     marker: &str,
@@ -746,7 +746,7 @@ fn parse_curl_output(
     })
 }
 
-#[cfg(not(target_os = "wasi"))]
+#[cfg(not(target_os = "android"))]
 fn curl_quote(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len() + 2);
     quoted.push('"');
@@ -764,7 +764,7 @@ fn curl_quote(value: &str) -> String {
     quoted
 }
 
-#[cfg(not(target_os = "wasi"))]
+#[cfg(not(target_os = "android"))]
 fn find_last(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
@@ -838,7 +838,7 @@ fn signal_ready(ready: &mut Ready) {
     }
 }
 
-#[cfg(all(test, not(target_os = "wasi")))]
+#[cfg(all(test, not(target_os = "android")))]
 // Test fixtures intentionally fail fast and use compact tuple snapshots.
 #[allow(clippy::unwrap_used, clippy::type_complexity)]
 mod tests {

@@ -1,6 +1,6 @@
 # 16 — Rust Guidelines (Binding)
 
-Scope: coding rules for all crates. Distilled from rust-anti-pattern, rust-error-advanced, rust-testing, rust-database, rust-performance skills + project constraints. Enforced by clippy config + code review. Zero tolerance for overengineering.
+Scope: coding rules for all crates. Distilled from rust-anti-pattern, rust-error-advanced, rust-testing, rust-database, rust-performance skills + project constraints. Enforced by clippy config + code review. Use explicit data ownership and processing passes; introduce abstractions only for a concrete requirement.
 Depends on: [02-workspace.md](02-workspace.md), [12-testing.md](12-testing.md).
 
 ## 1. Anti-overengineering rules
@@ -12,11 +12,11 @@ Depends on: [02-workspace.md](02-workspace.md), [12-testing.md](12-testing.md).
 | Enum over trait object | Closed set of behaviors → `enum` + `match`, not `Box<dyn Trait>`. |
 | No builder pattern for ≤ 4 fields | Struct literal or `new()`. |
 | No generics for one concrete type | Monomorphic function first; generic only on second caller with different type. |
-| No premature optimization | Measure first ([12-testing.md](12-testing.md) §8 targets). Exception: due-card index — spec-mandated. |
+| No premature optimization | Measure first ([12-testing.md](12-testing.md) §7). Exception: due-card index — spec-mandated. |
 | No speculative config | Hardcode defaults from spec; config knob only when spec names it a setting. |
 | Function ≤ 50 lines | Longer → split responsibilities. |
 | No `pub` field with invariant | Private + constructor validation. Plain data DTOs in `shared-schema` may stay `pub`. |
-| Delete, don't deprecate | Single-user app, no compatibility aliases ([00-overview.md](00-overview.md) §5). |
+| Delete, don't deprecate | Single-user app, no compatibility aliases ([00-overview.md](00-overview.md)). |
 
 ## 2. Error handling
 
@@ -43,25 +43,25 @@ Rules:
 - Prefer sequential passes over contiguous columns. Use explicit `u32` indices where identity/relationships matter; avoid intermediate `collect()` when a pass can consume borrowed data directly.
 - External/persisted IDs may remain typed strings at protocol/SQLite boundaries; internal retained relationships and processing stores use validated dense `u32` indices.
 - Closed sets = enums, never stringly-typed. Strings only at serde/DB boundary, converted once.
-- `std::sync::OnceLock` over `lazy_static!`. No `unsafe` anywhere in this workspace; a need for `unsafe` = design error.
+- `std::sync::OnceLock` over `lazy_static!`. Workspace crates forbid unsafe code. The Android JNI crate permits only the two required `#[unsafe(no_mangle)]` exports; no unsafe blocks.
 
 ## 4. Database (SQLite boundary)
 
 - No generic repository/service layer. Single-consumer SQL stays with its owning read/write pass. Only scalar codecs, timestamp conversion, and SQL with multiple independent consumers belong in `apps/local/src/sqlite.rs`.
 - Transaction boundary = domain invariant: review event + schedule state one batch; lesson completion one batch ([01-architecture.md](01-architecture.md) §4). Short transactions; no network calls inside.
 - No N+1: queue fetch joins card + schedule state in one query.
-- Additive migrations preferred; destructive → backup first + phased ([04-database.md](04-database.md) §4, [11-infrastructure.md](11-infrastructure.md) §5).
+- Additive migrations preferred; destructive → backup first + phased ([04-database.md](04-database.md) §4, [11-infrastructure.md](11-infrastructure.md)).
 - Timestamp/closed-value conversion is centralized in `sqlite.rs`; processing passes do not invent alternate DB spellings.
 
 ## 5. Performance
 
 Order of leverage: algorithm > data structure > allocations > micro. Work down, never up.
 
-- Profile before optimizing; optimize only measured hot paths against [12-testing.md](12-testing.md) §8 targets. Complex code for < 20% gain rejected — readability wins.
+- Profile before optimizing; optimize only measured hot paths against [12-testing.md](12-testing.md) §7. Complex code for < 20% gain rejected — readability wins.
 - Pre-allocate known sizes: `Vec::with_capacity` for queue batches, export buffers.
 - Batch SQLite writes in one transaction; do not add per-row query loops when a set operation works.
 - No string concatenation in loops; build with capacity or `format!` once.
-- Small fixed sets: `Vec` + linear search or enum-indexed array, not `HashMap` — hash overhead exceeds scan for card grades, evidence kinds, pack lookups.
+- Small fixed sets: `Vec` + linear search or enum-indexed array, not `HashMap` — hash overhead exceeds scan for card grades and evidence kinds.
 - Not applicable here, do not import: rayon/thread pools, false-sharing padding, NUMA, jemalloc, object pools — the one-user local runtime does not justify server-class machinery. Their appearance in a PR = overengineering flag.
 - WASM size is the binding perf budget ([09-frontend.md](09-frontend.md) §9); dependency weight reviewed before any `cargo add` to `apps/web`.
 
@@ -70,8 +70,8 @@ Order of leverage: algorithm > data structure > allocations > micro. Work down, 
 - Unit tests: logic. Integration tests: wire/storage contracts against scratch SQLite. Property tests: invariants (scheduler intervals).
 - Deterministic: no sleeps, no wall-clock — inject `Timestamp`; fixed seeds. Flaky test = bug, fix root cause.
 - No over-mocking: SQLite-backed passes are tested against real scratch SQLite, not mocked SQL.
-- Both paths: every feature tests success + failure ([00-overview.md](00-overview.md) §6).
-- Slow suites (Playwright, migration tests) out of default `cargo test` path; separate CI jobs.
+- Both paths: every feature tests success + failure ([12-testing.md](12-testing.md)).
+- Playwright and fuzzing run in separate CI jobs. SQLite migration tests run with workspace tests.
 
 ## 7. Clippy enforcement
 
@@ -85,7 +85,7 @@ panic = "warn"
 cognitive_complexity = "warn"
 ```
 
-CI: `cargo clippy --workspace --all-targets --all-features -- -D warnings` (gate 2, [11-infrastructure.md](11-infrastructure.md) §3). `#[allow]` requires a one-line justification comment.
+CI: `cargo clippy --workspace --all-targets --all-features -- -D warnings` (gate 2, [11-infrastructure.md](11-infrastructure.md)). `#[allow]` requires a one-line justification comment.
 
 ## 8. Review checklist (PR)
 
@@ -96,4 +96,4 @@ CI: `cargo clippy --workspace --all-targets --all-features -- -D warnings` (gate
 - [ ] Success + failure tested; deterministic
 - [ ] Function ≤ 50 lines; no `pub` invariant fields
 - [ ] No unprofiled optimization; no server-class perf machinery (threads/pools/padding); SQLite writes transactional
-- [ ] Core stays language-neutral ([12-testing.md](12-testing.md) §10)
+- [ ] Core stays language-neutral ([12-testing.md](12-testing.md) §4)
