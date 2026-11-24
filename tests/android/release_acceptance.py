@@ -156,7 +156,17 @@ def launch():
     result = shell("am", "start", "-W", "-n", PACKAGE + "/.MainActivity").decode()
     if "Status: ok" not in result:
         raise AssertionError(result)
-    node, _ = find("Connect your OpenAI tunnel", "Choose a language to begin", "Due for review")
+    node, _ = find("Connect your OpenAI tunnel", "Choose a language to begin",
+                   "Due for review", "Pixel Launcher isn't responding", timeout=120)
+    if matches(node, ("Pixel Launcher isn't responding",)):
+        # Explicitly distinguish an unrelated system launcher ANR from an app ANR.
+        snapshot("pixel-launcher-anr")
+        tap("Close app", clickable=True)
+        result = shell("am", "start", "-W", "-n", PACKAGE + "/.MainActivity").decode()
+        if "Status: ok" not in result:
+            raise AssertionError(result)
+        node, _ = find("Connect your OpenAI tunnel", "Choose a language to begin",
+                       "Due for review", timeout=120)
     if matches(node, ("Connect your OpenAI tunnel",)):
         tap("Continue locally", scroll=True, clickable=True)
         find("Choose a language to begin", "Due for review")
@@ -213,80 +223,6 @@ def empty_state_checks(prefix):
     print(f"PASS: {prefix} review, library, progress and history return empty learner data", flush=True)
 
 
-def lesson_cycle(profile_id):
-    # The import page is reachable from Home in releases after v0.1.10.
-    payload = {
-        "schema_version": "2",
-        "client_operation_id": "android-acceptance-lesson-1",
-        "language_profile_id": profile_id,
-        "lesson": {"scenario": "restaurant", "duration_seconds": 720,
-                   "next_goal": "ask for the bill"},
-        "new_learning_items": [{"client_item_key": "bill", "item_type": "phrase",
-                                "target_text": "La cuenta, por favor."}],
-        "evidence": [
-            {"client_item_key": "bill", "kind": "recognition", "success": True,
-             "assistance_level": 0, "response_millis": 900, "probe_phase": "diagnostic",
-             "context": "restaurant:bill-1"},
-            {"client_item_key": "bill", "kind": "recognition", "success": True,
-             "assistance_level": 0, "response_millis": 1100, "probe_phase": "diagnostic",
-             "context": "restaurant:bill-2"},
-        ],
-        "card_mutations": [{"operation": "create", "client_operation_id": "android-acceptance-card-1",
-                            "card": {"intent": "production", "prompt": "Ask for the bill",
-                                     "answer": "La cuenta, por favor.", "prompt_language": "en",
-                                     "creation_reason": "Android release acceptance"}}],
-    }
-    navigate("Home")
-    tap("Next lesson", "Open next lesson", clickable=True)
-    tap("Import the result", scroll=True, clickable=True)
-    find("Import lesson result")
-    tap("import-paste", "Lesson-result JSON", field_label="Lesson-result JSON", scroll=True)
-    text = json.dumps(payload, separators=(",", ":"))
-    adb("shell", "input text " + shlex.quote(text.replace(" ", "%s")), timeout=120)
-    hide_keyboard()
-    tap("Validate result", scroll=True, clickable=True)
-    find("Validated preview", scroll=True)
-    find("restaurant", scroll=True)
-    snapshot("lesson-preview")
-    tap("Apply to learner state", scroll=True, clickable=True)
-    find("Applied", scroll=True)
-    snapshot("lesson-applied")
-    navigate("Review")
-    find("1 / 1")
-    find("Ask for the bill")
-    tap("Reveal (space) — say it out loud first", scroll=True)
-    find("La cuenta, por favor.")
-    tap("3 Good", scroll=True)
-    find("Session done — reviewed 1 cards.")
-    tap("Undo last grade", scroll=True)
-    find("1 / 1")
-    tap("Reveal (space) — say it out loud first", scroll=True)
-    tap("4 Easy", scroll=True)
-    find("Session done — reviewed 1 cards.")
-    snapshot("review-complete")
-    navigate("Library")
-    tap("Ask for the bill", scroll=True)
-    find("La cuenta, por favor.")
-    tap("Suspend", scroll=True)
-    find("suspended", scroll=True)
-    tap("Restore", scroll=True)
-    find("review", scroll=True)
-    snapshot("card-restored")
-    navigate("History")
-    find("restaurant")
-    snapshot("lesson-history")
-    shell("am", "force-stop", PACKAGE)
-    launch()
-    navigate("Languages")
-    select_profile("es-ES", "en")
-    navigate("Library")
-    find("Ask for the bill")
-    navigate("History")
-    find("restaurant")
-    snapshot("lesson-persisted")
-    print("PASS: import, validate, apply, review, undo, suspend, restore and persisted lesson/card", flush=True)
-
-
 def main(tag):
     shell("logcat", "-c")
     try:
@@ -336,7 +272,7 @@ def main(tag):
 
         # v0.1.10 has no navigable export entry in its WebView.
         if tag == "v0.1.10":
-            print("BLOCKED: v0.1.10 has no UI route to lesson import or export", flush=True)
+            print("BLOCKED: v0.1.10 has no UI route to export; live MCP lesson not exercised", flush=True)
         else:
             import csv
             import io
@@ -349,13 +285,14 @@ def main(tag):
             assert rows[0] == ["id", "intent", "status", "prompt", "answer",
                                "accepted_answers", "creation_reason"]
             print("PASS: JSON and CSV saved via Android document picker", flush=True)
-            lesson_cycle(data["language_profile_id"])
+            print("BLOCKED: live MCP lesson requires a connected test learner", flush=True)
 
         crashes = read_adb("logcat", "-b", "crash", "-d").decode(errors="replace")
         (EVIDENCE / "crash-logcat.txt").write_text(crashes)
         if PACKAGE in crashes:
             raise AssertionError(crashes)
         print("PASS: no application crash in Logcat")
+        print("SCOPE: local release acceptance only; live MCP lesson and physical ARM64 NOT VERIFIED")
     finally:
         # Capture independently; a diagnostic failure must not mask the test failure.
         for name, args in (

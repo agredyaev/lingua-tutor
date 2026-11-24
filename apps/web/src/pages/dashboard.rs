@@ -96,13 +96,13 @@ fn DashboardView(d: DashboardDto) -> impl IntoView {
                     <span class="metric-value">{d.active_error_targets}</span>
                     <span class="metric-label">"Current focus areas"</span>
                 </div>
-                <a class="metric-card metric-card-wide metric-card-action" href="/learn" aria-label="Open next lesson">
+                <div class="metric-card metric-card-wide">
                     <span class="metric-value">{format!("#{}", d.next_lesson_number)}</span>
                     <span class="metric-label">"Next lesson"</span>
                     {d.next_lesson_goal
                         .as_ref()
                         .map(|goal| view! { <span class="metric-detail">{goal.clone()}</span> })}
-                </a>
+                </div>
             </div>
 
             {(!d.open_recommendations.is_empty())

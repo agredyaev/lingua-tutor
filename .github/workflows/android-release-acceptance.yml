@@ -73,12 +73,16 @@ jobs:
           sed -i '/^hw.lcd.\(width\|height\|density\)=/d' "$config"
           printf '\nhw.lcd.width=1080\nhw.lcd.height=1920\nhw.lcd.density=180\n' >> "$config"
           "$ANDROID_HOME/emulator/emulator" -avd lingua-acceptance -no-window -no-audio -no-boot-anim \
-            -no-snapshot -gpu swiftshader -no-metrics -memory 3072 -cores 2 > "$RUNNER_TEMP/emulator.log" 2>&1 &
+            -no-snapshot -gpu swiftshader -no-metrics -memory 4096 -cores 4 > "$RUNNER_TEMP/emulator.log" 2>&1 &
           emulator_pid=$!
           trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
           timeout 180 adb wait-for-device
           timeout 180 bash -c 'until [[ "$(adb shell getprop sys.boot_completed | tr -d "\r")" == 1 ]]; do sleep 2; done'
+          timeout 120 bash -c 'until adb shell pm path com.google.android.webview | grep -q package:; do sleep 3; done'
           adb shell input keyevent 82
+          adb shell settings put system screen_off_timeout 1800000
+          adb shell svc power stayon true
+          sleep 15
           adb shell settings put global window_animation_scale 0
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0
