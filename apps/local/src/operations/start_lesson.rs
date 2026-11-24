@@ -577,6 +577,15 @@ mod tests {
         let (path, env) = create_env("persisted-recheck-cap");
         {
             let db = env.connection().unwrap();
+            // Keep the distributed task observations inside the rolling signal window.
+            db.execute(
+                "UPDATE lessons
+                 SET started_at=strftime('%Y-%m-%dT%H:%M:%SZ','now','-4 days','-20 minutes'),
+                     completed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now','-4 days')
+                 WHERE id='done-1'",
+                [],
+            )
+            .unwrap();
             db.execute(
                 "UPDATE lesson_metrics
                  SET task_attempt_count=2,task_success_count=0,
@@ -591,19 +600,19 @@ mod tests {
                   source,started_at,completed_at,duration_seconds,created_at,updated_at)
                  VALUES
                  ('done-cap-2','llp-1',3,'completed','transport','ask route','pwa',
-                  '2026-10-16T10:00:00Z','2026-10-16T10:20:00Z',1200,
-                  '2026-10-16T10:00:00Z','2026-10-16T10:20:00Z'),
+                  strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days'),1200,
+                  strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days')),
                  ('done-cap-3','llp-1',2,'completed','cafe','order drink','pwa',
-                  '2026-10-17T10:00:00Z','2026-10-17T10:20:00Z',1200,
-                  '2026-10-17T10:00:00Z','2026-10-17T10:20:00Z');
+                  strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days'),1200,
+                  strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days'));
                  INSERT INTO lesson_metrics
                  (lesson_id,speaking_seconds,unaided_recall_count,aided_recall_count,
                   listening_score,avg_answer_millis,long_pause_count,confidence,created_at,
                   task_attempt_count,task_success_count,task_success_rubric)
                  VALUES
-                 ('done-cap-2',0,0,0,NULL,NULL,0,NULL,'2026-10-16T10:20:00Z',
+                 ('done-cap-2',0,0,0,NULL,NULL,0,NULL,strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days'),
                   2,0,'goal_completed_independently_v2'),
-                 ('done-cap-3',0,0,0,NULL,NULL,0,NULL,'2026-10-17T10:20:00Z',
+                 ('done-cap-3',0,0,0,NULL,NULL,0,NULL,strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days'),
                   1,0,'goal_completed_independently_v2');",
             )
             .unwrap();
@@ -687,6 +696,7 @@ mod tests {
         let (path, env) = create_env("prompt-gap-no-expansion");
         {
             let db = env.connection().unwrap();
+            // Evidence must remain fresh while retaining independent daily episodes.
             db.execute_batch(
                 r#"
                 INSERT INTO lessons
@@ -694,35 +704,35 @@ mod tests {
                      source,started_at,completed_at,duration_seconds,created_at,updated_at)
                 VALUES
                     ('done-2','llp-1',5,'completed','shop','goal','pwa',
-                     '2026-11-04T10:00:00Z','2026-11-04T10:20:00Z',1200,
-                     '2026-11-04T10:00:00Z','2026-11-04T10:20:00Z'),
+                     strftime('%Y-%m-%dT%H:%M:%SZ','now','-4 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-4 days'),1200,
+                     strftime('%Y-%m-%dT%H:%M:%SZ','now','-4 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-4 days')),
                     ('done-3','llp-1',6,'completed','street','goal','pwa',
-                     '2026-11-05T10:00:00Z','2026-11-05T10:20:00Z',1200,
-                     '2026-11-05T10:00:00Z','2026-11-05T10:20:00Z'),
+                     strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days'),1200,
+                     strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days')),
                     ('done-4','llp-1',7,'completed','cafe','goal','pwa',
-                     '2026-11-06T10:00:00Z','2026-11-06T10:20:00Z',1200,
-                     '2026-11-06T10:00:00Z','2026-11-06T10:20:00Z');
+                     strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days'),1200,
+                     strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days'));
                 INSERT INTO learning_item_evidence
                     (id,learning_item_id,lesson_id,kind,success,detail,metadata_json,recorded_at)
                 VALUES
                     ('ev-p2','li-1','done-2','prompted_production',1,NULL,
                      '{"assistance_level":1,"probe_phase":"diagnostic","context_key":"shop:b"}',
-                     '2026-11-04T10:10:00Z'),
+                     strftime('%Y-%m-%dT%H:%M:%SZ','now','-4 days','-10 minutes')),
                     ('ev-s2','li-1','done-2','spontaneous_production',0,NULL,
                      '{"assistance_level":0,"probe_phase":"diagnostic","context_key":"shop:c"}',
-                     '2026-11-04T10:15:00Z'),
+                     strftime('%Y-%m-%dT%H:%M:%SZ','now','-4 days','-5 minutes')),
                     ('ev-p3','li-1','done-3','prompted_production',1,NULL,
                      '{"assistance_level":1,"probe_phase":"diagnostic","context_key":"street:b"}',
-                     '2026-11-05T10:10:00Z'),
+                     strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days','-10 minutes')),
                     ('ev-s3','li-1','done-3','spontaneous_production',0,NULL,
                      '{"assistance_level":0,"probe_phase":"diagnostic","context_key":"street:c"}',
-                     '2026-11-05T10:15:00Z'),
+                     strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days','-5 minutes')),
                     ('ev-p4','li-1','done-4','prompted_production',1,NULL,
                      '{"assistance_level":1,"probe_phase":"diagnostic","context_key":"cafe:b"}',
-                     '2026-11-06T10:10:00Z'),
+                     strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days','-10 minutes')),
                     ('ev-s4','li-1','done-4','spontaneous_production',0,NULL,
                      '{"assistance_level":0,"probe_phase":"diagnostic","context_key":"cafe:c"}',
-                     '2026-11-06T10:15:00Z');
+                     strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days','-5 minutes'));
                 "#,
             )
             .unwrap();
@@ -940,6 +950,15 @@ mod tests {
         let (path, env) = create_env("task-primary-recheck-bound");
         {
             let db = env.connection().unwrap();
+            // Keep the distributed task observations inside the rolling signal window.
+            db.execute(
+                "UPDATE lessons
+                 SET started_at=strftime('%Y-%m-%dT%H:%M:%SZ','now','-4 days','-20 minutes'),
+                     completed_at=strftime('%Y-%m-%dT%H:%M:%SZ','now','-4 days')
+                 WHERE id='done-1'",
+                [],
+            )
+            .unwrap();
             db.execute(
                 "UPDATE lesson_metrics
                  SET task_attempt_count=2,task_success_count=0,
@@ -954,19 +973,19 @@ mod tests {
                   source,started_at,completed_at,duration_seconds,created_at,updated_at)
                  VALUES
                  ('done-2','llp-1',3,'completed','transport','ask route','pwa',
-                  '2026-10-16T10:00:00Z','2026-10-16T10:20:00Z',1200,
-                  '2026-10-16T10:00:00Z','2026-10-16T10:20:00Z'),
+                  strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days'),1200,
+                  strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days')),
                  ('done-3','llp-1',2,'completed','cafe','order drink','pwa',
-                  '2026-10-17T10:00:00Z','2026-10-17T10:20:00Z',1200,
-                  '2026-10-17T10:00:00Z','2026-10-17T10:20:00Z');
+                  strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days'),1200,
+                  strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days','-20 minutes'),strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days'));
                  INSERT INTO lesson_metrics
                  (lesson_id,speaking_seconds,unaided_recall_count,aided_recall_count,
                   listening_score,avg_answer_millis,long_pause_count,confidence,created_at,
                   task_attempt_count,task_success_count,task_success_rubric)
                  VALUES
-                 ('done-2',0,0,0,NULL,NULL,0,NULL,'2026-10-16T10:20:00Z',
+                 ('done-2',0,0,0,NULL,NULL,0,NULL,strftime('%Y-%m-%dT%H:%M:%SZ','now','-3 days'),
                   2,0,'goal_completed_independently_v2'),
-                 ('done-3',0,0,0,NULL,NULL,0,NULL,'2026-10-17T10:20:00Z',
+                 ('done-3',0,0,0,NULL,NULL,0,NULL,strftime('%Y-%m-%dT%H:%M:%SZ','now','-2 days'),
                   1,0,'goal_completed_independently_v2');",
             )
             .unwrap();

@@ -18,11 +18,7 @@ fn rows(
     profile_id: &str,
 ) -> Result<Vec<serde_json::Value>> {
     let mut statement = connection.prepare(sql)?;
-    let columns: Vec<String> = statement
-        .column_names()
-        .iter()
-        .map(|name| (*name).to_owned())
-        .collect();
+    let columns: Vec<String> = statement.column_names().map(str::to_owned).collect();
     let mapped = statement.query_map(params![profile_id, ROW_CAP], |row| {
         let mut object = serde_json::Map::with_capacity(columns.len());
         for (index, name) in columns.iter().enumerate() {

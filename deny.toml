@@ -7,6 +7,9 @@ ignore = [
     "RUSTSEC-2024-0436",
     # proc-macro-error2 unmaintained; transitive via rstml/leptos_macro. Same.
     "RUSTSEC-2026-0173",
+    # chrono is unmaintained (no reported vulnerability or safe upgrade).
+    # Retain current date/time behavior pending a tested replacement.
+    "RUSTSEC-2026-0543",
 ]
 
 [licenses]
@@ -40,7 +43,6 @@ allow-wildcard-paths = true # workspace path deps carry no version
 skip = [
     { crate = "convert_case@0.6.0" },
     { crate = "cpufeatures@0.2.17" },
-    { crate = "hashbrown@0.15.5" },
     { crate = "thiserror@1.0.69" },
     { crate = "thiserror-impl@1.0.69" },
 ]
