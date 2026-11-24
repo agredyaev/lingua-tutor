@@ -2,7 +2,7 @@
 
 ## 1. Current architecture baseline
 
-The product is local-first: Leptos PWA + one native Rust runtime + one SQLite database. Browser RPC and in-process MCP use the same processing and persistence paths.
+The product is local-first: Leptos PWA + native Rust runtime + one SQLite database per desktop workspace or Android installation. Browser RPC and in-process MCP use the same processing and persistence paths.
 
 Language selection is profile metadata. Linguistic interpretation belongs to the tutor boundary; core methodology is target-language neutral.
 
@@ -29,6 +29,9 @@ No tool accepts raw SQL, arbitrary executable code or unbounded result requests.
 | Offline conflicts | immutable events, operation IDs, state hashes, deterministic replay |
 | Review overload | workload cap, backlog protection, gradual throttling |
 | Tunnel unavailable | local UI remains usable |
+| Android terminates process | reopen app and reconnect tunnel; no foreground service |
+| Android update fails signature check | retain the original signing key and package ID |
+| Android port changes | pending origin-scoped browser events may be unavailable; committed SQLite records persist |
 | SQLite loss/corruption | WAL, integrity/FK checks, automatic backups, restore drill |
 | Core starts encoding one target language | architecture gates + language-neutral tutor boundary |
 | Linguistic output is inconsistent | structured contract, bounded categories/codes, evidence-driven methodology |

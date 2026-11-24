@@ -4,6 +4,7 @@
 
 ```text
 apps/
+├── android/                  # Java Activity, JNI startup, APK resources
 ├── local/                    # native runtime: RPC, MCP tunnel, SQLite, methodology assets
 └── web/                      # Leptos PWA
 
@@ -31,7 +32,8 @@ There is no concrete-language source tree, language registry, plugin crate, or l
 | `review-engine` | scheduling calculations and replay | persistence, language rules, browser code |
 | `adaptation` | bounded adaptive passes over indexed data | persistence, linguistic interpretation |
 | `apps/local` | SQLite lifecycle/migrations, direct read/write passes, minimal SQLite codec/shared-query boundary, RPC/MCP boundaries, methodology assets | target-language correctness rules or alternate domain layers |
-| `apps/web` | UI and local RPC client | direct SQLite, scheduling logic, secrets |
+| `apps/web` | UI and local RPC client | direct SQLite, scheduling logic, persistent tunnel credentials |
+| `apps/android` | Activity, JNI lifecycle, app-private paths, WebView and export picker | learning rules, SQLite queries, MCP dispatch |
 | `tutor-contract` | structured tutor result contract and validation | persistence or target-language implementation |
 | `shared-schema` | transport data | domain behavior |
 | `tests/integration` | cross-crate verification | production behavior |
@@ -46,6 +48,7 @@ apps/local ─→ learning-core
      └──────→ shared-schema
 
 apps/web ─→ shared-schema
+apps/android ─→ apps/local (Android target)
 ```
 
 Core crates do not depend on a target language. The web crate does not own scheduling or persistence.
@@ -56,8 +59,8 @@ Core crates do not depend on a target language. The web crate does not own sched
 |---|---|
 | UI | Leptos CSR + Trunk |
 | Application runtime | native Rust |
-| Database | one project-local SQLite database |
+| Database | one SQLite database per desktop workspace or Android installation |
 | Browser boundary | loopback static assets + `POST /rpc` + downloads |
 | MCP | one in-process dispatcher through the built-in secure tunnel |
 | Language selection | scalar `source_language` + `target_locale` on a profile |
-| Service management | foreground `lingua-tutor run`; current directory selects workspace |
+| Service management | desktop CLI: current directory; Android: app-private files directory; tunnel lifetime follows the process |

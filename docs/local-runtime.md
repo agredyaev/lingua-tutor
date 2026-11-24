@@ -1,103 +1,75 @@
 # Local runtime
 
-## One-command workspace
+## Desktop
 
-```text
-chosen directory
-└── .lingua-tutor/
-    ├── lingua.sqlite3
-    └── web/
-```
-
-Run from the directory whose learning state you want to use:
+Run from the directory that owns the learning state:
 
 ```sh
+mkdir -p ~/spanish
 cd ~/spanish
 lingua-tutor run
 ```
 
-The current directory is the workspace identity. Re-running the command from the same directory reuses the same SQLite database.
-
-## Runtime
+On Windows invoke `lingua-tutor.exe`. The runtime creates or reopens:
 
 ```text
-Browser
-  │
-  │ HTTP 127.0.0.1:8787
-  ▼
-lingua-tutor
-  ├─ UI + /rpc + downloads
-  ├─ SQLite: .lingua-tutor/lingua.sqlite3
-  └─ in-process MCP
-          │
-          │ outbound Secure MCP Tunnel
-          ▼
-       OpenAI
-          │
-          ▼
-       ChatGPT
+<workspace>/.lingua-tutor/
+├── lingua.sqlite3
+├── web/
+└── backups/          # created when a backup is written
 ```
 
-There is no public application listener. The UI stays loopback-only.
+The working directory selects the database. Multiple directories have independent learning state. The runtime writes embedded web assets on startup.
 
-The tunnel wire/policy implementation is adapted from Rivet. No `tunnel-client`, cloudflared, LaunchAgent, or second MCP process is required.
-
-The built-in client implements the base OpenAI tunnel wire contract on `/v1/tunnels/...`: wire version `2026-08-25`, process-stable client instance ID, bounded polling, response deadlines anchored at HTTP response start, bounded retry jitter with `Retry-After` handling, opaque command shard-token echo, and forward-compatible unknown-command dropping. It intentionally does **not** advertise optional `X-Tunnel-Client-Capabilities: wrong-cluster-v1`; routing correction requires additional poll-placement state and response-header handling and must not be claimed until that behavior is implemented end to end. Services therefore use the documented legacy polling behavior for this client.
-
-## Tunnel credentials
-
-By default, `lingua-tutor run` starts the local HTTP listener and opens `/setup`. The setup page walks through tunnel registration and restricted runtime key creation. A successful initial poll advances to the dashboard. Tunnel errors leave the local UI available. Browser submission uses a same-origin JSON-RPC POST.
-
-Use `lingua-tutor run --terminal-tunnel` to enter the credentials with terminal echo disabled:
-
-```text
-Tunnel ID:
-Runtime API key:
-```
-
-Both values exist only in process memory. Lingua Tutor does not persist them in SQLite, files, environment configuration, or command-line arguments.
-
-## Local-only mode
-
-```sh
-lingua-tutor run --no-tunnel
-```
-
-Then open `http://127.0.0.1:8787`.
+| Command | Behavior |
+|---|---|
+| `run` | Start loopback HTTP; open browser tunnel setup. |
+| `run --port N` | Select the loopback port (default 8787). |
+| `run --no-tunnel` | Start UI and RPC without the MCP tunnel. |
+| `run --terminal-tunnel` | Enter tunnel credentials with terminal echo disabled. |
+| `check` | Validate the existing database and web asset directory. |
+| `backup` | Write a verified SQLite snapshot; print its path. |
+| `where` | Print workspace, state directory and database paths. |
 
 ## Android
 
-Install the signed `lingua-tutor-v<version>-android.apk` (Android 9 or later, ARM64 or x86-64). Tap Lingua Tutor to open the setup screen inside the system WebView. No terminal, separate runtime, or external executable is required. Rust starts the same local HTTP server and SQLite database on a process-local background thread. The server binds a free loopback port and requires an app-private session cookie; Android networking uses Rustls with WebPKI roots.
+Install `lingua-tutor-v<VERSION>-android.apk` from a release containing Android assets. Minimum OS: Android 9 (API 28). Supported ABIs: `arm64-v8a`, `x86_64`. Package ID: `io.linguatutor`.
 
-The database is stored in the app-private files directory under `.lingua-tutor/lingua.sqlite3`. Installing an update signed with the same key retains the database. Uninstalling or clearing app data deletes it. Exports use Android's document picker. Existing desktop state is not imported automatically. The tunnel stays in memory and stops if Android kills the app process; reopen the app to reconnect.
+- Launch **Lingua Tutor**. Android starts the Rust library on a background thread and opens the setup page in WebView.
+- Database: `<app-private files>/.lingua-tutor/lingua.sqlite3`. Updates signed with the same certificate retain it. Uninstalling or clearing app data deletes it, including local backups. Android system backup is disabled.
+- JSON/CSV exports use Android's document picker. Desktop databases are not imported automatically.
+- Android can terminate the app process while it is in the background. Reopen the app and reconnect the tunnel if that occurs. There is no foreground service guaranteeing tunnel availability.
+- A new process uses a new loopback port. WebView storage is origin-scoped; pending browser-only offline review events are not guaranteed to survive a port change. Committed SQLite records are unaffected.
 
-### Build
+## Network and credentials
 
-Use JDK 17 or later, Android SDK platform 35, build-tools 35.0.0, and NDK 28.2.13676358. Build the web bundle first. Install Rust targets `aarch64-linux-android` and `x86_64-linux-android`.
-
-Set `ANDROID_HOME`, `ANDROID_NDK_HOME`, `ANDROID_SIGNING_KEYSTORE`, `ANDROID_SIGNING_ALIAS`, `ANDROID_SIGNING_STORE_PASSWORD`, and `ANDROID_SIGNING_KEY_PASSWORD` in the build environment. Run:
-
-```sh
-bash scripts/build-android.sh
+```mermaid
+flowchart LR
+    U[Browser or Android WebView] -->|loopback HTTP| R[Rust runtime]
+    R --> D[(SQLite)]
+    R <-->|outbound HTTPS tunnel| O[OpenAI Secure MCP Tunnel]
+    O <-->|MCP| C[ChatGPT]
 ```
 
-The script builds both ABIs, compiles the Android shell, aligns the APK, signs it, and checks the signature and package contents. The output is under `dist-android/`.
+Desktop binds `127.0.0.1:8787` by default. Android binds `127.0.0.1` on an OS-assigned port and requires the app's random session cookie on every HTTP request. Both validate the Host and any Origin header. The runtime has no public listener.
 
-CI uses an ephemeral test signing key. Do not use a test-signed APK as a persistent installation: updates must have the same signing certificate. For release builds, configure repository secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEY_ALIAS`, `ANDROID_KEYSTORE_PASSWORD`, and `ANDROID_KEY_PASSWORD` with a persistent private signing key. Keep a secure offline backup of that key.
+The setup page at `/setup` accepts a Tunnel ID and restricted Runtime API key through a same-origin JSON-RPC request. It opens the dashboard after an authorized initial poll. A failed connection leaves the local UI available. Select **Continue locally** to skip the tunnel.
 
-## Maintenance
+Credentials remain in process memory; the application does not persist them or pass them in command-line arguments. Desktop terminal mode also accepts them through hidden input.
 
-```sh
-lingua-tutor check
-lingua-tutor backup
-lingua-tutor where
-```
+Desktop HTTPS uses system curl: Linux `/usr/bin/curl` or `/bin/curl`, macOS `/usr/bin/curl`, Windows `%SystemRoot%\System32\curl.exe`. Android uses in-process Rustls with WebPKI roots. Neither requires a separate tunnel client.
 
-Backups are written next to the active project database under the project state directory and validated by SQLite integrity/foreign-key checks.
+The tunnel implements base wire version `2026-08-25`: process-stable instance ID, bounded polling and concurrency, response deadlines, retry backoff with `Retry-After`, shard-token echo and dropping unknown command types. The optional `wrong-cluster-v1` capability is not implemented or advertised.
 
-## Install/update
+## Backup and update
 
-Prebuilt release archives are the simplest installation path. For a source install, prepare the web bundle before the native release build:
+On startup with an existing database, the runtime creates a SQLite online backup if no backup was written in the previous 24 hours. It checks integrity and foreign keys before retaining the copy. When writing a backup, it removes matching backup files older than 90 days.
+
+Desktop: run `lingua-tutor backup` before replacing the executable. Android: use the export page to save JSON/CSV outside app-private storage before uninstalling. Exports are not full SQLite backups.
+
+## Build from source
+
+The CI Rust toolchain is 1.98.1. Build the frontend before any release-profile native build:
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -106,4 +78,33 @@ cargo install trunk --version 0.21.14 --locked
 cargo install --path apps/local --bin lingua-tutor --locked
 ```
 
-The release-profile build rejects a missing or incomplete generated web bundle instead of producing a native binary with a broken UI. No installer script or service wrapper is required.
+Release builds reject missing or incomplete generated web assets. Browser WebAssembly is the UI only; SQLite and scheduling run in native Rust.
+
+### Android build
+
+Requirements: JDK 17 or later, Android SDK platform 35, build-tools 35.0.0, NDK 28.2.13676358, and the generated frontend above.
+
+```sh
+rustup target add aarch64-linux-android x86_64-linux-android
+```
+
+Set the following environment variables: `ANDROID_HOME`, `ANDROID_NDK_HOME`, `ANDROID_SIGNING_KEYSTORE`, `ANDROID_SIGNING_ALIAS`, `ANDROID_SIGNING_STORE_PASSWORD`, `ANDROID_SIGNING_KEY_PASSWORD`. Do not commit secret values.
+
+```sh
+bash scripts/build-android.sh
+```
+
+Output: `dist-android/lingua-tutor-v<VERSION>-android.apk`. The script builds both native libraries, compiles the Java activity and resources, aligns the package, signs it and verifies its signature and contents.
+
+### Release signing
+
+Run `bash scripts/setup-android-signing.sh` once with an authenticated GitHub CLI to configure the repository secrets:
+
+| Secret | Value |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | Base64-encoded private signing keystore |
+| `ANDROID_KEY_ALIAS` | Signing key alias |
+| `ANDROID_KEYSTORE_PASSWORD` | Keystore password |
+| `ANDROID_KEY_PASSWORD` | Key password |
+
+Keep an offline backup of the signing key and password. CI test APKs use an ephemeral signing certificate and are not upgrade-compatible with release APKs. Only release-signed APKs are intended for persistent installations.

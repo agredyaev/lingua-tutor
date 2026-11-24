@@ -23,7 +23,7 @@ Successful calls return JSON-RPC 2.0 `result`. Application failures return JSON-
 
 Rules:
 
-- loopback only; host and origin are validated;
+- loopback only; Host and any Origin header are validated; Android requires its private session cookie for all routes;
 - request body is bounded to 256 KiB;
 - components name application operations; they do not encode use cases as REST URL paths;
 - `apps/local/src/server.rs` is a transport boundary only and calls the same handlers used by MCP;
@@ -86,7 +86,11 @@ get_review_retention
 
 ```text
 health
+tunnel_status
+connect_tunnel
 ```
+
+`connect_tunnel` requires a same-origin request and an enabled browser tunnel session.
 
 The method list above is the active browser surface. Methods without a current PWA workflow are not retained speculatively.
 

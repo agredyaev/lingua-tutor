@@ -1,21 +1,19 @@
-# DOD/PWP preflight — current architecture (2026-11-06)
+# DOD/PWP architecture preflight
 
-Current structural baseline: working tree on `audit/repository-cleanup`.
-This document is the as-is DOD/PWP review index. Historical release evidence remains in
-`docs/dod-release-gate.md`; this file describes the current architecture only.
+This document describes the application boundaries and data paths. Historical release evidence is in [dod-release-gate.md](dod-release-gate.md). Current test results are in GitHub Actions.
 
 ## L1 — system context
 
 ```mermaid
 flowchart LR
-  Learner["Learner"] -->|browser interaction| Browser["Lingua Tutor PWA"]
+  Learner["Learner"] -->|browser interaction| Browser["Browser / Android WebView"]
   Learner -->|lesson conversation| ChatGPT["ChatGPT"]
   ChatGPT <-->|MCP tunnel| OpenAI["OpenAI Secure MCP Tunnel (external)"]
   Browser -->|loopback JSON-RPC / downloads| Runtime["lingua-tutor native runtime"]
   Runtime <-->|outbound tunnel protocol| OpenAI
-  Runtime -->|read/write| SQLite[("Project-local SQLite")]
+  Runtime -->|read/write| SQLite[("Workspace / app-private SQLite")]
   Browser -->|bounded offline review queue/cache| LocalStorage[("Browser localStorage")]
-  Runtime -->|verified backup| Backup[("Project-local backup files")]
+  Runtime -->|verified backup| Backup[("Local backup files")]
 ```
 
 Trust/ownership boundaries:
@@ -40,7 +38,7 @@ flowchart LR
   end
 
   subgraph Native["Native process / apps/local"]
-    Main["main.rs composition root"]
+    Main["Desktop main.rs / Android JNI startup"]
     Server["server.rs /rpc + downloads"]
     Tunnel["tunnel.rs"]
     MCP["mcp.rs + mcp_tools.rs\n4 canonical tools"]
@@ -77,7 +75,7 @@ flowchart LR
 
   RpcClient -->|POST /rpc| Server
   Offline --> LocalStorage
-  Tunnel <-->|HTTPS via system curl| OpenAI
+  Tunnel <-->|HTTPS: desktop curl / Android Rustls| OpenAI
   Passes --> Adapt
   Passes --> Review
   Passes --> Contract
@@ -87,14 +85,13 @@ flowchart LR
   SQLite --> Backup
 ```
 
-First-party deployables are the native binary and browser WASM bundle. `fuzz/` and GitHub Actions
-are verification infrastructure, not runtime layers.
+Desktop executables and the Android APK embed the browser WASM bundle. `apps/android` owns JNI startup and WebView integration; `apps/local` owns application logic. Fuzzing and GitHub Actions are verification infrastructure.
 
 ## L3 — native directed flow
 
 ```mermaid
 flowchart TD
-  Main["main.rs\nstartup + project path + secrets"]
+  Main["Desktop CLI / Android JNI\nstartup + state path"]
   Env["runtime.rs\nEnv(db_path, signing_key)"]
   Server["server.rs\ndecode/admit local JSON-RPC"]
   Tunnel["tunnel.rs\npoll/post + bounded concurrency"]
@@ -195,23 +192,10 @@ ownership requires them.
 - five partial MCP inspection tools duplicated by authoritative `get_tutor_context`;
 - integration test API exposure used only to reach internal SQLite codecs.
 
-## Current verification
+## Verification
 
-Passed on this working tree:
-- `cargo fmt --all -- --check`;
-- `cargo check --workspace --locked`;
-- `cargo test --workspace --locked`;
-- `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`;
-- `git diff --check`.
-
-The separate fuzz workspace could not be recompiled in this Rivet sandbox because Cargo cannot create its
-registry cache (`EPERM`), including with a separate `/tmp` Cargo home. This is an environment failure before
-fuzz code compilation, not a green fuzz result. Fuzz compilation remains an external/CI gate.
+See [Testing](spec/12-testing.md) and [Runtime, CI and Release](spec/11-infrastructure.md). The current commit's GitHub Actions results determine verification status. A successful local check does not establish emulator, physical-device or live-tunnel behavior.
 
 ## Acceptance
 
-**Current structural state: DOD/PWP architecture accepted for the audited paths.**
-
-No additional layer should be introduced unless it has a concrete ownership, correctness, protocol,
-failure-mode, or measured performance requirement. Functional correctness alone does not justify
-reintroducing removed repository/service/maintenance abstractions.
+New layers require a distinct ownership, correctness, protocol, failure-mode or measured performance requirement. Preserve the single runtime, SQLite authority, and language-neutral processing boundaries.

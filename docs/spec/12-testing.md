@@ -29,11 +29,11 @@ Ordinary profile and tutor-result fixtures are sufficient; no executable synthet
 
 ## 5. Migrations
 
-Scratch SQLite tests validate current table/index shape, foreign keys and constraints. Dedicated upgrade tests verify historical schemas through v8, including language-neutral storage, semantic metadata cleanup, and removal of unused review-experiment metadata without loss of learning data.
+Scratch SQLite tests validate current table/index shape, foreign keys and constraints. Dedicated upgrade tests verify historical schemas through v9, including language-neutral storage, semantic metadata cleanup, and removal of unused review-experiment metadata without loss of learning data.
 
 ## 6. End-to-end
 
-Browser and RPC/MCP flows cover lesson completion, review, dashboard updates, card changes, backup/restore and shared persistence.
+Browser and RPC/MCP flows cover lesson completion, review, dashboard updates, card changes, backup/restore and shared persistence. The Android CI job is configured to install a test-signed x86-64 APK, launch the setup page, check the SQLite file and relaunch after a force-stop. This does not establish ARM64 physical-device compatibility or live OpenAI tunnel connectivity.
 
 ## 7. Performance
 
@@ -42,10 +42,10 @@ Representative single-learner performance tests remain explicit release/ignored 
 ## 8. Acceptance commands
 
 ```bash
-cargo fmt --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace
-cd apps/web && trunk build --release --cargo-profile wasm-release
-cd ../..
-cargo build -p lingua-tutor-local --bin lingua-tutor --release
+cargo fmt --all -- --check
+cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+cargo test --locked --workspace
+cargo deny --locked check
+(cd apps/web && trunk build --release --cargo-profile wasm-release)
+cargo build --locked -p lingua-tutor-local --bin lingua-tutor --release
 ```

@@ -8,7 +8,7 @@ Depends on: [08-local-rpc.md](08-local-rpc.md), [05-review-engine.md](05-review-
 - Leptos CSR, built with Trunk, target `wasm32-unknown-unknown`.
 - `api_client.rs`: one typed client over `shared-schema` DTOs. No handwritten JSON in components.
 - JS limited to: WASM loader, PWA service worker, isolated chart adapter only if native SVG insufficient.
-- Mobile-first. Must work installed on iPhone (PWA).
+- Supported application surfaces: desktop browser and Android WebView. iOS is not a packaged runtime target.
 
 ## 2. Binding Leptos practices
 
@@ -41,7 +41,9 @@ The learner navigation exposes only the workflows a learner needs directly:
 /languages             → language profile selection/creation
 ```
 
-The following routes are implementation, diagnostic, recovery, or advanced inspection surfaces. They are not part of the normal learner navigation and must not be presented as required steps:
+`/setup` is the tunnel setup route, opened at startup unless desktop local-only or terminal mode is selected.
+
+The following routes are diagnostic, recovery, or advanced inspection surfaces. They are not part of the normal learner navigation and must not be presented as required steps:
 
 ```text
 /learn
@@ -73,7 +75,8 @@ Content = `get_dashboard` RPC result ([08-local-rpc.md](08-local-rpc.md) §2). S
 - Offline review events → bounded `localStorage` queue with `client_operation_id` + `prior_state_hash` (ADR-0005).
 - On reconnect: replay in order, idempotent; `409 conflict_stale_state` → drop local schedule copy, refetch, keep event for audit resolution.
 - Offline semantic card edits rejected client-side.
-- Stale scheduling state detected via state hash; reconcile safely, never guess.
+- Detect stale scheduling state with the state hash; reject conflicting replay and refetch the queue.
+- Offline storage is origin-scoped. Android uses a new loopback port after process restart; pending localStorage events are not guaranteed to survive that change.
 
 ## 8. Recovery and diagnostic pages
 
@@ -91,4 +94,4 @@ lto = true
 codegen-units = 1
 ```
 
-Trunk release builds use this profile. Avoid size-heavy deps (`regex`, full ICU) in `apps/web`. WASM is served by the local runtime; release size is measured in CI. Binary size measured in CI ([12-testing.md](12-testing.md)).
+Trunk uses this profile for the browser bundle. Review dependency additions against the compressed size budget. The native runtime serves the generated assets.

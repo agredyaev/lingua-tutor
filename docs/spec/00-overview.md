@@ -4,13 +4,13 @@ Lingua Tutor is a local-first language-learning application.
 
 ## Product goal
 
-Help a learner start speaking quickly while preserving durable learner state, review history, tutor evidence, and adaptive scheduling in one local system of record.
+Record tutor-led lessons, schedule retrieval practice and adapt subsequent lessons using persisted learner evidence.
 
 ## Runtime stack
 
 - Rust workspace.
 - Leptos CSR PWA.
-- Native `lingua-tutor` CLI/runtime.
+- Native Rust runtime: desktop CLI or Android APK with WebView.
 - One SQLite database.
 - FSRS review scheduling through explicit processing passes; no scheduler registry, fallback implementation, or scheduler behavior interface.
 - Language-neutral methodology with scalar target/source language profile metadata.
@@ -18,7 +18,7 @@ Help a learner start speaking quickly while preserving durable learner state, re
 
 ## Topology
 
-One local runtime serves the PWA and browser JSON-RPC boundary on `127.0.0.1:8787`, dispatches MCP in-process through the built-in secure tunnel, and accesses the same SQLite database. There is no remote application deployment, secondary database, language-pack registry or concrete-language runtime module.
+One local runtime serves the PWA and JSON-RPC on loopback, dispatches MCP in-process through the built-in secure tunnel, and accesses one SQLite database. Desktop defaults to port 8787; Android uses an OS-assigned port and a private session cookie. There is no remote application deployment, secondary database, language-pack registry or concrete-language runtime module.
 
 ## Core invariants
 
@@ -32,4 +32,4 @@ One local runtime serves the PWA and browser JSON-RPC boundary on `127.0.0.1:878
 
 ## v1 surface
 
-Dashboard; lesson history and lifecycle; learner state; tutor-generated cards; card lifecycle; review sessions; deterministic spaced repetition; review history; listening/speaking/error evidence; adaptive recommendations; PWA installation; bounded offline behavior; JSON/CSV export; localhost UI; MCP tutor integration.
+Dashboard; lesson history and lifecycle; learner state; tutor-generated cards; card lifecycle; review sessions; deterministic spaced repetition; review history; listening/speaking/error evidence; adaptive recommendations; desktop browser and Android WebView; bounded offline review; JSON/CSV export; localhost UI; MCP tutor integration.

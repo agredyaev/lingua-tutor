@@ -17,12 +17,14 @@ Executable sources of truth take precedence where duplication would drift:
 
 Every crate and public item documents responsibility and boundary. Public `Result` APIs document failure conditions. Production panic paths are review failures. Public APIs in `learning-core`, `review-engine`, `tutor-contract` and `shared-schema` should have concise examples where they materially improve understanding.
 
-CI gates:
+Local documentation checks:
 
 ```bash
-cargo doc --workspace --no-deps
-cargo test --workspace
+cargo doc --locked --workspace --no-deps
+cargo test --locked --workspace
 ```
+
+Actual CI gates are listed in [11-infrastructure.md](11-infrastructure.md).
 
 ## 3. Engineering documentation discipline
 
@@ -31,7 +33,9 @@ cargo test --workspace
 - Current specs do not retain obsolete architecture as a second source of truth.
 - Migration compatibility is recorded by executable migration tests.
 - PRs reference the relevant spec/ADR.
-- Risks and release assumptions are written, not kept only in memory.
+- Describe observable behavior, inputs, outputs, limits, failures and platform differences. Remove marketing claims, filler and unqualified guarantees.
+- Distinguish configured checks from completed checks. Record historical results separately; do not present them as current CI status.
+- State unsupported capabilities and known failure modes. Keep release history intact.
 
 ## 4. Review checklist
 
