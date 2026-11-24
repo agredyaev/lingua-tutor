@@ -33,7 +33,9 @@ Scratch SQLite tests validate current table/index shape, foreign keys and constr
 
 ## 6. End-to-end
 
-Browser and RPC/MCP flows cover lesson completion, review, dashboard updates, card changes, backup/restore and shared persistence. The Android CI job is configured to install a test-signed x86-64 APK, launch the setup page, check the SQLite file and relaunch after a force-stop. This does not establish ARM64 physical-device compatibility or live OpenAI tunnel connectivity.
+Browser and RPC/MCP flows cover lesson completion, review, dashboard updates, card changes, backup/restore and shared persistence. The Android build job runs the local UI flow on the test-signed APK built by the same job.
+
+The release workflow repeats the local UI flow after publication. It downloads the original APK and SHA256SUMS from GitHub Releases and checks the digest before installation. The shared flow checks the APK signature and version, creates two language profiles, exercises the dashboard, review, library, progress and history, verifies persistence after force-stop, checks offline operation and saves JSON/CSV through Android's document picker. It runs on Android 35 x86-64 and captures crash and UI evidence. A missing export action fails the check, including on v0.1.10. Full acceptance also requires a real MCP lesson with a connected test learner, review of the resulting cards, and verification of the persisted results.
 
 ## 7. Performance
 

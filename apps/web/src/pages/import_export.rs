@@ -299,11 +299,11 @@ pub(crate) fn ExportPage() -> impl IntoView {
                         .map(|id| {
                             view! {
                                 <div class="export-links">
-                                    <a href=format!("/api/v1/export/full?language_profile_id={id}")>
+                                    <a rel="external" href=format!("/api/v1/export/full?language_profile_id={id}")>
                                         <span>"Full JSON export"</span>
                                         <span aria-hidden="true">"↗"</span>
                                     </a>
-                                    <a href=format!("/api/v1/export/cards.csv?language_profile_id={id}")>
+                                    <a rel="external" href=format!("/api/v1/export/cards.csv?language_profile_id={id}")>
                                         <span>"Cards CSV"</span>
                                         <span aria-hidden="true">"↗"</span>
                                     </a>

@@ -1,6 +1,7 @@
 // Core user journey (12-testing.md §7): profile → tutor context → import
 // (validate → preview → apply) → review (reveal → grade → undo) → dashboard.
 import { expect, test } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 test.describe.configure({ mode: "serial" });
 
@@ -378,18 +379,19 @@ test("full export contains the current profile state", async ({ page }) => {
   );
   const profileId = profiles[0].id;
 
-  await page.goto("/export");
+  await page.goto("/dashboard");
+  await page.getByRole("link", { name: "Export data" }).click();
   const full = page.getByRole("link", { name: "Full JSON export" });
   await expect(full).toHaveAttribute(
     "href",
     `/api/v1/export/full?language_profile_id=${profileId}`,
   );
 
-  const response = await page.request.get(
-    `/api/v1/export/full?language_profile_id=${profileId}`,
-  );
-  expect(response.ok()).toBeTruthy();
-  const exported = (await response.json()) as {
+  const [jsonDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    full.click(),
+  ]);
+  const exported = JSON.parse(await readFile(await jsonDownload.path(), "utf8")) as {
     schema_version: string;
     language_profile_id: string;
     lessons: unknown[];
@@ -401,4 +403,12 @@ test("full export contains the current profile state", async ({ page }) => {
   expect(exported.lessons.length).toBeGreaterThan(0);
   expect(exported.cards.some((card) => card.prompt === "Ask for the bill")).toBeTruthy();
   expect(exported.review_events.length).toBeGreaterThan(0);
+
+  const [csvDownload] = await Promise.all([
+    page.waitForEvent("download"),
+    page.getByRole("link", { name: "Cards CSV" }).click(),
+  ]);
+  const cards = await readFile(await csvDownload.path(), "utf8");
+  expect(cards).toContain("id,intent,status,prompt,answer,accepted_answers,creation_reason");
+  expect(cards).toContain("Ask for the bill");
 });

@@ -1,0 +1,58 @@
+name: Android release acceptance
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published Android release tag (empty selects latest)
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Download published APK and verify SHA256
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$TAG" ]]; then
+            TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          fi
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          mkdir -p "$RUNNER_TEMP/release-apk"
+          cd "$RUNNER_TEMP/release-apk"
+          apk="lingua-tutor-$TAG-android.apk"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$apk" --pattern SHA256SUMS
+          awk -v name="$apk" '$2 == name {print; count++} END {if (count != 1) exit 1}' SHA256SUMS > apk.sha256
+          sha256sum --strict -c apk.sha256
+          echo "APK=$PWD/$apk" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Exercise the original release APK on Android
+        run: bash tests/android/run_acceptance.sh "$APK" "$RELEASE_TAG"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ always() }}
+        with:
+          name: android-release-acceptance-evidence
+          path: ${{ runner.temp }}/android-evidence/
+          if-no-files-found: warn

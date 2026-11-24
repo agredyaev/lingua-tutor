@@ -88,38 +88,19 @@ jobs:
           unset KEYSTORE_BASE64
           bash scripts/build-android.sh
 
-      - name: Launch APK and verify persistent SQLite
+      - name: Exercise the test-signed APK on Android
         if: ${{ !inputs.release_signed }}
         run: |
           set -euo pipefail
-          sudo chmod a+rw /dev/kvm
-          sdkmanager "emulator" "platform-tools" "system-images;android-35;google_apis;x86_64"
-          echo no | avdmanager create avd --force --name lingua-ci --package "system-images;android-35;google_apis;x86_64"
-          "$ANDROID_HOME/emulator/emulator" -avd lingua-ci -no-window -no-audio -no-boot-anim \
-            -no-snapshot -gpu swiftshader_indirect > "$RUNNER_TEMP/emulator.log" 2>&1 &
-          emulator_pid=$!
-          trap 'kill "$emulator_pid" 2>/dev/null || true' EXIT
-          timeout 180 adb wait-for-device
-          timeout 180 bash -c 'until [[ "$(adb shell getprop sys.boot_completed | tr -d "\r")" == 1 ]]; do sleep 2; done'
-          adb shell input keyevent 82
-          adb install dist-android/*.apk
-          launch_and_check() {
-            adb shell am start -W -n io.linguatutor/.MainActivity
-            for i in $(seq 1 30); do
-              adb shell uiautomator dump /sdcard/lingua-ui.xml >/dev/null 2>&1 || true
-              if adb shell cat /sdcard/lingua-ui.xml | grep -Fq 'Connect your OpenAI tunnel'; then
-                adb shell run-as io.linguatutor test -s files/.lingua-tutor/lingua.sqlite3
-                return 0
-              fi
-              sleep 2
-            done
-            adb logcat -d -s LinguaTutor AndroidRuntime chromium
-            return 1
-          }
-          launch_and_check
-          adb shell am force-stop io.linguatutor
-          adb shell run-as io.linguatutor test -s files/.lingua-tutor/lingua.sqlite3
-          launch_and_check
+          tag="v$(tr -d '[:space:]' < VERSION)"
+          bash tests/android/run_acceptance.sh "dist-android/lingua-tutor-$tag-android.apk" "$tag"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ always() && !inputs.release_signed }}
+        with:
+          name: android-ci-acceptance-evidence
+          path: ${{ runner.temp }}/android-evidence/
+          if-no-files-found: warn
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
