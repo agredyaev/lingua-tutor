@@ -65,11 +65,11 @@ pub(crate) fn TunnelSetupPage() -> impl IntoView {
                         <strong>"Create a tunnel. "</strong>
                         "In "
                         <a href="https://platform.openai.com/settings/organization/tunnels" target="_blank" rel="noopener noreferrer">"OpenAI Platform → Tunnels"</a>
-                        ", select your organization and create a tunnel. Use "
+                        ", use your default Platform organization and create a tunnel. Use "
                         <strong>"Lingua Tutor"</strong>
                         " as the name and "
                         <code>"Local language tutor MCP"</code>
-                        " as the description. Associate your Platform organization and the ChatGPT workspace that will use it. Keep standard HTTPS and copy the Tunnel ID."
+                        " as the description. Add the ChatGPT workspace where you’ll use Lingua Tutor. Keep standard HTTPS and copy the Tunnel ID."
                     </li>
                     <li>
                         <strong>"Create a restricted runtime key and connect. "</strong>
