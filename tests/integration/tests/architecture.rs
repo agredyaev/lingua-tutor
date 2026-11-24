@@ -1862,13 +1862,8 @@ fn platform_specific_release_helpers_are_cfg_scoped() {
         tunnel.contains("#[cfg(any(windows, target_os = \"macos\"))]\nfn require_system_curl"),
         "curl existence helper must not compile on Linux where the Unix search path does not use it"
     );
-    let unix_import = main
-        .split_once("#[cfg(unix)]")
-        .map_or("", |(_, tail)| tail)
-        .split_once("use std::{\n    path::PathBuf")
-        .map_or("", |(head, _)| head);
     assert!(
-        unix_import.contains("io::{Read, Write}"),
+        main.contains("#[cfg(unix)]\nuse std::{\n    fs::OpenOptions,\n    io::{Read, Write},\n};"),
         "terminal Write import must stay Unix-scoped"
     );
 }

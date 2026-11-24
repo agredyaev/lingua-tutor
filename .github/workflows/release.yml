@@ -38,6 +38,8 @@ jobs:
       sha: ${{ steps.release.outputs.sha }}
       version: ${{ steps.release.outputs.version }}
       build_needed: ${{ steps.release.outputs.build_needed }}
+      build_wasi: ${{ steps.release.outputs.build_wasi }}
+      expected_assets: ${{ steps.release.outputs.expected_assets }}
     steps:
       - name: Resolve release and successful CI
         id: release
@@ -77,6 +79,11 @@ jobs:
             "lingua-tutor-v$version-windows-x64.zip"
             SHA256SUMS
           )
+          tree="$(gh api "repos/$GH_REPO/git/commits/$sha" --jq .tree.sha)"
+          build_wasi="$(gh api "repos/$GH_REPO/git/trees/$tree?recursive=1" --jq 'any(.tree[]; .path == "scripts/build-wasi.sh")')"
+          if [[ "$build_wasi" == true ]]; then
+            expected+=("lingua-tutor-v$version-wasi-p3.wasm")
+          fi
           published="$(jq -r '.assets[].name' <<< "$release_json" | sort)"
           expected_list="$(printf '%s\n' "${expected[@]}" | sort)"
 
@@ -104,6 +111,8 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "build_needed=$build_needed" >> "$GITHUB_OUTPUT"
+          echo "build_wasi=$build_wasi" >> "$GITHUB_OUTPUT"
+          echo "expected_assets=$(printf '%s\n' "${expected[@]}" | sort | paste -sd,)" >> "$GITHUB_OUTPUT"
 
   web:
     needs: resolve
@@ -185,7 +194,9 @@ jobs:
           file target/aarch64-unknown-linux-gnu/release/lingua-tutor | grep -Eq 'ELF 64-bit.*ARM aarch64'
           target/x86_64-unknown-linux-gnu/release/lingua-tutor --help
           install -Dm755 target/aarch64-unknown-linux-gnu/release/lingua-tutor staged-linux-arm64/lingua-tutor
-          install -Dm755 scripts/termux-launcher.sh staged-linux-arm64/termux-launcher.sh
+          if [[ -f scripts/termux-launcher.sh ]]; then
+            install -Dm755 scripts/termux-launcher.sh staged-linux-arm64/termux-launcher.sh
+          fi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -278,14 +289,23 @@ jobs:
           path: target/x86_64-pc-windows-msvc/release/lingua-tutor.exe
           if-no-files-found: error
 
+  wasi:
+    needs: [resolve, web]
+    if: ${{ needs.resolve.outputs.build_needed == 'true' && needs.resolve.outputs.build_wasi == 'true' }}
+    uses: ./.github/workflows/wasi.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+      release_web_assets: true
+
   publish:
-    needs: [resolve, linux, macos, windows]
+    needs: [resolve, linux, macos, windows, wasi]
     if: >-
       ${{ always()
           && needs.resolve.outputs.build_needed == 'true'
           && needs.linux.result == 'success'
           && needs.macos.result == 'success'
-          && needs.windows.result == 'success' }}
+          && needs.windows.result == 'success'
+          && (needs.resolve.outputs.build_wasi == 'false' || needs.wasi.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -309,9 +329,17 @@ jobs:
           name: release-windows-x64
           path: staged/windows
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: ${{ needs.resolve.outputs.build_wasi == 'true' }}
+        with:
+          name: wasi-p3
+          path: staged/wasi
+
       - name: Package and verify release assets
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
+          BUILD_WASI: ${{ needs.resolve.outputs.build_wasi }}
+          EXPECTED_ASSETS: ${{ needs.resolve.outputs.expected_assets }}
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -324,7 +352,7 @@ jobs:
             if [[ "$entry" != *.exe ]]; then
               chmod +x "$package_dir/$entry"
             fi
-            if [[ -n "${4:-}" ]]; then
+            if [[ -f "${4:-}" ]]; then
               install -m755 "$4" "$package_dir/termux-launcher.sh"
               entries+=(termux-launcher.sh)
             fi
@@ -338,15 +366,12 @@ jobs:
           package staged/macos/lingua-tutor lingua-tutor "lingua-tutor-v$VERSION-darwin-arm64.zip"
           package staged/windows/lingua-tutor.exe lingua-tutor.exe "lingua-tutor-v$VERSION-windows-x64.zip"
 
-          (cd dist && sha256sum lingua-tutor-*.zip > SHA256SUMS)
+          if [[ "$BUILD_WASI" == true ]]; then
+            cp "staged/wasi/lingua-tutor-v$VERSION-wasi-p3.wasm" dist/
+          fi
+          (cd dist && sha256sum lingua-tutor-* > SHA256SUMS)
           (cd dist && sha256sum -c SHA256SUMS)
-
-          expected="$(printf '%s\n' \
-            SHA256SUMS \
-            "lingua-tutor-v$VERSION-darwin-arm64.zip" \
-            "lingua-tutor-v$VERSION-linux-aarch64.zip" \
-            "lingua-tutor-v$VERSION-linux-x64.zip" \
-            "lingua-tutor-v$VERSION-windows-x64.zip" | sort)"
+          expected="$(tr ',' '\n' <<< "$EXPECTED_ASSETS")"
           actual="$(find dist -maxdepth 1 -type f -exec basename {} \; | sort)"
           test "$actual" = "$expected"
 
@@ -355,17 +380,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.resolve.outputs.tag }}
-          VERSION: ${{ needs.resolve.outputs.version }}
+          EXPECTED_ASSETS: ${{ needs.resolve.outputs.expected_assets }}
         run: |
           set -euo pipefail
-          gh release upload "$TAG" dist/lingua-tutor-*.zip dist/SHA256SUMS --repo "$GH_REPO" --clobber
+          gh release upload "$TAG" dist/lingua-tutor-* dist/SHA256SUMS --repo "$GH_REPO" --clobber
 
-          expected="$(printf '%s\n' \
-            SHA256SUMS \
-            "lingua-tutor-v$VERSION-darwin-arm64.zip" \
-            "lingua-tutor-v$VERSION-linux-aarch64.zip" \
-            "lingua-tutor-v$VERSION-linux-x64.zip" \
-            "lingua-tutor-v$VERSION-windows-x64.zip" | sort)"
+          expected="$(tr ',' '\n' <<< "$EXPECTED_ASSETS")"
           published="$(gh release view "$TAG" --repo "$GH_REPO" --json assets --jq '.assets[].name' | sort)"
           if [[ "$published" != "$expected" ]]; then
             echo "::error::Published release asset set does not match the supported platform set."

@@ -1,8 +1,8 @@
-//! Native OpenAI Secure MCP Tunnel protocol adapted from Rivet.
+//! OpenAI Secure MCP Tunnel protocol adapted from Rivet.
 //!
-//! Wire parsing/backoff/terminal-response semantics come from Rivet. HTTPS is
-//! performed with the platform system curl binary. Sensitive headers and response
-//! payloads are provided through curl's stdin config, never argv or disk.
+//! Wire parsing, backoff, and terminal-response semantics come from Rivet.
+//! HTTPS uses system curl on native targets and Rustls on WASI.
+//! Native curl receives sensitive headers and response payloads through stdin.
 
 use crate::{
     Env,
@@ -15,14 +15,20 @@ use crate::{
 };
 use serde::Serialize;
 use serde_json::{Value, value::RawValue};
+#[cfg(not(target_os = "wasi"))]
 use std::{
     io::Write,
     path::PathBuf,
     process::{Command, Stdio},
+};
+use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tokio::{task::JoinSet, time::sleep};
+
+#[cfg(target_os = "wasi")]
+mod wasi;
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com";
 const SERVER_INFO: &str =
@@ -31,10 +37,11 @@ const WIRE_VERSION: &str = "2026-08-25";
 const POLL_TIMEOUT_MS: u64 = 15_000;
 const MAX_POLL_BODY_BYTES: usize = 10 * 1024 * 1024;
 const MAX_IN_FLIGHT: usize = 16;
+#[cfg(not(target_os = "wasi"))]
 const CURL_META_MARKER: &str = "__LINGUA_TUNNEL_HTTP_META__:";
 type Ready = Option<Box<dyn FnOnce() + Send>>;
 
-/// Native tunnel connection settings.
+/// Tunnel connection settings.
 ///
 /// The runtime API key is only held in process memory. The CLI never persists
 /// tunnel credentials.
@@ -115,8 +122,7 @@ struct HttpResponse {
     retry_after_ms: Option<u64>,
 }
 
-struct CurlRequestInput {
-    curl_path: PathBuf,
+struct TunnelRequest {
     method: &'static str,
     url: String,
     api_key: String,
@@ -130,6 +136,7 @@ struct Client {
     config: TunnelConfig,
     endpoint: String,
     instance_id: String,
+    #[cfg(not(target_os = "wasi"))]
     curl_path: PathBuf,
     // FUZZ SUPPORT BEGIN
     #[cfg(fuzzing)]
@@ -145,6 +152,7 @@ impl Client {
             .scripted_peer
             .map(|seed| (seed, std::sync::atomic::AtomicUsize::new(0)));
         // FUZZ SUPPORT END
+        #[cfg(not(target_os = "wasi"))]
         let curl_path = system_curl_path()?;
         let endpoint = format!(
             "{}/v1/tunnels/{}",
@@ -155,6 +163,7 @@ impl Client {
             config,
             endpoint,
             instance_id: new_instance_id(),
+            #[cfg(not(target_os = "wasi"))]
             curl_path,
             // FUZZ SUPPORT BEGIN
             #[cfg(fuzzing)]
@@ -398,8 +407,7 @@ impl Client {
             });
         }
         // FUZZ SUPPORT END
-        let request = CurlRequestInput {
-            curl_path: self.curl_path.clone(),
+        let request = TunnelRequest {
             method,
             url,
             api_key: self.config.api_key.clone(),
@@ -408,9 +416,15 @@ impl Client {
             body,
             timeout,
         };
-        tokio::task::spawn_blocking(move || curl_request(request))
-            .await
-            .map_err(|error| format!("curl task failed: {error}"))?
+        #[cfg(not(target_os = "wasi"))]
+        {
+            let curl_path = self.curl_path.clone();
+            tokio::task::spawn_blocking(move || curl_request(request, curl_path))
+                .await
+                .map_err(|error| format!("curl task failed: {error}"))?
+        }
+        #[cfg(target_os = "wasi")]
+        wasi::request(request).await
     }
 }
 
@@ -538,6 +552,32 @@ fn encode_response(
     .map_err(|error| error.to_string())
 }
 
+fn request_headers(
+    api_key: &str,
+    instance_id: &str,
+    shard_token: Option<&str>,
+    has_body: bool,
+) -> impl Iterator<Item = (&'static str, String)> {
+    [
+        ("Authorization", format!("Bearer {api_key}")),
+        ("X-Tunnel-Client-Name", "lingua-tutor".to_owned()),
+        (
+            "X-Tunnel-Client-Version",
+            env!("CARGO_PKG_VERSION").to_owned(),
+        ),
+        (
+            "X-Tunnel-Client-Wire-Protocol-Version",
+            WIRE_VERSION.to_owned(),
+        ),
+        ("X-Tunnel-MCP-Server-Info", SERVER_INFO.to_owned()),
+        ("X-Tunnel-Client-Instance-Id", instance_id.to_owned()),
+    ]
+    .into_iter()
+    .chain(shard_token.map(|token| ("X-Tunnel-Shard-Token", token.to_owned())))
+    .chain(has_body.then(|| ("Content-Type", "application/json".to_owned())))
+}
+
+#[cfg(not(target_os = "wasi"))]
 fn build_curl_config(
     method: &str,
     url: &str,
@@ -554,49 +594,15 @@ fn build_curl_config(
     config.push_str(&format!("url = {}\n", curl_quote(url)));
     config.push_str(&format!("max-time = {:.3}\n", timeout_secs));
     config.push_str("connect-timeout = 10\n");
-    config.push_str(&format!(
-        "header = {}\n",
-        curl_quote(&format!("Authorization: Bearer {api_key}"))
-    ));
-    config.push_str(&format!(
-        "header = {}\n",
-        curl_quote("X-Tunnel-Client-Name: lingua-tutor")
-    ));
-    config.push_str(&format!(
-        "header = {}\n",
-        curl_quote(&format!(
-            "X-Tunnel-Client-Version: {}",
-            env!("CARGO_PKG_VERSION")
-        ))
-    ));
-    config.push_str(&format!(
-        "header = {}\n",
-        curl_quote(&format!(
-            "X-Tunnel-Client-Wire-Protocol-Version: {}",
-            WIRE_VERSION
-        ))
-    ));
-    config.push_str(&format!(
-        "header = {}\n",
-        curl_quote(&format!("X-Tunnel-MCP-Server-Info: {SERVER_INFO}"))
-    ));
-    config.push_str(&format!(
-        "header = {}\n",
-        curl_quote(&format!("X-Tunnel-Client-Instance-Id: {instance_id}"))
-    ));
-    if let Some(shard_token) = shard_token {
+    for (name, value) in request_headers(api_key, instance_id, shard_token, body.is_some()) {
         config.push_str(&format!(
             "header = {}\n",
-            curl_quote(&format!("X-Tunnel-Shard-Token: {shard_token}"))
+            curl_quote(&format!("{name}: {value}"))
         ));
     }
     if let Some(body) = body {
         let text = std::str::from_utf8(body)
             .map_err(|_| "tunnel terminal response is not UTF-8".to_owned())?;
-        config.push_str(&format!(
-            "header = {}\n",
-            curl_quote("Content-Type: application/json")
-        ));
         config.push_str(&format!("data-binary = {}\n", curl_quote(text)));
     }
     config.push_str(&format!(
@@ -620,6 +626,7 @@ fn require_system_curl(path: PathBuf) -> Result<PathBuf, String> {
     }
 }
 
+#[cfg(not(target_os = "wasi"))]
 fn system_curl_path() -> Result<PathBuf, String> {
     #[cfg(windows)]
     {
@@ -649,7 +656,8 @@ fn system_curl_path() -> Result<PathBuf, String> {
     Err("system curl resolution is unsupported on this platform".to_owned())
 }
 
-fn curl_request(input: CurlRequestInput) -> Result<HttpResponse, String> {
+#[cfg(not(target_os = "wasi"))]
+fn curl_request(input: TunnelRequest, curl_path: PathBuf) -> Result<HttpResponse, String> {
     let config = build_curl_config(
         input.method,
         &input.url,
@@ -661,14 +669,14 @@ fn curl_request(input: CurlRequestInput) -> Result<HttpResponse, String> {
     )?;
 
     let request_started = Instant::now();
-    let mut child = Command::new(&input.curl_path)
+    let mut child = Command::new(&curl_path)
         .arg("--config")
         .arg("-")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|error| format!("failed to start {}: {error}", input.curl_path.display()))?;
+        .map_err(|error| format!("failed to start {}: {error}", curl_path.display()))?;
     child
         .stdin
         .take()
@@ -687,6 +695,7 @@ fn curl_request(input: CurlRequestInput) -> Result<HttpResponse, String> {
     parse_curl_output(&output.stdout, CURL_META_MARKER, request_started)
 }
 
+#[cfg(not(target_os = "wasi"))]
 fn parse_curl_output(
     output: &[u8],
     marker: &str,
@@ -737,6 +746,7 @@ fn parse_curl_output(
     })
 }
 
+#[cfg(not(target_os = "wasi"))]
 fn curl_quote(value: &str) -> String {
     let mut quoted = String::with_capacity(value.len() + 2);
     quoted.push('"');
@@ -754,6 +764,7 @@ fn curl_quote(value: &str) -> String {
     quoted
 }
 
+#[cfg(not(target_os = "wasi"))]
 fn find_last(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
@@ -761,13 +772,7 @@ fn find_last(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn retry_backoff(attempt: u32, retry_after: Option<u64>) -> Duration {
-    let entropy = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| {
-            let nanos = duration.as_nanos();
-            (nanos as u64) ^ ((nanos >> 64) as u64) ^ u64::from(std::process::id())
-        })
-        .unwrap_or_else(|_| u64::from(std::process::id()));
+    let entropy = uuid::Uuid::new_v4().as_u128() as u64;
     Duration::from_millis(retry_delay_ms(attempt, entropy, retry_after))
 }
 
@@ -803,11 +808,7 @@ fn report_task(result: Result<Result<(), String>, tokio::task::JoinError>) {
 }
 
 fn new_instance_id() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    format!("lingua-tutor-{}-{nanos}", std::process::id())
+    format!("lingua-tutor-{}", uuid::Uuid::new_v4())
 }
 
 /// Connect Lingua Tutor's in-process MCP service to OpenAI Secure MCP Tunnel.
@@ -837,7 +838,7 @@ fn signal_ready(ready: &mut Ready) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "wasi")))]
 // Test fixtures intentionally fail fast and use compact tuple snapshots.
 #[allow(clippy::unwrap_used, clippy::type_complexity)]
 mod tests {

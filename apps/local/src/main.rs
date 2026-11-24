@@ -1,15 +1,14 @@
 //! Self-contained Lingua Tutor CLI.
 
 use lingua_tutor_local::{assets, server, storage, tunnel};
+#[cfg(any(unix, windows))]
+use std::process::{Command, Stdio};
 #[cfg(unix)]
 use std::{
     fs::OpenOptions,
     io::{Read, Write},
 };
-use std::{
-    path::PathBuf,
-    process::{Command, ExitCode, Stdio},
-};
+use std::{path::PathBuf, process::ExitCode};
 
 const STATE_DIR: &str = ".lingua-tutor";
 const DB_NAME: &str = "lingua.sqlite3";

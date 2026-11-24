@@ -78,6 +78,28 @@ install -Dm700 ~/storage/downloads/termux-launcher.sh ~/.shortcuts/Lingua\ Tutor
 
 Reuse the existing Debian installation if you already have one. On Android 10 or later, allow Termux to appear over other apps in Android settings so the widget can open its foreground session. Add **Termux:Widget** to the home screen and select **Lingua Tutor**. Tapping the shortcut starts the local server and opens the setup page. Later taps reopen the running session.
 
+## WASI Preview 3
+
+The `lingua-tutor-v<version>-wasi-p3.wasm` release asset is a single component with the web UI and SQLite built in. Use a WASI 0.3 host with networking and filesystem access. The build is verified with Wasmtime 51.0.0.
+
+Run from the directory where you want to keep the SQLite database. Replace `VERSION` with the release version and use the path to the downloaded component.
+
+```sh
+wasmtime run -S p3=y -S inherit-network=y -S allow-ip-name-lookup=y \
+  --dir "$PWD::." /path/to/lingua-tutor-vVERSION-wasi-p3.wasm run
+```
+
+Open `http://127.0.0.1:8787/setup` in your browser. Wasmtime exposes the local listener and lets the component dial OpenAI over HTTPS. Lingua Tutor writes its data under `.lingua-tutor/` in the directory passed to `--dir`. A tap-to-launch WASI installation on Android requires an Android app that hosts the component.
+
+To build from source, install [WASI SDK 34](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-34), build the web bundle as shown below, and then build the component.
+
+```sh
+rustup toolchain install 1.100.0 --target wasm32-wasip3
+WASI_SDK_PATH=/path/to/wasi-sdk scripts/build-wasi.sh
+```
+
+The script writes the component to `dist-wasi/`. Run it with `test` and Wasmtime on `PATH` to check browser tunnel connection and retry against a local test peer.
+
 ## Maintenance
 
 ```sh

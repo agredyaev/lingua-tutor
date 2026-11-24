@@ -10,6 +10,12 @@ ignore = [
 ]
 
 [licenses]
+exceptions = [
+    { allow = ["ISC"], crate = "ring" },
+    { allow = ["ISC"], crate = "untrusted" },
+    { allow = ["ISC"], crate = "rustls-webpki" },
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots" },
+]
 allow = [
     "MIT",
     "Apache-2.0",

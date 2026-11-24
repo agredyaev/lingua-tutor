@@ -63,12 +63,17 @@ jobs:
       - name: Generated outputs are not tracked
         run: |
           set -euo pipefail
-          tracked="$(git ls-files apps/web/dist fuzz/corpus)"
+          tracked="$(git ls-files apps/web/dist dist-wasi fuzz/corpus)"
           if [[ -n "$tracked" ]]; then
             echo "::error::Generated output is tracked by git:"
             printf '%s\n' "$tracked"
             exit 1
           fi
+
+  wasi:
+    uses: ./.github/workflows/wasi.yml
+    with:
+      ref: ${{ github.sha }}
 
   windows-check:
     runs-on: windows-latest

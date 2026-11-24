@@ -632,27 +632,61 @@ mod tests {
     async fn browser_connect_waits_for_poll_and_allows_retry() {
         use axum::http::StatusCode;
 
-        let dir = std::env::temp_dir().join(format!("lingua-connect-{}", uuid::Uuid::new_v4()));
+        #[cfg(target_os = "wasi")]
+        let root = PathBuf::from(".");
+        #[cfg(not(target_os = "wasi"))]
+        let root = std::env::temp_dir();
+        let dir = root.join(format!("lingua-connect-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let env = storage::environment(&dir.join("lingua.sqlite3")).unwrap();
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
             .unwrap();
         let peer_url = format!("http://{}", listener.local_addr().unwrap());
+        use axum::response::IntoResponse;
+
+        let (reply_tx, mut replies) = tokio::sync::mpsc::channel(1);
         let peer = tokio::spawn(async move {
-            let app = Router::new().fallback(|request: HttpRequest<Body>| async move {
-                if !request.uri().path().ends_with("/poll") {
-                    return StatusCode::OK;
-                }
-                if request
-                    .headers()
-                    .get("authorization")
-                    .is_some_and(|value| value == "Bearer read-use")
-                {
-                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                    StatusCode::NO_CONTENT
-                } else {
-                    StatusCode::FORBIDDEN
+            let sent = Arc::new(AtomicBool::new(false));
+            let app = Router::new().fallback(move |request: HttpRequest<Body>| {
+                let sent = Arc::clone(&sent);
+                let reply_tx = reply_tx.clone();
+                async move {
+                    match request.uri().path().rsplit('/').next() {
+                        Some("poll") => {
+                            if request
+                                .headers()
+                                .get("authorization")
+                                .is_none_or(|value| value != "Bearer read-use")
+                            {
+                                return StatusCode::FORBIDDEN.into_response();
+                            }
+                            if !sent.swap(true, Ordering::Relaxed) {
+                                return axum::Json(serde_json::json!({
+                                    "commands": [{
+                                        "request_id": "list-tools",
+                                        "shard_token": "test-shard",
+                                        "command_type": "jsonrpc",
+                                        "jsonrpc": {"jsonrpc":"2.0","id":2,"method":"tools/list"}
+                                    }]
+                                }))
+                                .into_response();
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                            StatusCode::NO_CONTENT.into_response()
+                        }
+                        Some("response") => {
+                            assert_eq!(request.method(), HttpMethod::POST);
+                            assert_eq!(request.headers()["x-tunnel-shard-token"], "test-shard");
+                            let body = to_bytes(request.into_body(), 256 * 1024).await.unwrap();
+                            reply_tx
+                                .send(serde_json::from_slice::<serde_json::Value>(&body).unwrap())
+                                .await
+                                .unwrap();
+                            StatusCode::OK.into_response()
+                        }
+                        _ => StatusCode::OK.into_response(),
+                    }
                 }
             });
             axum::serve(listener, app).await.unwrap();
@@ -681,6 +715,19 @@ mod tests {
             .unwrap();
         assert_eq!(session.status(), "connected");
         assert!(session.connect(env, config("read-use")).await.is_err());
+        let response = tokio::time::timeout(std::time::Duration::from_secs(5), replies.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(response["request_id"], "list-tools");
+        assert_eq!(response["resp_code"], 200);
+        assert_eq!(response["resp_json"]["id"], 2);
+        assert!(
+            !response["resp_json"]["result"]["tools"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
 
         drop(session);
         peer.abort();

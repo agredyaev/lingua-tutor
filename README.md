@@ -69,6 +69,8 @@ Use `lingua-tutor run --terminal-tunnel` for hidden terminal input.
 
 On Android, [add a home-screen shortcut](docs/local-runtime.md#android-home-screen-shortcut) to start Lingua Tutor and open the browser with one tap.
 
+A portable WASI Preview 3 component runs under [Wasmtime with the same browser setup](docs/local-runtime.md#wasi-preview-3).
+
 For UI-only local testing:
 
 ```sh
