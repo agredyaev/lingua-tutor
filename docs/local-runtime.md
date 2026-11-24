@@ -65,40 +65,25 @@ lingua-tutor run --no-tunnel
 
 Then open `http://127.0.0.1:8787`.
 
-## Android home-screen shortcut
+## Android
 
-On an ARM64 tablet, use Termux, Debian via PRoot-Distro, and the Linux ARM64 release archive. Install [Termux:Widget](https://github.com/termux/termux-widget) from the same source as Termux. Run `termux-setup-storage` and grant access to Downloads. Extract the executable to `~/lingua/lingua-tutor` and `termux-launcher.sh` to Downloads, then set up the shortcut once in Termux.
+Install the signed `lingua-tutor-v<version>-android.apk` (Android 9 or later, ARM64 or x86-64). Tap Lingua Tutor to open the setup screen inside the system WebView. No terminal, separate runtime, or external executable is required. Rust starts the same local HTTP server and SQLite database on a process-local background thread. The server binds a free loopback port and requires an app-private session cookie; Android networking uses Rustls with WebPKI roots.
 
-```sh
-pkg install proot-distro
-proot-distro install debian
-proot-distro login debian -- sh -c 'apt-get update && apt-get install -y curl ca-certificates'
-install -Dm700 ~/storage/downloads/termux-launcher.sh ~/.shortcuts/Lingua\ Tutor
-```
+The database is stored in the app-private files directory under `.lingua-tutor/lingua.sqlite3`. Installing an update signed with the same key retains the database. Uninstalling or clearing app data deletes it. Exports use Android's document picker. Existing desktop state is not imported automatically. The tunnel stays in memory and stops if Android kills the app process; reopen the app to reconnect.
 
-Reuse the existing Debian installation if you already have one. On Android 10 or later, allow Termux to appear over other apps in Android settings so the widget can open its foreground session. Add **Termux:Widget** to the home screen and select **Lingua Tutor**. Tapping the shortcut starts the local server and opens the setup page. Later taps reopen the running session.
+### Build
 
-## WASI Preview 3
+Use JDK 17 or later, Android SDK platform 35, build-tools 35.0.0, and NDK 28.2.13676358. Build the web bundle first. Install Rust targets `aarch64-linux-android` and `x86_64-linux-android`.
 
-The `lingua-tutor-v<version>-wasi-p3.wasm` release asset is a single component with the web UI and SQLite built in. Use a WASI 0.3 host with networking and filesystem access. The build is verified with Wasmtime 51.0.0.
-
-Run from the directory where you want to keep the SQLite database. Replace `VERSION` with the release version and use the path to the downloaded component.
+Set `ANDROID_HOME`, `ANDROID_NDK_HOME`, `ANDROID_SIGNING_KEYSTORE`, `ANDROID_SIGNING_ALIAS`, `ANDROID_SIGNING_STORE_PASSWORD`, and `ANDROID_SIGNING_KEY_PASSWORD` in the build environment. Run:
 
 ```sh
-wasmtime run -S p3=y -S inherit-network=y -S allow-ip-name-lookup=y \
-  --dir "$PWD::." /path/to/lingua-tutor-vVERSION-wasi-p3.wasm run
+bash scripts/build-android.sh
 ```
 
-Open `http://127.0.0.1:8787/setup` in your browser. Wasmtime exposes the local listener and lets the component dial OpenAI over HTTPS. Lingua Tutor writes its data under `.lingua-tutor/` in the directory passed to `--dir`. A tap-to-launch WASI installation on Android requires an Android app that hosts the component.
+The script builds both ABIs, compiles the Android shell, aligns the APK, signs it, and checks the signature and package contents. The output is under `dist-android/`.
 
-To build from source, install [WASI SDK 34](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-34), build the web bundle as shown below, and then build the component.
-
-```sh
-rustup toolchain install 1.100.0 --target wasm32-wasip3
-WASI_SDK_PATH=/path/to/wasi-sdk scripts/build-wasi.sh
-```
-
-The script writes the component to `dist-wasi/`. Run it with `test` and Wasmtime on `PATH` to check browser tunnel connection and retry against a local test peer.
+CI uses an ephemeral test signing key. Do not use a test-signed APK as a persistent installation: updates must have the same signing certificate. For release builds, configure repository secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEY_ALIAS`, `ANDROID_KEYSTORE_PASSWORD`, and `ANDROID_KEY_PASSWORD` with a persistent private signing key. Keep a secure offline backup of that key.
 
 ## Maintenance
 

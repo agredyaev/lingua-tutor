@@ -1,5 +1,5 @@
 /target
-/dist-wasi
+/dist-android
 /apps/web/dist
 /fuzz/target
 node_modules/

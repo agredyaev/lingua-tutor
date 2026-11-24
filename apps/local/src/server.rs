@@ -25,6 +25,7 @@ struct AppState {
     assets: PathBuf,
     port: u16,
     tunnel: Option<Arc<BrowserTunnel>>,
+    session_cookie: Option<String>,
 }
 
 #[derive(Default)]
@@ -418,6 +419,19 @@ fn static_file(assets: &Path, path: &str) -> HttpResponse<Body> {
     reply(200, kind, Body::from(bytes))
 }
 
+fn session_authorized(expected: Option<&str>, headers: &axum::http::HeaderMap) -> bool {
+    let Some(expected) = expected else {
+        return true;
+    };
+    headers
+        .get_all("cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .filter_map(|pair| pair.trim().split_once('='))
+        .any(|(name, value)| name == "lingua_session" && value == expected)
+}
+
 #[axum::debug_handler]
 async fn handle(State(state): State<AppState>, request: HttpRequest<Body>) -> HttpResponse<Body> {
     let (head, body) = request.into_parts();
@@ -430,6 +444,9 @@ async fn handle(State(state): State<AppState>, request: HttpRequest<Body>) -> Ht
     let alternate = format!("localhost:{}", state.port);
     if host != expected && host != alternate {
         return reply(403, "text/plain", "forbidden host");
+    }
+    if !session_authorized(state.session_cookie.as_deref(), &head.headers) {
+        return reply(403, "text/plain", "forbidden session");
     }
     let origin = head
         .headers
@@ -535,7 +552,7 @@ async fn handle(State(state): State<AppState>, request: HttpRequest<Body>) -> Ht
 
 /// Serve the PWA and JSON-RPC boundary on a loopback socket.
 pub async fn serve(env: Env, assets: &Path, port: u16) -> Result<(), String> {
-    serve_runtime(env, assets, port, None).await
+    serve_runtime(env, assets, port, None, None).await
 }
 
 /// Serve the PWA with browser tunnel setup and open its setup page on startup.
@@ -545,7 +562,20 @@ pub async fn serve_browser(
     port: u16,
     open_browser: fn(&str),
 ) -> Result<(), String> {
-    serve_runtime(env, assets, port, Some(open_browser)).await
+    serve_runtime(env, assets, port, Some(open_browser), None).await
+}
+
+/// Serve the embedded app on a free loopback port, requiring an app-private session cookie.
+pub async fn serve_embedded(
+    env: Env,
+    assets: &Path,
+    session_cookie: String,
+    ready: fn(&str),
+) -> Result<(), String> {
+    if session_cookie.len() != 64 || !session_cookie.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("invalid embedded session token".to_owned());
+    }
+    serve_runtime(env, assets, 0, Some(ready), Some(session_cookie)).await
 }
 
 async fn serve_runtime(
@@ -553,6 +583,7 @@ async fn serve_runtime(
     assets: &Path,
     port: u16,
     open_browser: Option<fn(&str)>,
+    session_cookie: Option<String>,
 ) -> Result<(), String> {
     let assets = assets
         .canonicalize()
@@ -572,6 +603,7 @@ async fn serve_runtime(
         assets,
         port,
         tunnel: open_browser.map(|_| Arc::new(BrowserTunnel::default())),
+        session_cookie,
     };
     let app = Router::new().fallback(any(handle)).with_state(state);
     let mut url = format!("http://127.0.0.1:{port}");
@@ -606,6 +638,20 @@ mod tests {
     }
 
     #[test]
+    fn embedded_session_requires_exact_private_cookie() {
+        let mut headers = axum::http::HeaderMap::new();
+        assert!(session_authorized(None, &headers));
+        assert!(!session_authorized(Some("secret"), &headers));
+        headers.insert(
+            "cookie",
+            "other=secret; lingua_session=wrong".parse().unwrap(),
+        );
+        assert!(!session_authorized(Some("secret"), &headers));
+        headers.insert("cookie", "other=1; lingua_session=secret".parse().unwrap());
+        assert!(session_authorized(Some("secret"), &headers));
+    }
+
+    #[test]
     fn health_rpc_operation_works() {
         let dir = std::env::temp_dir().join(format!("lingua-rpc-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -632,9 +678,6 @@ mod tests {
     async fn browser_connect_waits_for_poll_and_allows_retry() {
         use axum::http::StatusCode;
 
-        #[cfg(target_os = "wasi")]
-        let root = PathBuf::from(".");
-        #[cfg(not(target_os = "wasi"))]
         let root = std::env::temp_dir();
         let dir = root.join(format!("lingua-connect-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1015,6 +1058,17 @@ async fn fuzz_browser_setup(state: &AppState, args: &serde_json::Value) {
 #[cfg(fuzzing)]
 #[allow(clippy::expect_used, missing_docs)]
 pub(crate) fn fuzz_boundary(env: &Env, dir: &Path, args: &serde_json::Value, data: &[u8]) {
+    let mut headers = axum::http::HeaderMap::new();
+    assert!(!session_authorized(Some("fuzz-session"), &headers));
+    if let Ok(value) = axum::http::HeaderValue::from_bytes(data) {
+        headers.insert("cookie", value);
+        let _ = session_authorized(Some("fuzz-session"), &headers);
+    }
+    headers.insert(
+        "cookie",
+        axum::http::HeaderValue::from_static("other=1; lingua_session=fuzz-session"),
+    );
+    assert!(session_authorized(Some("fuzz-session"), &headers));
     let assets = dir.join("assets");
     std::fs::create_dir_all(&assets).expect("assets dir");
     for ext in [
@@ -1027,6 +1081,7 @@ pub(crate) fn fuzz_boundary(env: &Env, dir: &Path, args: &serde_json::Value, dat
         assets: assets.canonicalize().expect("assets path"),
         port: 7777,
         tunnel: None,
+        session_cookie: None,
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

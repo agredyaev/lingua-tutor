@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+: "${ANDROID_HOME:?Set ANDROID_HOME to the Android SDK directory}"
+: "${ANDROID_NDK_HOME:?Set ANDROID_NDK_HOME to Android NDK 28.2.13676358}"
+: "${ANDROID_SIGNING_KEYSTORE:?Set ANDROID_SIGNING_KEYSTORE}"
+: "${ANDROID_SIGNING_ALIAS:?Set ANDROID_SIGNING_ALIAS}"
+: "${ANDROID_SIGNING_STORE_PASSWORD:?Set ANDROID_SIGNING_STORE_PASSWORD}"
+: "${ANDROID_SIGNING_KEY_PASSWORD:?Set ANDROID_SIGNING_KEY_PASSWORD}"
+test -f "$ANDROID_SIGNING_KEYSTORE"
+
+tools="$ANDROID_HOME/build-tools/35.0.0"
+platform="$ANDROID_HOME/platforms/android-35/android.jar"
+case "$(uname -s)" in
+  Linux) host=linux-x86_64 ;;
+  Darwin) host=darwin-x86_64 ;;
+  *) echo "Unsupported Android build host" >&2; exit 1 ;;
+esac
+ndk="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/$host/bin"
+stage="$(mktemp -d)"
+trap 'rm -rf "$stage"' EXIT
+mkdir -p "$stage/classes" "$stage/dex" "$stage/lib/arm64-v8a" "$stage/lib/x86_64"
+
+build_native() {
+  local target="$1" compiler="$2" abi="$3" key
+  key="${target//-/_}"
+  export "CC_$key=$ndk/$compiler"
+  export "AR_$key=$ndk/llvm-ar"
+  export "CARGO_TARGET_$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]')_LINKER=$ndk/$compiler"
+  cargo build --locked --release -p lingua-tutor-android --target "$target"
+  cp "${CARGO_TARGET_DIR:-target}/$target/release/liblingua_tutor_android.so" "$stage/lib/$abi/"
+  "$ndk/llvm-strip" --strip-unneeded "$stage/lib/$abi/liblingua_tutor_android.so"
+}
+build_native aarch64-linux-android aarch64-linux-android28-clang arm64-v8a
+build_native x86_64-linux-android x86_64-linux-android28-clang x86_64
+
+version="$(tr -d '[:space:]' < VERSION)"
+IFS=. read -r major minor patch <<< "$version"
+[[ "$major" =~ ^[0-9]+$ && "$minor" =~ ^[0-9]+$ && "$patch" =~ ^[0-9]+$ ]]
+code=$((10#$major * 1000000 + 10#$minor * 1000 + 10#$patch))
+javac -encoding UTF-8 -source 8 -target 8 -bootclasspath "$platform" \
+  -d "$stage/classes" apps/android/java/io/linguatutor/MainActivity.java
+classes=()
+while IFS= read -r -d '' file; do classes+=("$file"); done < <(find "$stage/classes" -name '*.class' -print0)
+"$tools/d8" --min-api 28 --lib "$platform" --output "$stage/dex" "${classes[@]}"
+"$tools/aapt2" compile --dir apps/android/res -o "$stage/resources.zip"
+link_flags=()
+if [[ "${ANDROID_TEST_BUILD:-0}" == 1 ]]; then link_flags+=(--debug-mode); fi
+"$tools/aapt2" link -I "$platform" --manifest apps/android/AndroidManifest.xml "${link_flags[@]}" \
+  --version-code "$code" --version-name "$version" -o "$stage/unsigned.apk" "$stage/resources.zip"
+cp "$stage/dex/classes.dex" "$stage/classes.dex"
+(cd "$stage" && zip -q -0 unsigned.apk classes.dex lib/*/*.so)
+"$tools/zipalign" -P 16 -f 4 "$stage/unsigned.apk" "$stage/aligned.apk"
+mkdir -p dist-android
+apk="dist-android/lingua-tutor-v$version-android.apk"
+"$tools/apksigner" sign --ks "$ANDROID_SIGNING_KEYSTORE" --ks-key-alias "$ANDROID_SIGNING_ALIAS" \
+  --ks-pass env:ANDROID_SIGNING_STORE_PASSWORD --key-pass env:ANDROID_SIGNING_KEY_PASSWORD \
+  --out "$apk" "$stage/aligned.apk"
+"$tools/apksigner" verify --verbose "$apk"
+"$tools/zipalign" -c -P 16 4 "$apk"
+"$tools/aapt2" dump badging "$apk" | grep -F "package: name='io.linguatutor'"
+unzip -Z1 "$apk" | grep -Fx 'lib/arm64-v8a/liblingua_tutor_android.so'
+unzip -Z1 "$apk" | grep -Fx 'lib/x86_64/liblingua_tutor_android.so'

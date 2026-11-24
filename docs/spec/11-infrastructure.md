@@ -8,7 +8,7 @@
 - Tunnel ID and Runtime API key are supplied through local browser setup by default and are never persisted.
 - `lingua-tutor run --terminal-tunnel`: prompt for tunnel credentials with hidden terminal input.
 - `lingua-tutor run --no-tunnel`: browser UI/RPC only.
-- Tunnel mode uses the OS-provided curl executable. macOS uses `/usr/bin/curl`, Linux accepts `/usr/bin/curl` or `/bin/curl`, and Windows uses `%SystemRoot%\\System32\\curl.exe`. Hidden credential input uses the controlling TTY plus `stty` on Unix and Windows PowerShell on Windows.
+- Desktop tunnel mode uses the OS-provided curl executable. Android uses the in-process Rustls transport; its APK includes the Rust runtime and serves the UI in a system WebView. macOS uses `/usr/bin/curl`, Linux accepts `/usr/bin/curl` or `/bin/curl`, and Windows uses `%SystemRoot%\\System32\\curl.exe`. Hidden credential input uses the controlling TTY plus `stty` on Unix and Windows PowerShell on Windows.
 - Runtime-owned migrations live under `apps/local/migrations/`.
 
 ## CI gate

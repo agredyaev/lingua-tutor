@@ -21,7 +21,7 @@ cargo install --path apps/local --bin lingua-tutor --locked
 
 Release-profile native builds fail closed when the generated web bundle is missing or incomplete. Cargo installs `lingua-tutor` into its normal binary directory (typically `~/.cargo/bin`).
 
-Prebuilt release archives are published for Linux x64, Linux arm64, macOS arm64, and Windows x64.
+Prebuilt release archives are published for Linux x64, Linux arm64, macOS arm64, and Windows x64. Android uses a signed APK (ARM64 and x86-64).
 
 ## Update
 
@@ -40,7 +40,9 @@ If using a prebuilt release, download the archive for the new version and replac
 - Linux/macOS: replace `lingua-tutor`.
 - Windows x64: replace `lingua-tutor.exe`.
 
-Before an upgrade, `lingua-tutor backup` can be used to create an explicit database backup.
+Android updates install over the existing app when signed with the same key; uninstalling deletes app-private learning state.
+
+Before a desktop upgrade, `lingua-tutor backup` can be used to create an explicit database backup.
 
 ## Run
 
@@ -67,9 +69,7 @@ The runtime starts the web server and opens the tunnel setup in your browser. If
 
 Use `lingua-tutor run --terminal-tunnel` for hidden terminal input.
 
-On Android, [add a home-screen shortcut](docs/local-runtime.md#android-home-screen-shortcut) to start Lingua Tutor and open the browser with one tap.
-
-A portable WASI Preview 3 component runs under [Wasmtime with the same browser setup](docs/local-runtime.md#wasi-preview-3).
+On Android, [install the APK](docs/local-runtime.md#android) and tap Lingua Tutor. The native runtime and WebView start together.
 
 For UI-only local testing:
 

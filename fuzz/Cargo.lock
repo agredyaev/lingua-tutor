@@ -759,7 +759,6 @@ dependencies = [
  "shared-schema",
  "thiserror",
  "tokio",
- "tower",
  "tutor-contract",
  "url",
  "uuid",

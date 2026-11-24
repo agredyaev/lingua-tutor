@@ -1,4 +1,4 @@
-//! Outbound tunnel transport for the WASI component.
+//! Outbound tunnel transport for the Android app.
 
 use super::{
     HttpResponse, MAX_POLL_BODY_BYTES, TunnelRequest, request_headers, retry_after_ms, unix_seconds,
@@ -9,16 +9,10 @@ use axum::{
 };
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::{
-    client::legacy::{
-        Client,
-        connect::{HttpConnector, dns::Name},
-    },
+    client::legacy::{Client, connect::HttpConnector},
     rt::TokioExecutor,
 };
-use std::{
-    net::ToSocketAddrs,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
 pub(super) async fn request(input: TunnelRequest) -> Result<HttpResponse, String> {
     let timeout = input.timeout.max(Duration::from_secs(1));
@@ -43,10 +37,7 @@ async fn send(input: TunnelRequest) -> Result<HttpResponse, String> {
     let request = request
         .body(Body::from(input.body.unwrap_or_default()))
         .map_err(|_| "invalid tunnel HTTP request".to_owned())?;
-    // Tokio's default DNS resolver requires a background OS thread.
-    let resolver =
-        tower::service_fn(|host: Name| async move { (host.as_str(), 0).to_socket_addrs() });
-    let mut tcp = HttpConnector::new_with_resolver(resolver);
+    let mut tcp = HttpConnector::new();
     tcp.enforce_http(false);
     tcp.set_connect_timeout(Some(Duration::from_secs(10)));
     let https = HttpsConnectorBuilder::new()
