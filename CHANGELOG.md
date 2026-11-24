@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.9](https://github.com/agredyaev/lingua-tutor/compare/v0.1.8...v0.1.9) (2026-11-24)
+
+
+### Features
+
+* **tutor:** build and ship a WASI Preview 3 component ([d10cb3b](https://github.com/agredyaev/lingua-tutor/commit/d10cb3b11b76dc39361cf143c7ed237fb6b1c854))
+* **tutor:** configure the MCP tunnel in the browser ([5489d9d](https://github.com/agredyaev/lingua-tutor/commit/5489d9da02765235f518a9b9e9683da07453a206))
+* **tutor:** configure the MCP tunnel in the browser ([#25](https://github.com/agredyaev/lingua-tutor/issues/25)) ([a384c22](https://github.com/agredyaev/lingua-tutor/commit/a384c225c0c413acbe8164a659193005274fb9fb))
+
+
+### Bug Fixes
+
+* **ci:** preserve the fuzz lockfile release marker ([64977b6](https://github.com/agredyaev/lingua-tutor/commit/64977b6bf5c917c19fbdb575240b732e53c360bd))
+* **ci:** stabilize lesson fixtures and update bundled SQLite ([3376906](https://github.com/agredyaev/lingua-tutor/commit/33769061f35b163d3147d375276a975e9654f68a))
+
 ## [0.1.8](https://github.com/agredyaev/lingua-tutor/compare/v0.1.7...v0.1.8) (2026-11-07)
 
 
