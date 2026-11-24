@@ -31,6 +31,10 @@ struct AppState {
 struct BrowserTunnel {
     tasks: Mutex<JoinSet<Result<(), String>>>,
     ready: Arc<AtomicBool>,
+    // FUZZ SUPPORT BEGIN
+    #[cfg(fuzzing)]
+    scripted_peer: Option<u8>,
+    // FUZZ SUPPORT END
 }
 
 impl BrowserTunnel {
@@ -185,6 +189,10 @@ async fn connect_tunnel(state: &AppState, call: RpcRequest) -> HttpResponse<Body
         Ok(config) => config,
         Err(error) => return fail(-32602, &error),
     };
+    // FUZZ SUPPORT BEGIN
+    #[cfg(fuzzing)]
+    let config = config.with_scripted_peer(session.scripted_peer);
+    // FUZZ SUPPORT END
     match session.connect(state.env.clone(), config).await {
         Ok(()) => rpc_response(call.id, serde_json::json!({ "connected": true })),
         Err(error) => fail(-32000, &error),
@@ -865,6 +873,97 @@ mod tests {
 
 // FUZZ SUPPORT BELOW: excluded from production line coverage.
 
+#[cfg(fuzzing)]
+#[allow(clippy::expect_used)]
+async fn fuzz_browser_rpc(
+    state: &AppState,
+    method: &str,
+    params: serde_json::Value,
+    same_origin: bool,
+) -> (u16, serde_json::Value) {
+    let mut request = HttpRequest::builder()
+        .method("POST")
+        .uri("/rpc")
+        .header("host", "127.0.0.1:7777")
+        .header("content-type", "application/json");
+    if same_origin {
+        request = request.header("origin", "http://127.0.0.1:7777");
+    }
+    let body =
+        serde_json::json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}).to_string();
+    let response = handle(
+        State(state.clone()),
+        request.body(Body::from(body)).expect("request"),
+    )
+    .await;
+    let status = response.status().as_u16();
+    if status != 200 {
+        return (status, serde_json::Value::Null);
+    }
+    if method == "connect_tunnel" {
+        assert_eq!(
+            response.headers()[axum::http::header::CACHE_CONTROL],
+            "no-store"
+        );
+    }
+    let bytes = to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("response");
+    (
+        status,
+        serde_json::from_slice(&bytes).expect("JSON response"),
+    )
+}
+
+#[cfg(fuzzing)]
+async fn fuzz_browser_setup(state: &AppState, args: &serde_json::Value) {
+    use serde_json::json;
+    let id = format!("tunnel_{}", "a".repeat(32));
+    let credentials = json!({"tunnel_id": id, "api_key": "scripted-key"});
+    let (_, status) = fuzz_browser_rpc(state, "tunnel_status", json!({}), false).await;
+    assert_eq!(status["result"]["status"], "disabled");
+    let (status, _) = fuzz_browser_rpc(state, "connect_tunnel", credentials.clone(), false).await;
+    assert_eq!(status, 403);
+    let (_, response) = fuzz_browser_rpc(state, "connect_tunnel", credentials.clone(), true).await;
+    assert_eq!(response["error"]["code"], -32000);
+
+    let with_peer = |seed| AppState {
+        tunnel: Some(Arc::new(BrowserTunnel {
+            scripted_peer: Some(seed),
+            ..BrowserTunnel::default()
+        })),
+        ..state.clone()
+    };
+    let rejecting = with_peer(1);
+    let (_, response) =
+        fuzz_browser_rpc(&rejecting, "connect_tunnel", credentials.clone(), true).await;
+    assert_eq!(response["error"]["code"], -32000);
+
+    let accepting = with_peer(0);
+    let (_, status) = fuzz_browser_rpc(&accepting, "tunnel_status", json!({}), false).await;
+    assert_eq!(status["result"]["status"], "disconnected");
+    for params in [
+        json!({"api_key": args}),
+        json!({"tunnel_id": "invalid", "api_key": "scripted-key"}),
+        json!({"tunnel_id": id, "api_key": "\n"}),
+    ] {
+        let (_, response) = fuzz_browser_rpc(&accepting, "connect_tunnel", params, true).await;
+        assert_eq!(response["error"]["code"], -32602);
+    }
+    let ((_, first), (_, duplicate)) = tokio::join!(
+        biased;
+        fuzz_browser_rpc(&accepting, "connect_tunnel", credentials.clone(), true),
+        async {
+            let (_, status) = fuzz_browser_rpc(&accepting, "tunnel_status", json!({}), false).await;
+            assert_eq!(status["result"]["status"], "connecting");
+            fuzz_browser_rpc(&accepting, "connect_tunnel", credentials, true).await
+        },
+    );
+    assert_eq!(first["result"]["connected"], true);
+    assert_eq!(duplicate["error"]["code"], -32000);
+    let _ = fuzz_browser_rpc(&accepting, "tunnel_status", json!({}), false).await;
+}
+
 /// Drive the real HTTP handler without binding a socket.
 #[cfg(fuzzing)]
 #[allow(clippy::expect_used, missing_docs)]
@@ -887,6 +986,9 @@ pub(crate) fn fuzz_boundary(env: &Env, dir: &Path, args: &serde_json::Value, dat
         .build()
         .expect("runtime");
     runtime.block_on(async {
+        if data.first().is_none_or(|seed| seed % 16 == 0) {
+            fuzz_browser_setup(&state, args).await;
+        }
         let methods = [
             "health",
             "list_language_profiles",

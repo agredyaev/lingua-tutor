@@ -46,6 +46,10 @@ pub struct TunnelConfig {
     api_key: String,
     /// Control-plane base URL.
     base_url: String,
+    // FUZZ SUPPORT BEGIN
+    #[cfg(fuzzing)]
+    scripted_peer: Option<u8>,
+    // FUZZ SUPPORT END
 }
 
 impl TunnelConfig {
@@ -69,8 +73,20 @@ impl TunnelConfig {
             tunnel_id,
             api_key,
             base_url,
+            // FUZZ SUPPORT BEGIN
+            #[cfg(fuzzing)]
+            scripted_peer: None,
+            // FUZZ SUPPORT END
         })
     }
+
+    // FUZZ SUPPORT BEGIN
+    #[cfg(fuzzing)]
+    pub(crate) fn with_scripted_peer(mut self, seed: Option<u8>) -> Self {
+        self.scripted_peer = seed;
+        self
+    }
+    // FUZZ SUPPORT END
 }
 
 #[derive(Serialize)]
@@ -123,6 +139,12 @@ struct Client {
 
 impl Client {
     fn new(config: TunnelConfig) -> Result<Arc<Self>, String> {
+        // FUZZ SUPPORT BEGIN
+        #[cfg(fuzzing)]
+        let fuzz_peer = config
+            .scripted_peer
+            .map(|seed| (seed, std::sync::atomic::AtomicUsize::new(0)));
+        // FUZZ SUPPORT END
         let curl_path = system_curl_path()?;
         let endpoint = format!(
             "{}/v1/tunnels/{}",
@@ -136,7 +158,7 @@ impl Client {
             curl_path,
             // FUZZ SUPPORT BEGIN
             #[cfg(fuzzing)]
-            fuzz_peer: None,
+            fuzz_peer,
             // FUZZ SUPPORT END
         }))
     }
@@ -893,10 +915,10 @@ pub(crate) fn fuzz_transport(env: &Env, data: &[u8]) {
     let id = format!("tunnel_{}", "a".repeat(32));
     assert!(TunnelConfig::production("bad".into(), "key".into()).is_err());
     assert!(TunnelConfig::production(id.clone(), "".into()).is_err());
-    let config = TunnelConfig::production(id, "fuzz-key".into()).expect("config");
-    let mut client = Client::new(config).expect("client");
-    Arc::get_mut(&mut client).expect("unique client").fuzz_peer =
-        Some((seed, std::sync::atomic::AtomicUsize::new(0)));
+    let config = TunnelConfig::production(id, "fuzz-key".into())
+        .expect("config")
+        .with_scripted_peer(Some(seed));
+    let client = Client::new(config).expect("client");
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
