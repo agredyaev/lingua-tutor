@@ -741,7 +741,7 @@ dependencies = [
 
 [[package]]
 name = "lingua-tutor-local"
-version = "0.1.10" # x-release-please-version
+version = "0.1.11" # x-release-please-version
 dependencies = [
  "adaptation",
  "axum",
